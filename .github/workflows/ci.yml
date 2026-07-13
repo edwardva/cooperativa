@@ -1,0 +1,309 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: '20'
+  POSTGRES_VERSION: '16'
+
+jobs:
+  # ============================================
+  # LINT Y VALIDACIÓN DE CÓDIGO
+  # ============================================
+  lint:
+    name: 🔍 Lint & Type Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: 📥 Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: 🔍 Lint Backend
+        working-directory: ./backend
+        run: npm run lint
+
+      - name: 🔍 Lint Frontend
+        working-directory: ./frontend
+        run: npm run lint
+
+      - name: 🔍 TypeScript Check Backend
+        working-directory: ./backend
+        run: npm run type-check
+
+      - name: 🔍 TypeScript Check Frontend
+        working-directory: ./frontend
+        run: npm run type-check
+
+  # ============================================
+  # TESTS BACKEND
+  # ============================================
+  test-backend:
+    name: 🧪 Backend Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cooperativa_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: 🗄️ Run Migrations
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cooperativa_test
+        run: npx prisma migrate deploy
+
+      - name: 🧪 Run Tests
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cooperativa_test
+          JWT_SECRET: test-secret-key
+          NODE_ENV: test
+        run: npm run test
+
+      - name: 📊 Upload Coverage
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./backend/coverage/lcov.info
+          flags: backend
+          name: backend-coverage
+
+  # ============================================
+  # TESTS FRONTEND
+  # ============================================
+  test-frontend:
+    name: 🧪 Frontend Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: 🧪 Run Tests
+        working-directory: ./frontend
+        run: npm run test
+
+      - name: 📊 Upload Coverage
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./frontend/coverage/lcov.info
+          flags: frontend
+          name: frontend-coverage
+
+  # ============================================
+  # BUILD
+  # ============================================
+  build:
+    name: 🏗️ Build
+    runs-on: ubuntu-latest
+    needs: [lint, test-backend, test-frontend]
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: 📥 Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: 🏗️ Build Backend
+        working-directory: ./backend
+        run: npm run build
+
+      - name: 🏗️ Build Frontend
+        working-directory: ./frontend
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL || 'http://localhost:4000/api' }}
+        run: npm run build
+
+      - name: 📦 Upload Backend Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          path: backend/dist
+          retention-days: 7
+
+      - name: 📦 Upload Frontend Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  # ============================================
+  # SECURITY SCAN
+  # ============================================
+  security:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 🔍 NPM Audit Backend
+        working-directory: ./backend
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: 🔍 NPM Audit Frontend
+        working-directory: ./frontend
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: 🔒 Trivy Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 📊 Upload Trivy Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ============================================
+  # PRISMA CHECK
+  # ============================================
+  prisma-check:
+    name: 🗄️ Prisma Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📥 Install Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: ✅ Validate Prisma Schema
+        working-directory: ./backend
+        run: npx prisma validate
+
+      - name: 🔍 Check Format
+        working-directory: ./backend
+        run: npx prisma format --check
+
+  # ============================================
+  # CODACY ANALYSIS
+  # ============================================
+  codacy:
+    name: 📊 Codacy Analysis
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Run Codacy Analysis
+        uses: codacy/codacy-analysis-cli-action@master
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          verbose: true
+          output: codacy-results.sarif
+          format: sarif
+          
+      - name: 📊 Upload Codacy Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: codacy-results.sarif
+
+  # ============================================
+  # NOTIFICACIÓN DE RESULTADO
+  # ============================================
+  notify:
+    name: 📢 Notify Status
+    runs-on: ubuntu-latest
+    needs: [lint, test-backend, test-frontend, build, security, prisma-check]
+    if: always()
+    
+    steps:
+      - name: ✅ Success Notification
+        if: ${{ needs.lint.result == 'success' && needs.test-backend.result == 'success' && needs.test-frontend.result == 'success' && needs.build.result == 'success' }}
+        run: echo "✅ All checks passed successfully!"
+
+      - name: ❌ Failure Notification
+        if: ${{ needs.lint.result == 'failure' || needs.test-backend.result == 'failure' || needs.test-frontend.result == 'failure' || needs.build.result == 'failure' }}
+        run: |
+          echo "❌ CI Pipeline failed!"
+          exit 1
