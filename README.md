@@ -4,10 +4,13 @@
 > **Stack:** React 18 + TypeScript + Node.js + PostgreSQL  
 > **Timeline:** 24 semanas | **Go Live:** Enero 2027
 
+[![CI](https://github.com/edwardva01/cooperativa/actions/workflows/ci.yml/badge.svg)](https://github.com/edwardva01/cooperativa/actions/workflows/ci.yml)
+[![Code Quality](https://github.com/edwardva01/cooperativa/actions/workflows/code-quality.yml/badge.svg)](https://github.com/edwardva01/cooperativa/actions/workflows/code-quality.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18.3-61dafb)](https://react.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-20_LTS-green)](https://nodejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791)](https://www.postgresql.org/)
+[![Prisma](https://img.shields.io/badge/Prisma-5.22-2D3748)](https://www.prisma.io/)
 [![License](https://img.shields.io/badge/License-Proprietary-red)]()
 
 ---
@@ -444,6 +447,24 @@ R: Revisa el [PLAN-DE-DESARROLLO.md](./PLAN-DE-DESARROLLO.md). Si no está en V1
 
 **P: ¿Podemos cambiar Tailwind por Styled Components?**  
 R: No. El stack está definido y aprobado. Ver [CONTEXTO-PROYECTO.md](./CONTEXTO-PROYECTO.md).
+
+---
+
+## 🤝 Cómo Contribuir
+
+¿Quieres contribuir al proyecto? ¡Genial! Revisa nuestra [Guía de Contribución](./CONTRIBUTING.md) para conocer:
+
+- 📋 Setup del entorno de desarrollo
+- 🔄 Workflow de Git (fork, branch, PR)
+- ✅ Estándares de código y convenciones
+- 🧪 Cómo escribir tests
+- 📝 Formato de commits y PRs
+
+**Quick Links:**
+- [Pull Request Template](./.github/PULL_REQUEST_TEMPLATE.md)
+- [Reportar un Bug](./.github/ISSUE_TEMPLATE/bug_report.md)
+- [Solicitar Feature](./.github/ISSUE_TEMPLATE/feature_request.md)
+- [Changelog](./CHANGELOG.md)
 
 ---
 

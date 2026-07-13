@@ -1,0 +1,109 @@
+Licencia de Software Propietario
+
+Copyright (c) 2026 Cooperativa el Triunfo, R.L.
+Todos los derechos reservados.
+
+AVISO LEGAL: Este es software propietario desarrollado exclusivamente para
+Cooperativa el Triunfo, R.L. (en adelante "la Cooperativa").
+
+TÉRMINOS Y CONDICIONES DE USO:
+
+1. PROPIEDAD INTELECTUAL
+   Este software, incluyendo todo el código fuente, documentación, diseños,
+   bases de datos y materiales relacionados (en adelante "el Software") es
+   propiedad exclusiva de la Cooperativa y está protegido por las leyes de
+   derechos de autor de Venezuela y tratados internacionales.
+
+2. RESTRICCIONES DE USO
+   Queda ESTRICTAMENTE PROHIBIDO:
+   a) Usar este Software para fines distintos a los autorizados por la Cooperativa
+   b) Copiar, modificar, distribuir o vender copias del Software
+   c) Realizar ingeniería inversa, descompilar o desensamblar el Software
+   d) Sublicenciar, alquilar o prestar el Software a terceros
+   e) Remover o alterar avisos de derechos de autor o propiedad
+   f) Usar el Software en entornos de producción sin autorización escrita
+   g) Compartir credenciales de acceso o información sensible
+
+3. ACCESO AUTORIZADO
+   El acceso al código fuente está limitado a:
+   a) Personal de desarrollo autorizado por la Cooperativa
+   b) Contratistas con acuerdos de confidencialidad vigentes
+   c) Consultores técnicos bajo supervisión de la Cooperativa
+   d) Auditores externos con propósitos de revisión únicamente
+
+4. CONFIDENCIALIDAD
+   Todo el contenido de este repositorio es CONFIDENCIAL. Las personas con
+   acceso están obligadas a:
+   a) Mantener la confidencialidad del código y documentación
+   b) No revelar información técnica o de negocio a terceros
+   c) No usar el conocimiento adquirido para beneficio personal
+   d) Reportar cualquier acceso no autorizado inmediatamente
+
+5. CONTRIBUCIONES
+   Cualquier contribución al Software (código, documentación, diseños, etc.):
+   a) Se convierte automáticamente en propiedad de la Cooperativa
+   b) No otorga derechos de propiedad al contribuidor
+   c) Puede ser modificada o removida sin previo aviso
+   d) Debe cumplir con los estándares y políticas establecidas
+
+6. DATOS SENSIBLES
+   Este Software maneja información financiera y personal sensible. Los
+   desarrolladores deben:
+   a) Cumplir con la Ley Orgánica de Protección de Datos Personales (LOPDP)
+   b) No extraer, copiar o compartir datos de producción
+   c) Usar datos sintéticos o anonimizados para desarrollo
+   d) Reportar cualquier brecha de seguridad inmediatamente
+
+7. GARANTÍA Y RESPONSABILIDAD
+   EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍAS DE NINGÚN TIPO,
+   EXPRESAS O IMPLÍCITAS, INCLUYENDO PERO NO LIMITADO A GARANTÍAS DE
+   COMERCIABILIDAD, IDONEIDAD PARA UN PROPÓSITO PARTICULAR O NO INFRACCIÓN.
+
+   EN NINGÚN CASO LA COOPERATIVA SERÁ RESPONSABLE POR DAÑOS DIRECTOS,
+   INDIRECTOS, INCIDENTALES, ESPECIALES, EJEMPLARES O CONSECUENTES
+   (INCLUYENDO, PERO NO LIMITADO A, ADQUISICIÓN DE BIENES O SERVICIOS
+   SUSTITUTOS, PÉRDIDA DE USO, DATOS O BENEFICIOS, O INTERRUPCIÓN DE
+   NEGOCIO) QUE SURJAN DEL USO O IMPOSIBILIDAD DE USO DEL SOFTWARE.
+
+8. TERMINACIÓN
+   La Cooperativa se reserva el derecho de terminar el acceso al Software
+   en cualquier momento, sin previo aviso, por:
+   a) Violación de estos términos
+   b) Terminación de la relación laboral o contractual
+   c) Razones de seguridad o confidencialidad
+   d) Cualquier otro motivo determinado por la Cooperativa
+
+9. AUDITORÍA
+   La Cooperativa se reserva el derecho de auditar el uso del Software
+   en cualquier momento para verificar el cumplimiento de estos términos.
+
+10. LEY APLICABLE
+    Este acuerdo se regirá e interpretará de acuerdo con las leyes de la
+    República Bolivariana de Venezuela. Cualquier disputa se resolverá en
+    los tribunales competentes de Venezuela.
+
+11. MODIFICACIONES
+    La Cooperativa se reserva el derecho de modificar estos términos en
+    cualquier momento. El uso continuado del Software constituye la
+    aceptación de las modificaciones.
+
+12. CONTACTO
+    Para preguntas sobre esta licencia o para solicitar permisos especiales:
+    
+    Cooperativa el Triunfo, R.L.
+    Email: legal@cooperativatriunfo.org
+    Teléfono: +58 XXX-XXXXXXX
+    Dirección: [Dirección de la Cooperativa]
+
+===================================================================
+
+AL ACCEDER O USAR ESTE SOFTWARE, USTED RECONOCE QUE HA LEÍDO,
+ENTENDIDO Y ACEPTA ESTAR OBLIGADO POR ESTOS TÉRMINOS Y CONDICIONES.
+
+SI NO ESTÁ DE ACUERDO CON ESTOS TÉRMINOS, NO DEBE ACCEDER NI USAR
+ESTE SOFTWARE.
+
+===================================================================
+
+Fecha de vigencia: 11 de Julio de 2026
+Última actualización: 13 de Julio de 2026
