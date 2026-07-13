@@ -1,0 +1,20 @@
+{
+  "name": "cooperativa-migracion",
+  "version": "1.0.0",
+  "description": "Scripts de migración para Cooperativa el Triunfo",
+  "scripts": {
+    "migrate:socios": "tsx 2-import-socios.ts",
+    "migrate:beneficiarios": "tsx 5-import-beneficiarios.ts",
+    "validate:socios": "tsx 3-validate-socios.ts",
+    "migrate:rollback": "tsx 4-rollback-socios.ts",
+    "migrate:all": "npm run migrate:socios && npm run validate:socios && npm run migrate:beneficiarios",
+    "migration:report": "tsx generate-report.ts"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.2.0",
+    "@types/node": "^22.10.2",
+    "csv-parse": "^5.6.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,91 @@
+# ============================================
+# COOPERATIVA EL TRIUNFO - DOCKER COMPOSE
+# ============================================
+# PostgreSQL 16 + Redis (opcional)
+# ============================================
+
+version: '3.8'
+
+services:
+  # ============================================
+  # PostgreSQL 16
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: cooperativa_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cooperativa_dev
+      POSTGRES_USER: cooperativa_user
+      POSTGRES_PASSWORD: cooperativa_password_dev
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=es_ES.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/seeds:/docker-entrypoint-initdb.d
+    networks:
+      - cooperativa_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cooperativa_user -d cooperativa_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Redis (opcional - para caching y sessions)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: cooperativa_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cooperativa_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # ============================================
+  # PgAdmin (opcional - para administración de BD)
+  # ============================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: cooperativa_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@cooperativa.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_LISTEN_PORT: 80
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - cooperativa_network
+    depends_on:
+      - postgres
+
+# ============================================
+# VOLUMES
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+# ============================================
+# NETWORKS
+# ============================================
+networks:
+  cooperativa_network:
+    driver: bridge

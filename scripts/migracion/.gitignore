@@ -1,0 +1,22 @@
+# Datos sensibles de migración
+data/*.csv
+data/*.json
+data/*.sql
+
+# Logs
+logs/*.log
+logs/*.json
+logs/*.html
+
+# Node modules
+node_modules/
+
+# Dependencias
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Archivos temporales
+*.tmp
+*.temp
+.DS_Store

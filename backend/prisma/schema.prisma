@@ -1,0 +1,733 @@
+// ============================================
+// COOPERATIVA EL TRIUNFO - PRISMA SCHEMA
+// ============================================
+// Esquema de base de datos completo
+// PostgreSQL 16+
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// AUTENTICACIÓN Y USUARIOS
+// ============================================
+
+model Usuario {
+  id                Int                @id @default(autoincrement())
+  username          String             @unique @db.VarChar(50)
+  email             String?            @unique @db.VarChar(100)
+  password_hash     String             @db.VarChar(255)
+  nombre_completo   String             @db.VarChar(150)
+  rol_id            Int
+  estado            EstadoUsuario      @default(activo)
+  ultimo_acceso     DateTime?
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+  
+  // Relaciones
+  rol               Rol                @relation(fields: [rol_id], references: [id])
+  colectas          Colecta[]          @relation("UsuarioColecta")
+  cierres_caja      CierreCaja[]
+  movimientos_boveda MovimientoBoveda[]
+  audit_logs        AuditLog[]
+  
+  @@map("usuarios")
+}
+
+model Rol {
+  id          Int          @id @default(autoincrement())
+  nombre      String       @unique @db.VarChar(50)
+  descripcion String?      @db.Text
+  permisos    Json         // Array de permisos: [{modulo: 'socios', accion: 'read'}]
+  created_at  DateTime     @default(now())
+  
+  // Relaciones
+  usuarios    Usuario[]
+  
+  @@map("roles")
+}
+
+enum EstadoUsuario {
+  activo
+  inactivo
+  bloqueado
+}
+
+// ============================================
+// SOCIOS Y BENEFICIARIOS
+// ============================================
+
+model Socio {
+  id                    Int                @id @default(autoincrement())
+  codigo_socio          String             @unique @db.VarChar(20) // Expediente/Número de socio (manual, único)
+  cedula                String             @unique @db.VarChar(11) // Sin guiones: 01234567890
+  nombre                String             @db.VarChar(100)
+  apellido              String             @db.VarChar(100)
+  fecha_nacimiento      DateTime?          @db.Date
+  direccion             String?            @db.Text
+  telefono              String?            @db.VarChar(20)
+  email                 String?            @db.VarChar(100)
+  fecha_inscripcion     DateTime           @db.Date
+  estado                EstadoSocio        @default(activo)
+  es_delegado           Boolean            @default(false)
+  ubicacion_id          Int?
+  foto_url              String?            @db.VarChar(255)
+  autorizado_nombre     String?            @db.VarChar(100) // Persona que autoriza al socio
+  autorizado_cedula     String?            @db.VarChar(11)  // Cédula del autorizado
+  notas                 String?            @db.Text         // Historial y observaciones
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+  
+  // Relaciones
+  ubicacion             Ubicacion?         @relation(fields: [ubicacion_id], references: [id])
+  beneficiarios         Beneficiario[]
+  cuentas_ahorro        CuentaAhorro[]
+  prestamos             Prestamo[]         @relation("SocioPrestamo")
+  prestamos_como_fiador Fiador[]
+  usuario_digital       UsuarioDigital?
+  
+  @@index([cedula])
+  @@index([codigo_socio])
+  @@index([nombre, apellido])
+  @@index([ubicacion_id])
+  @@index([estado])
+  @@map("socios")
+}
+
+model Beneficiario {
+  id                   Int                   @id @default(autoincrement())
+  socio_id             Int
+  cedula               String                @unique @db.VarChar(11)
+  nombre               String                @db.VarChar(100)
+  apellido             String                @db.VarChar(100)
+  fecha_nacimiento     DateTime?             @db.Date
+  parentesco           String                @db.VarChar(50) // hijo, cónyuge, padre, madre, etc.
+  telefono             String?               @db.VarChar(20)
+  estado               EstadoBeneficiario    @default(activo)
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+  
+  // Relaciones
+  socio                Socio                 @relation(fields: [socio_id], references: [id], onDelete: Cascade)
+  acuerdos_funeraria   AcuerdoFuneraria[]
+  acuerdos_salud       AcuerdoSalud[]
+  
+  @@index([socio_id])
+  @@index([cedula])
+  @@map("beneficiarios")
+}
+
+enum EstadoSocio {
+  activo
+  suspendido
+  inactivo
+  retirado
+}
+
+enum EstadoBeneficiario {
+  activo
+  inactivo
+  retirado
+}
+
+// ============================================
+// UBICACIONES/SUCURSALES
+// ============================================
+
+model Ubicacion {
+  id          Int      @id @default(autoincrement())
+  codigo      String   @unique @db.VarChar(10)
+  nombre      String   @db.VarChar(100)
+  direccion   String?  @db.Text
+  telefono    String?  @db.VarChar(20)
+  estado      Boolean  @default(true)
+  created_at  DateTime @default(now())
+  
+  // Relaciones
+  socios      Socio[]
+  
+  @@map("ubicaciones")
+}
+
+// ============================================
+// AHORRO
+// ============================================
+
+model TipoCuentaAhorro {
+  id          Int            @id @default(autoincrement())
+  codigo      String         @unique @db.VarChar(10)
+  nombre      String         @db.VarChar(100)
+  descripcion String?        @db.Text
+  estado      Boolean        @default(true)
+  created_at  DateTime       @default(now())
+  
+  // Relaciones
+  cuentas     CuentaAhorro[]
+  
+  @@map("tipos_cuenta_ahorro")
+}
+
+model CuentaAhorro {
+  id                  Int                 @id @default(autoincrement())
+  socio_id            Int
+  tipo_cuenta_id      Int
+  numero_cuenta       String              @unique @db.VarChar(20)
+  saldo_usd           Decimal             @default(0) @db.Decimal(12, 2)
+  saldo_bs            Decimal             @default(0) @db.Decimal(12, 2)
+  monto_bloqueado_usd Decimal             @default(0) @db.Decimal(12, 2) // Por fianzas
+  monto_bloqueado_bs  Decimal             @default(0) @db.Decimal(12, 2)
+  estado              Boolean             @default(true)
+  fecha_apertura      DateTime            @default(now()) @db.Date
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+  
+  // Relaciones
+  socio               Socio               @relation(fields: [socio_id], references: [id], onDelete: Cascade)
+  tipo_cuenta         TipoCuentaAhorro    @relation(fields: [tipo_cuenta_id], references: [id])
+  movimientos         MovimientoAhorro[]
+  
+  @@index([socio_id])
+  @@index([numero_cuenta])
+  @@map("cuentas_ahorro")
+}
+
+model MovimientoAhorro {
+  id                Int           @id @default(autoincrement())
+  cuenta_id         Int
+  tipo_movimiento   String        @db.VarChar(20) // deposito, retiro
+  monto_usd         Decimal       @db.Decimal(12, 2)
+  monto_bs          Decimal       @db.Decimal(12, 2)
+  tasa_cambio       Decimal       @db.Decimal(10, 4) // Tasa en el momento de la transacción
+  saldo_anterior_usd Decimal      @db.Decimal(12, 2)
+  saldo_nuevo_usd   Decimal       @db.Decimal(12, 2)
+  concepto          String?       @db.Text
+  referencia        String?       @db.VarChar(50)
+  fecha_movimiento  DateTime      @default(now())
+  created_at        DateTime      @default(now())
+  
+  // Relaciones
+  cuenta            CuentaAhorro  @relation(fields: [cuenta_id], references: [id])
+  
+  @@index([cuenta_id])
+  @@index([fecha_movimiento])
+  @@map("movimientos_ahorro")
+}
+
+// ============================================
+// FUNERARIA
+// ============================================
+
+model TipoAcuerdoFuneraria {
+  id          Int                 @id @default(autoincrement())
+  codigo      String              @unique @db.VarChar(10)
+  nombre      String              @db.VarChar(100)
+  monto_usd   Decimal             @db.Decimal(10, 2)
+  ubicacion   String?             @db.VarChar(100) // Código de sucursal si aplica
+  estado      Boolean             @default(true)
+  created_at  DateTime            @default(now())
+  
+  // Relaciones
+  acuerdos    AcuerdoFuneraria[]
+  
+  @@map("tipos_acuerdo_funeraria")
+}
+
+model AcuerdoFuneraria {
+  id                   Int                   @id @default(autoincrement())
+  beneficiario_id      Int
+  tipo_acuerdo_id      Int
+  estado               EstadoServicio        @default(activo)
+  semanas_sin_pago     Int                   @default(0)
+  fecha_suspension     DateTime?             @db.Date
+  fecha_inicio         DateTime              @default(now()) @db.Date
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+  
+  // Relaciones
+  beneficiario         Beneficiario          @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
+  tipo_acuerdo         TipoAcuerdoFuneraria  @relation(fields: [tipo_acuerdo_id], references: [id])
+  movimientos          MovimientoFuneraria[]
+  
+  @@index([beneficiario_id])
+  @@index([estado])
+  @@map("acuerdos_funeraria")
+}
+
+model MovimientoFuneraria {
+  id                Int               @id @default(autoincrement())
+  acuerdo_id        Int
+  tipo_movimiento   String            @db.VarChar(20) // pago, suspension, reactivacion
+  monto_usd         Decimal           @db.Decimal(10, 2)
+  monto_bs          Decimal           @db.Decimal(10, 2)
+  tasa_cambio       Decimal           @db.Decimal(10, 4)
+  semanas_pagadas   Int?              // Cuántas semanas cubre este pago
+  concepto          String?           @db.Text
+  fecha_movimiento  DateTime          @default(now())
+  created_at        DateTime          @default(now())
+  
+  // Relaciones
+  acuerdo           AcuerdoFuneraria  @relation(fields: [acuerdo_id], references: [id])
+  
+  @@index([acuerdo_id])
+  @@index([fecha_movimiento])
+  @@map("movimientos_funeraria")
+}
+
+// ============================================
+// SALUD
+// ============================================
+
+model TipoAcuerdoSalud {
+  id          Int              @id @default(autoincrement())
+  codigo      String           @unique @db.VarChar(10)
+  nombre      String           @db.VarChar(100)
+  monto_usd   Decimal          @db.Decimal(10, 2)
+  estado      Boolean          @default(true)
+  created_at  DateTime         @default(now())
+  
+  // Relaciones
+  acuerdos    AcuerdoSalud[]
+  
+  @@map("tipos_acuerdo_salud")
+}
+
+model AcuerdoSalud {
+  id                   Int                 @id @default(autoincrement())
+  beneficiario_id      Int
+  tipo_acuerdo_id      Int
+  estado               EstadoServicio      @default(activo)
+  semanas_sin_pago     Int                 @default(0)
+  fecha_suspension     DateTime?           @db.Date
+  fecha_inicio         DateTime            @default(now()) @db.Date
+  created_at           DateTime            @default(now())
+  updated_at           DateTime            @updatedAt
+  
+  // Relaciones
+  beneficiario         Beneficiario        @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
+  tipo_acuerdo         TipoAcuerdoSalud    @relation(fields: [tipo_acuerdo_id], references: [id])
+  movimientos          MovimientoSalud[]
+  
+  @@index([beneficiario_id])
+  @@index([estado])
+  @@map("acuerdos_salud")
+}
+
+model MovimientoSalud {
+  id                Int            @id @default(autoincrement())
+  acuerdo_id        Int
+  tipo_movimiento   String         @db.VarChar(20) // pago, suspension, reactivacion
+  monto_usd         Decimal        @db.Decimal(10, 2)
+  monto_bs          Decimal        @db.Decimal(10, 2)
+  tasa_cambio       Decimal        @db.Decimal(10, 4)
+  semanas_pagadas   Int?
+  concepto          String?        @db.Text
+  fecha_movimiento  DateTime       @default(now())
+  created_at        DateTime       @default(now())
+  
+  // Relaciones
+  acuerdo           AcuerdoSalud   @relation(fields: [acuerdo_id], references: [id])
+  
+  @@index([acuerdo_id])
+  @@index([fecha_movimiento])
+  @@map("movimientos_salud")
+}
+
+enum EstadoServicio {
+  activo
+  suspendido
+  retirado
+}
+
+// ============================================
+// PRÉSTAMOS
+// ============================================
+
+model TipoPrestamo {
+  id                    Int         @id @default(autoincrement())
+  codigo                String      @unique @db.VarChar(10)
+  nombre                String      @db.VarChar(100)
+  descripcion           String?     @db.Text
+  tasa_interes_anual    Decimal     @db.Decimal(5, 2) // Ej: 12.50 (12.50%)
+  tasa_mora_mensual     Decimal     @default(2.00) @db.Decimal(5, 2)
+  plazo_maximo_semanas  Int         @default(52)
+  requiere_fiadores     Boolean     @default(true)
+  estado                Boolean     @default(true)
+  created_at            DateTime    @default(now())
+  
+  // Relaciones
+  prestamos             Prestamo[]
+  
+  @@map("tipos_prestamo")
+}
+
+model Prestamo {
+  id                    Int               @id @default(autoincrement())
+  socio_id              Int
+  tipo_prestamo_id      Int
+  numero_prestamo       String            @unique @db.VarChar(20)
+  monto_original_usd    Decimal           @db.Decimal(12, 2)
+  monto_original_bs     Decimal           @db.Decimal(12, 2)
+  tasa_cambio_inicial   Decimal           @db.Decimal(10, 4)
+  tasa_interes          Decimal           @db.Decimal(5, 2)
+  plazo_semanas         Int
+  cuota_semanal_usd     Decimal           @db.Decimal(10, 2)
+  cuota_semanal_bs      Decimal           @db.Decimal(10, 2)
+  saldo_capital_usd     Decimal           @db.Decimal(12, 2)
+  saldo_capital_bs      Decimal           @db.Decimal(12, 2)
+  saldo_interes_usd     Decimal           @default(0) @db.Decimal(12, 2)
+  saldo_interes_bs      Decimal           @default(0) @db.Decimal(12, 2)
+  saldo_mora_usd        Decimal           @default(0) @db.Decimal(12, 2)
+  saldo_mora_bs         Decimal           @default(0) @db.Decimal(12, 2)
+  estado                EstadoPrestamo    @default(activo)
+  fecha_desembolso      DateTime          @db.Date
+  fecha_vencimiento     DateTime          @db.Date
+  created_at            DateTime          @default(now())
+  updated_at            DateTime          @updatedAt
+  
+  // Relaciones
+  socio                 Socio             @relation("SocioPrestamo", fields: [socio_id], references: [id])
+  tipo_prestamo         TipoPrestamo      @relation(fields: [tipo_prestamo_id], references: [id])
+  fiadores              Fiador[]
+  plan_pagos            PlanPago[]
+  abonos                AbonoPrestamo[]
+  
+  @@index([socio_id])
+  @@index([numero_prestamo])
+  @@index([estado])
+  @@map("prestamos")
+}
+
+model Fiador {
+  id                    Int              @id @default(autoincrement())
+  prestamo_id           Int
+  socio_id              Int
+  monto_garantizado_usd Decimal          @db.Decimal(12, 2)
+  monto_garantizado_bs  Decimal          @db.Decimal(12, 2)
+  monto_bloqueado_usd   Decimal          @db.Decimal(12, 2) // En su ahorro
+  monto_bloqueado_bs    Decimal          @db.Decimal(12, 2)
+  estado                EstadoFiador     @default(activo)
+  fecha_liberacion      DateTime?        @db.Date
+  created_at            DateTime         @default(now())
+  
+  // Relaciones
+  prestamo              Prestamo         @relation(fields: [prestamo_id], references: [id])
+  socio                 Socio            @relation(fields: [socio_id], references: [id])
+  
+  @@index([prestamo_id])
+  @@index([socio_id])
+  @@map("fiadores")
+}
+
+model PlanPago {
+  id                    Int            @id @default(autoincrement())
+  prestamo_id           Int
+  numero_cuota          Int
+  fecha_vencimiento     DateTime       @db.Date
+  monto_capital_usd     Decimal        @db.Decimal(10, 2)
+  monto_capital_bs      Decimal        @db.Decimal(10, 2)
+  monto_interes_usd     Decimal        @db.Decimal(10, 2)
+  monto_interes_bs      Decimal        @db.Decimal(10, 2)
+  monto_total_usd       Decimal        @db.Decimal(10, 2)
+  monto_total_bs        Decimal        @db.Decimal(10, 2)
+  estado                EstadoCuota    @default(pendiente)
+  fecha_pago            DateTime?      @db.Date
+  created_at            DateTime       @default(now())
+  
+  // Relaciones
+  prestamo              Prestamo       @relation(fields: [prestamo_id], references: [id])
+  
+  @@index([prestamo_id])
+  @@index([fecha_vencimiento])
+  @@map("plan_pagos")
+}
+
+model AbonoPrestamo {
+  id                    Int          @id @default(autoincrement())
+  prestamo_id           Int
+  monto_usd             Decimal      @db.Decimal(10, 2)
+  monto_bs              Decimal      @db.Decimal(10, 2)
+  tasa_cambio           Decimal      @db.Decimal(10, 4)
+  aplicado_capital_usd  Decimal      @db.Decimal(10, 2)
+  aplicado_capital_bs   Decimal      @db.Decimal(10, 2)
+  aplicado_interes_usd  Decimal      @db.Decimal(10, 2)
+  aplicado_interes_bs   Decimal      @db.Decimal(10, 2)
+  aplicado_mora_usd     Decimal      @default(0) @db.Decimal(10, 2)
+  aplicado_mora_bs      Decimal      @default(0) @db.Decimal(10, 2)
+  concepto              String?      @db.Text
+  fecha_abono           DateTime     @default(now())
+  created_at            DateTime     @default(now())
+  
+  // Relaciones
+  prestamo              Prestamo     @relation(fields: [prestamo_id], references: [id])
+  
+  @@index([prestamo_id])
+  @@index([fecha_abono])
+  @@map("abonos_prestamo")
+}
+
+enum EstadoPrestamo {
+  activo
+  saldado
+  moroso
+  refinanciado
+  cancelado
+}
+
+enum EstadoFiador {
+  activo
+  liberado
+}
+
+enum EstadoCuota {
+  pendiente
+  pagada
+  vencida
+}
+
+// ============================================
+// COLECTA / CAJA
+// ============================================
+
+model Colecta {
+  id                Int             @id @default(autoincrement())
+  socio_id          Int
+  usuario_id        Int
+  semana_colecta_id Int?            // Relación con la semana de colecta
+  fecha_colecta     DateTime        @default(now())
+  monto_total_usd   Decimal         @db.Decimal(10, 2)
+  monto_total_bs    Decimal         @db.Decimal(10, 2)
+  tasa_cambio       Decimal         @db.Decimal(10, 4)
+  observaciones     String?         @db.Text
+  created_at        DateTime        @default(now())
+  
+  // Relaciones
+  usuario           Usuario         @relation("UsuarioColecta", fields: [usuario_id], references: [id])
+  semana_colecta    SemanaColecta?  @relation(fields: [semana_colecta_id], references: [id])
+  detalles          DetalleColecta[]
+  
+  @@index([socio_id])
+  @@index([fecha_colecta])
+  @@index([usuario_id])
+  @@index([semana_colecta_id])
+  @@map("colecta")
+}
+
+model DetalleColecta {
+  id                Int      @id @default(autoincrement())
+  colecta_id        Int
+  servicio          String   @db.VarChar(20) // ahorro, funeraria, salud, prestamo
+  referencia_id     Int?     // ID del acuerdo o préstamo
+  monto_usd         Decimal  @db.Decimal(10, 2)
+  monto_bs          Decimal  @db.Decimal(10, 2)
+  concepto          String?  @db.Text
+  created_at        DateTime @default(now())
+  
+  // Relaciones
+  colecta           Colecta  @relation(fields: [colecta_id], references: [id], onDelete: Cascade)
+  
+  @@index([colecta_id])
+  @@map("detalle_colecta")
+}
+
+model CierreCaja {
+  id                      Int       @id @default(autoincrement())
+  usuario_id              Int
+  fecha_cierre            DateTime  @default(now())
+  fecha_inicio_operacion  DateTime  @db.Date
+  fecha_fin_operacion     DateTime  @db.Date
+  
+  // Totales en USD
+  total_ahorro_usd        Decimal   @default(0) @db.Decimal(12, 2)
+  total_funeraria_usd     Decimal   @default(0) @db.Decimal(12, 2)
+  total_salud_usd         Decimal   @default(0) @db.Decimal(12, 2)
+  total_prestamos_usd     Decimal   @default(0) @db.Decimal(12, 2)
+  total_general_usd       Decimal   @default(0) @db.Decimal(12, 2)
+  
+  // Totales en Bs
+  total_ahorro_bs         Decimal   @default(0) @db.Decimal(12, 2)
+  total_funeraria_bs      Decimal   @default(0) @db.Decimal(12, 2)
+  total_salud_bs          Decimal   @default(0) @db.Decimal(12, 2)
+  total_prestamos_bs      Decimal   @default(0) @db.Decimal(12, 2)
+  total_general_bs        Decimal   @default(0) @db.Decimal(12, 2)
+  
+  cantidad_transacciones  Int       @default(0)
+  observaciones           String?   @db.Text
+  created_at              DateTime  @default(now())
+  
+  // Relaciones
+  usuario                 Usuario   @relation(fields: [usuario_id], references: [id])
+  
+  @@index([usuario_id])
+  @@index([fecha_cierre])
+  @@map("cierre_caja")
+}
+
+// ============================================
+// BÓVEDA
+// ============================================
+
+model MovimientoBoveda {
+  id                  Int                @id @default(autoincrement())
+  tipo_movimiento     TipoMovimientoBoveda
+  moneda              Moneda
+  monto               Decimal            @db.Decimal(12, 2)
+  concepto            String             @db.Text
+  usuario_id          Int
+  fecha_movimiento    DateTime           @default(now())
+  created_at          DateTime           @default(now())
+  
+  // Relaciones
+  usuario             Usuario            @relation(fields: [usuario_id], references: [id])
+  
+  @@index([fecha_movimiento])
+  @@index([moneda])
+  @@map("movimientos_boveda")
+}
+
+enum TipoMovimientoBoveda {
+  entrada
+  salida
+}
+
+enum Moneda {
+  USD
+  BS
+}
+
+// ============================================
+// CAJERO DIGITAL
+// ============================================
+
+model UsuarioDigital {
+  id              Int       @id @default(autoincrement())
+  socio_id        Int       @unique
+  username        String    @unique @db.VarChar(50)
+  password_hash   String    @db.VarChar(255)
+  estado          Boolean   @default(true)
+  ultimo_acceso   DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  
+  // Relaciones
+  socio           Socio     @relation(fields: [socio_id], references: [id], onDelete: Cascade)
+  pagos_web       PagoWeb[]
+  
+  @@map("usuarios_digitales")
+}
+
+model PagoWeb {
+  id                  Int             @id @default(autoincrement())
+  usuario_digital_id  Int
+  monto_usd           Decimal         @db.Decimal(10, 2)
+  monto_bs            Decimal         @db.Decimal(10, 2)
+  referencia_bancaria String          @db.VarChar(100)
+  banco               String          @db.VarChar(100)
+  fecha_pago          DateTime        @db.Date
+  estado              EstadoPagoWeb   @default(pendiente)
+  fecha_conciliacion  DateTime?       @db.Date
+  observaciones       String?         @db.Text
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+  
+  // Relaciones
+  usuario_digital     UsuarioDigital  @relation(fields: [usuario_digital_id], references: [id])
+  
+  @@index([usuario_digital_id])
+  @@index([estado])
+  @@index([fecha_pago])
+  @@map("pagos_web")
+}
+
+enum EstadoPagoWeb {
+  pendiente
+  conciliado
+  rechazado
+}
+
+// ============================================
+// PARÁMETROS DEL SISTEMA
+// ============================================
+
+model ParametroSistema {
+  id              Int      @id @default(autoincrement())
+  clave           String   @unique @db.VarChar(50)
+  valor           String   @db.Text
+  descripcion     String?  @db.Text
+  tipo_dato       String   @default("string") @db.VarChar(20) // string, number, boolean, json
+  actualizado_por Int?
+  updated_at      DateTime @updatedAt
+  created_at      DateTime @default(now())
+  
+  @@map("parametros_sistema")
+}
+
+model HistoricoTasaCambio {
+  id                Int      @id @default(autoincrement())
+  tasa              Decimal  @db.Decimal(10, 4)
+  fecha_vigencia    DateTime @db.Date
+  actualizado_por   Int?
+  created_at        DateTime @default(now())
+  
+  @@index([fecha_vigencia])
+  @@map("historico_tasa_cambio")
+}
+
+// ============================================
+// SEMANAS DE COLECTA (GESTIÓN TASA SEMANAL)
+// ============================================
+
+model SemanaColecta {
+  id               Int      @id @default(autoincrement())
+  semana           Int      // Semana del año (1-52)
+  ano              Int      // Año
+  tasa_usd_bs      Decimal  @db.Decimal(10, 4) // Tasa semanal USD/Bs (ej: 700.22)
+  meta_ahorro      Decimal? @default(0) @db.Decimal(15, 2) // Meta de colecta Ahorro
+  meta_funeraria   Decimal? @default(0) @db.Decimal(15, 2) // Meta de colecta Funeraria
+  meta_salud       Decimal? @default(0) @db.Decimal(15, 2) // Meta de colecta Salud
+  fecha_inicio     DateTime @db.Date // Fecha de inicio de la semana
+  fecha_fin        DateTime @db.Date // Fecha de fin de la semana
+  estado           Boolean  @default(true) // Activa/Inactiva
+  actualizado_por  Int?
+  updated_at       DateTime @updatedAt
+  created_at       DateTime @default(now())
+  
+  // Relaciones
+  colectas         Colecta[] // Colectas realizadas en esta semana
+  
+  @@unique([semana, ano])
+  @@index([fecha_inicio, fecha_fin])
+  @@index([ano, semana])
+  @@map("semanas_colecta")
+}
+
+// ============================================
+// AUDITORÍA
+// ============================================
+
+model AuditLog {
+  id              Int      @id @default(autoincrement())
+  usuario_id      Int?
+  accion          String   @db.VarChar(50) // CREATE, UPDATE, DELETE, LOGIN, etc.
+  modulo          String   @db.VarChar(50) // socios, prestamos, colecta, etc.
+  registro_id     Int?     // ID del registro afectado
+  datos_antes     Json?    // Estado antes del cambio
+  datos_despues   Json?    // Estado después del cambio
+  ip_address      String?  @db.VarChar(45) // IPv4 o IPv6
+  user_agent      String?  @db.Text
+  created_at      DateTime @default(now())
+  
+  // Relaciones
+  usuario         Usuario? @relation(fields: [usuario_id], references: [id])
+  
+  @@index([usuario_id])
+  @@index([accion])
+  @@index([modulo])
+  @@index([created_at])
+  @@map("audit_log")
+}
