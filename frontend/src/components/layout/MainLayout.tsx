@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
@@ -7,11 +8,13 @@ interface MainLayoutProps {
 }
 
 export const MainLayout = ({ children }: MainLayoutProps) => {
+  const [isCollapsed, setIsCollapsed] = useState(false)
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(255,184,28,0.10),_transparent_26%),linear-gradient(180deg,_#fffdfa_0%,_#fbfcfa_42%,_#f8faf7_100%)]">
-      <Sidebar />
+      <Sidebar isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
       
-      <div className="ml-64 min-h-screen flex flex-col transition-all duration-300">
+      <div className={`min-h-screen flex flex-col transition-all duration-300 ${isCollapsed ? 'ml-16' : 'ml-64'}`}>
         <Header />
         
         <main className="flex-1 p-6">

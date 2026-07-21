@@ -20,6 +20,8 @@ import {
   
   // Estadísticas y utilidades
   obtenerEstadisticas,
+  obtenerEstadisticasPorFeria,
+  obtenerResumenPorFeria,
   recalcularSaldos,
 } from '../controllers/ahorroController';
 import { authenticate } from '../middleware/authenticate';
@@ -85,6 +87,18 @@ router.get('/movimientos', authenticate, consultarMovimientos);
  * Obtener estadísticas generales de ahorro
  */
 router.get('/estadisticas', authenticate, obtenerEstadisticas);
+
+/**
+ * GET /api/ahorro/estadisticas/por-feria
+ * Obtener estadísticas de ahorro agrupadas por feria/ubicación
+ */
+router.get('/estadisticas/por-feria', authenticate, obtenerEstadisticasPorFeria);
+
+/**
+ * GET /api/ahorro/estadisticas/resumen-ferias
+ * Obtener resumen simplificado por ferias
+ */
+router.get('/estadisticas/resumen-ferias', authenticate, obtenerResumenPorFeria);
 
 /**
  * POST /api/ahorro/recalcular-saldos

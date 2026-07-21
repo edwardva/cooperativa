@@ -4,6 +4,8 @@ export interface Ubicacion {
   id: number
   codigo: string
   nombre: string
+  direccion: string | null
+  descripcion?: string | null
 }
 
 export interface Socio {
@@ -12,12 +14,13 @@ export interface Socio {
   cedula: string
   nombre: string
   apellido: string
+  sexo: string | null
   fecha_nacimiento: string | null
   direccion: string | null
   telefono: string | null
   email: string | null
   fecha_inscripcion: string
-  estado: 'activo' | 'suspendido' | 'inactivo' | 'retirado'
+  estado: 'activo' | 'retirado' | 'invalido'
   es_delegado: boolean
   ubicacion_id: number | null
   autorizado_nombre: string | null
@@ -37,6 +40,7 @@ export interface SocioFormData {
   cedula: string
   nombre: string
   apellido: string
+  sexo: string
   fecha_nacimiento: string
   direccion: string
   telefono: string
@@ -46,7 +50,11 @@ export interface SocioFormData {
   autorizado_nombre: string
   autorizado_cedula: string
   notas: string
-  es_delegado: boolean
+}
+
+export interface RetiroSocioData {
+  fecha_retiro: string
+  motivo_retiro: 'Socio' | 'Voluntario' | 'Art. 5'
 }
 
 export interface EstadisticasSocios {
@@ -121,10 +129,18 @@ export const actualizarSocio = async (id: number, data: Partial<SocioFormData>):
 }
 
 /**
- * Eliminar un socio (soft delete)
+ * Eliminar un socio si no tiene asociaciones previas
  */
-export const eliminarSocio = async (id: number): Promise<SingleResponse<void>> => {
+export const eliminarSocio = async (id: number): Promise<SingleResponse<Socio>> => {
   const response = await apiClient.delete(`/socios/${id}`)
+  return response.data
+}
+
+/**
+ * Retirar un socio con fecha y motivo
+ */
+export const retirarSocio = async (id: number, data: RetiroSocioData): Promise<SingleResponse<Socio>> => {
+  const response = await apiClient.post(`/socios/${id}/retiro`, data)
   return response.data
 }
 

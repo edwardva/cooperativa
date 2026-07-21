@@ -14,6 +14,7 @@ const crearSocioSchema = z.object({
   cedula: z.string().min(7, 'Cédula debe tener al menos 7 dígitos').max(11).regex(/^\d+$/, 'Cédula solo debe contener números'),
   nombre: z.string().min(2, 'Nombre debe tener al menos 2 caracteres').max(100),
   apellido: z.string().min(2, 'Apellido debe tener al menos 2 caracteres').max(100),
+  sexo: z.enum(['M', 'F']).optional().nullable(),
   fecha_nacimiento: z.string().optional().nullable(),
   direccion: z.string().max(500).optional().nullable(),
   telefono: z.string().max(20).optional().nullable(),
@@ -32,6 +33,7 @@ const actualizarSocioSchema = z.object({
   cedula: z.string().min(7).max(11).regex(/^\d+$/, 'Cédula solo debe contener números').optional(),
   nombre: z.string().min(2).max(100).optional(),
   apellido: z.string().min(2).max(100).optional(),
+  sexo: z.enum(['M', 'F']).optional().nullable(),
   fecha_nacimiento: z.string().optional().nullable(),
   direccion: z.string().max(500).optional().nullable(),
   telefono: z.string().max(20).optional().nullable(),
@@ -43,7 +45,7 @@ const actualizarSocioSchema = z.object({
   notas: z.string().optional().nullable(),
   foto_url: z.string().max(255).optional().nullable(),
   es_delegado: z.boolean().optional(),
-  estado: z.enum(['activo', 'suspendido', 'inactivo', 'retirado']).optional(),
+  estado: z.enum(['activo', 'retirado', 'invalido']).optional(),
 });
 
 const agregarBeneficiarioSchema = z.object({
@@ -56,8 +58,41 @@ const agregarBeneficiarioSchema = z.object({
 });
 
 const actualizarBeneficiarioSchema = agregarBeneficiarioSchema.extend({
-  estado: z.enum(['activo', 'inactivo', 'retirado']).optional(),
+  estado: z.enum(['activo', 'retirado']).optional(),
 }).partial();
+
+const retiroSocioSchema = z.object({
+  fecha_retiro: z.string().min(1, 'Fecha de retiro requerida'),
+  motivo_retiro: z.enum(['Socio', 'Voluntario', 'Art. 5']),
+});
+
+const contarAsociacionesSocio = async (socioId: number) => {
+  const [beneficiarios, cuentasAhorro, prestamos, fiadores, colectas, usuarioDigital, auditorias] = await Promise.all([
+    prisma.beneficiario.count({ where: { socio_id: socioId } }),
+    prisma.cuentaAhorro.count({ where: { socio_id: socioId } }),
+    prisma.prestamo.count({ where: { socio_id: socioId } }),
+    prisma.fiador.count({ where: { socio_id: socioId } }),
+    prisma.colecta.count({ where: { socio_id: socioId } }),
+    prisma.usuarioDigital.count({ where: { socio_id: socioId } }),
+    prisma.auditLog.count({
+      where: {
+        modulo: 'socios',
+        registro_id: socioId,
+      },
+    }),
+  ]);
+
+  return {
+    beneficiarios,
+    cuentasAhorro,
+    prestamos,
+    fiadores,
+    colectas,
+    usuarioDigital,
+    auditorias,
+    total: beneficiarios + cuentasAhorro + prestamos + fiadores + colectas + usuarioDigital + auditorias,
+  };
+};
 
 // ============================================
 // CONTROLADORES - SOCIOS
@@ -113,6 +148,7 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
               id: true,
               codigo: true,
               nombre: true,
+              direccion: true,
             },
           },
           _count: {
@@ -244,12 +280,17 @@ export const buscarSocioPorCedula = async (req: Request, res: Response): Promise
       return;
     }
 
-    const socio = await prisma.socio.findUnique({
+    const socio = await prisma.socio.findFirst({
       where: { cedula },
+      orderBy: [
+        { estado: 'asc' },
+        { codigo_socio: 'asc' },
+      ],
       include: {
         ubicacion: {
           select: {
             nombre: true,
+            direccion: true,
           },
         },
         cuentas_ahorro: {
@@ -336,22 +377,6 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
         error: {
           code: 'CODIGO_DUPLICADO',
           message: `El código de socio ${datos.codigo_socio} ya existe`,
-        },
-      });
-      return;
-    }
-
-    // Validar cédula única
-    const cedulaExistente = await prisma.socio.findUnique({
-      where: { cedula: datos.cedula },
-    });
-
-    if (cedulaExistente) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'CEDULA_DUPLICADA',
-          message: `La cédula ${datos.cedula} ya está registrada`,
         },
       });
       return;
@@ -500,24 +525,6 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
       }
     }
 
-    // Validar cédula única si se está cambiando
-    if (datos.cedula && datos.cedula !== socioExistente.cedula) {
-      const cedulaExistente = await prisma.socio.findUnique({
-        where: { cedula: datos.cedula },
-      });
-
-      if (cedulaExistente) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: 'CEDULA_DUPLICADA',
-            message: `La cédula ${datos.cedula} ya está registrada`,
-          },
-        });
-        return;
-      }
-    }
-
     // Validar ubicación si se proporciona
     if (datos.ubicacion_id) {
       const ubicacion = await prisma.ubicacion.findUnique({
@@ -593,7 +600,7 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
 };
 
 /**
- * Eliminar un socio (soft delete cambiando estado a 'retirado')
+ * Eliminar un socio solo si no tiene relaciones registradas
  */
 export const eliminarSocio = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -635,7 +642,101 @@ export const eliminarSocio = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Validar que no tenga préstamos activos
+    const asociaciones = await contarAsociacionesSocio(socioId);
+
+    if (asociaciones.total > 0) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'SOCIO_CON_ASOCIACIONES',
+          message: 'El socio no puede eliminarse porque ya tiene relaciones o movimientos en el sistema',
+          details: asociaciones,
+        },
+      });
+      return;
+    }
+
+    const socioEliminado = await prisma.socio.delete({
+      where: { id: socioId },
+    });
+
+    // Audit log
+    await prisma.auditLog.create({
+      data: {
+        usuario_id: req.user!.userId,
+        accion: 'DELETE',
+        modulo: 'socios',
+        registro_id: socio.id,
+        datos_antes: socio as any,
+        datos_despues: socioEliminado as any,
+        ip_address: req.ip || 'unknown',
+        user_agent: req.get('user-agent') || 'unknown',
+      },
+    });
+
+    logger.info(`Socio eliminado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
+
+    res.json({
+      success: true,
+      data: socioEliminado,
+    });
+  } catch (error) {
+    logger.error('Error al eliminar socio:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al eliminar socio',
+      },
+    });
+  }
+};
+
+/**
+ * Retirar un socio con fecha y motivo
+ */
+export const retirarSocio = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ID',
+          message: 'ID inválido',
+        },
+      });
+      return;
+    }
+
+    const socioId = parseInt(id, 10);
+    const datos = retiroSocioSchema.parse(req.body);
+
+    const socio = await prisma.socio.findUnique({ where: { id: socioId } });
+
+    if (!socio) {
+      res.status(404).json({
+        success: false,
+        error: {
+          code: 'SOCIO_NOT_FOUND',
+          message: 'Socio no encontrado',
+        },
+      });
+      return;
+    }
+
+    if (socio.estado === 'retirado') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'SOCIO_YA_RETIRADO',
+          message: 'El socio ya está retirado',
+        },
+      });
+      return;
+    }
+
     const prestamosActivos = await prisma.prestamo.count({
       where: {
         socio_id: socioId,
@@ -654,14 +755,10 @@ export const eliminarSocio = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Validar que no tenga cuentas con saldo
     const cuentasConSaldo = await prisma.cuentaAhorro.count({
       where: {
         socio_id: socioId,
-        OR: [
-          { saldo_bs: { gt: 0 } },
-          { saldo_usd: { gt: 0 } },
-        ],
+        OR: [{ saldo_bs: { gt: 0 } }, { saldo_usd: { gt: 0 } }],
       },
     });
 
@@ -676,20 +773,21 @@ export const eliminarSocio = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Soft delete (cambiar estado a retirado)
+    const notaRetiro = `[RETIRO] Fecha: ${datos.fecha_retiro} | Motivo: ${datos.motivo_retiro} | Usuario: ${req.user!.userId}`;
+    const notasActualizadas = [socio.notas?.trim(), notaRetiro].filter(Boolean).join('\n');
+
     const socioActualizado = await prisma.socio.update({
       where: { id: socioId },
       data: {
         estado: 'retirado',
-        notas: `${socio.notas || ''}\n[${new Date().toISOString()}] Socio retirado por usuario ${req.user!.userId}`.trim(),
+        notas: notasActualizadas,
       },
     });
 
-    // Audit log
     await prisma.auditLog.create({
       data: {
         usuario_id: req.user!.userId,
-        accion: 'ELIMINAR',
+        accion: 'RETIRAR',
         modulo: 'socios',
         registro_id: socio.id,
         datos_antes: socio as any,
@@ -699,19 +797,19 @@ export const eliminarSocio = async (req: Request, res: Response): Promise<void> 
       },
     });
 
-    logger.info(`Socio eliminado (soft delete): ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
+    logger.info(`Socio retirado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
 
     res.json({
       success: true,
       data: socioActualizado,
     });
   } catch (error) {
-    logger.error('Error al eliminar socio:', error);
+    logger.error('Error al retirar socio:', error);
     res.status(500).json({
       success: false,
       error: {
         code: 'INTERNAL_ERROR',
-        message: 'Error al eliminar socio',
+        message: 'Error al retirar socio',
       },
     });
   }
@@ -1139,14 +1237,12 @@ export const obtenerEstadisticasSocios = async (_req: Request, res: Response): P
     const [
       totalSocios,
       sociosActivos,
-      sociosSuspendidos,
       sociosRetirados,
       sociosPorUbicacion,
       totalBeneficiarios,
     ] = await Promise.all([
       prisma.socio.count(),
       prisma.socio.count({ where: { estado: 'activo' } }),
-      prisma.socio.count({ where: { estado: 'suspendido' } }),
       prisma.socio.count({ where: { estado: 'retirado' } }),
       prisma.socio.groupBy({
         by: ['ubicacion_id'],
@@ -1160,7 +1256,6 @@ export const obtenerEstadisticasSocios = async (_req: Request, res: Response): P
       data: {
         totalSocios,
         sociosActivos,
-        sociosSuspendidos,
         sociosRetirados,
         sociosPorUbicacion,
         totalBeneficiarios,

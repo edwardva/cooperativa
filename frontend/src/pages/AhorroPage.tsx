@@ -140,7 +140,7 @@ export const AhorroPage = () => {
   const [paginaActual, setPaginaActual] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
   const [totalRegistros, setTotalRegistros] = useState(0);
-  const registrosPorPagina = 50;
+  const [registrosPorPagina, setRegistrosPorPagina] = useState(20);
 
   // Cargar estadísticas (una sola vez)
   useEffect(() => {
@@ -185,7 +185,7 @@ export const AhorroPage = () => {
       }
     };
     void cargarCuentas();
-  }, [paginaActual, busqueda, filtroEstado, filtroTipoCuenta]);
+  }, [paginaActual, busqueda, filtroEstado, filtroTipoCuenta, registrosPorPagina]);
 
   const saldoDisponibleUsd = estadisticas.total_saldo_usd - estadisticas.total_bloqueado_usd;
   const saldoDisponibleBs = estadisticas.total_saldo_bs - estadisticas.total_bloqueado_bs;
@@ -535,9 +535,24 @@ export const AhorroPage = () => {
         {/* Paginación */}
         {!loading && cuentas.length > 0 && (
           <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-            <div className="text-sm text-gray-700">
-              Mostrando {(paginaActual - 1) * registrosPorPagina + 1} a{' '}
-              {Math.min(paginaActual * registrosPorPagina, totalRegistros)} de {totalRegistros} cuentas
+            <div className="flex items-center gap-3">
+              <div className="text-sm text-gray-700">
+                Mostrando {(paginaActual - 1) * registrosPorPagina + 1} a{' '}
+                {Math.min(paginaActual * registrosPorPagina, totalRegistros)} de {totalRegistros} cuentas
+              </div>
+              <select
+                value={registrosPorPagina}
+                onChange={(e) => {
+                  setRegistrosPorPagina(Number(e.target.value))
+                  setPaginaActual(1)
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
             </div>
             <div className="flex items-center gap-2">
               <Button

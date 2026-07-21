@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { 
@@ -47,8 +46,12 @@ const navigationItems: NavItem[] = [
   { name: 'Parámetros', path: '/parametros', icon: Settings },
 ]
 
-export const Sidebar = () => {
-  const [isCollapsed, setIsCollapsed] = useState(false)
+interface SidebarProps {
+  isCollapsed: boolean
+  setIsCollapsed: (collapsed: boolean) => void
+}
+
+export const Sidebar = ({ isCollapsed, setIsCollapsed }: SidebarProps) => {
   const location = useLocation()
 
   const toggleSidebar = () => setIsCollapsed(!isCollapsed)

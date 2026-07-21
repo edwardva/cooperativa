@@ -41,9 +41,8 @@ export enum EstadoUsuario {
 
 export enum EstadoSocio {
   ACTIVO = 'ACTIVO',
-  INACTIVO = 'INACTIVO',
-  SUSPENDIDO = 'SUSPENDIDO',
   RETIRADO = 'RETIRADO',
+  INVALIDO = 'INVALIDO',
 }
 
 export enum Moneda {

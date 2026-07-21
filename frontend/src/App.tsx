@@ -6,7 +6,7 @@ import { MainLayout } from './components/layout/MainLayout'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import { ParametrosPage } from './pages/ParametrosPage'
-import { UbicacionesPage } from './pages/UbicacionesPage'
+import { FeriasPage } from './pages/FeriasPage'
 import { TiposCuentaPage } from './pages/TiposCuentaPage'
 import { TiposPrestamoPage } from './pages/TiposPrestamoPage'
 import { ReportesPage } from './pages/ReportesPage'
@@ -15,6 +15,7 @@ import { ImpresionPage } from './pages/ImpresionPage'
 import { SociosPage } from './pages/SociosPage'
 import { AhorroPage } from './pages/AhorroPage'
 import FunerariaPage from './pages/FunerariaPage'
+import SaludPage from './pages/SaludPage'
 
 function App() {
   const initialize = useAuthStore((state) => state.initialize)
@@ -61,7 +62,7 @@ function App() {
           element={
             <ProtectedRoute>
               <MainLayout>
-                <UbicacionesPage />
+                <FeriasPage />
               </MainLayout>
             </ProtectedRoute>
           }
@@ -151,6 +152,17 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <FunerariaPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/salud"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <SaludPage />
               </MainLayout>
             </ProtectedRoute>
           }

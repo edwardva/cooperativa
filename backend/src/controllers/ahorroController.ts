@@ -104,6 +104,7 @@ export const listarCuentas = async (req: Request, res: Response): Promise<void> 
     const {
       socio_id,
       tipo_cuenta_id,
+      ubicacion_id,
       estado,
       busqueda,
       page = 1,
@@ -114,6 +115,14 @@ export const listarCuentas = async (req: Request, res: Response): Promise<void> 
 
     if (socio_id) where.socio_id = Number(socio_id);
     if (tipo_cuenta_id) where.tipo_cuenta_id = Number(tipo_cuenta_id);
+    
+    // Filtro por feria/ubicación
+    if (ubicacion_id) {
+      where.socio = {
+        ubicacion_id: Number(ubicacion_id),
+      };
+    }
+    
     if (estado !== undefined) where.estado = estado === 'true';
     
     if (busqueda) {
@@ -1021,6 +1030,198 @@ export const recalcularSaldos = async (req: Request, res: Response): Promise<voi
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Error al recalcular saldos',
+      },
+    });
+  }
+};
+
+// ============================================
+// ENDPOINTS: ESTADÍSTICAS POR FERIA
+// ============================================
+
+/**
+ * GET /api/ahorro/estadisticas/por-feria
+ * Obtener estadísticas de ahorro agrupadas por feria/ubicación
+ */
+export const obtenerEstadisticasPorFeria = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { tipo_cuenta_id } = req.query;
+
+    // Obtener todas las ubicaciones activas
+    const ubicaciones = await prisma.ubicacion.findMany({
+      where: { estado: true },
+      orderBy: { nombre: 'asc' },
+    });
+
+    // Construir filtro base
+    const whereBase: Prisma.CuentaAhorroWhereInput = {
+      estado: true,
+    };
+
+    if (tipo_cuenta_id) {
+      whereBase.tipo_cuenta_id = Number(tipo_cuenta_id);
+    }
+
+    // Obtener estadísticas por cada ubicación
+    const estadisticas = await Promise.all(
+      ubicaciones.map(async (ubicacion) => {
+        const where: Prisma.CuentaAhorroWhereInput = {
+          ...whereBase,
+          socio: {
+            ubicacion_id: ubicacion.id,
+            estado: 'activo',
+          },
+        };
+
+        const [cuentas, totalSocios] = await Promise.all([
+          prisma.cuentaAhorro.findMany({
+            where,
+            select: {
+              saldo_usd: true,
+              saldo_bs: true,
+              monto_bloqueado_usd: true,
+              monto_bloqueado_bs: true,
+            },
+          }),
+          prisma.socio.count({
+            where: {
+              ubicacion_id: ubicacion.id,
+              estado: 'activo',
+            },
+          }),
+        ]);
+
+        // Calcular totales
+        const total_cuentas = cuentas.length;
+        const total_saldo_usd = cuentas.reduce((sum, c) => sum + Number(c.saldo_usd), 0);
+        const total_saldo_bs = cuentas.reduce((sum, c) => sum + Number(c.saldo_bs), 0);
+        const total_bloqueado_usd = cuentas.reduce((sum, c) => sum + Number(c.monto_bloqueado_usd), 0);
+        const total_bloqueado_bs = cuentas.reduce((sum, c) => sum + Number(c.monto_bloqueado_bs), 0);
+        const promedio_saldo_usd = total_cuentas > 0 ? total_saldo_usd / total_cuentas : 0;
+
+        return {
+          ubicacion: {
+            id: ubicacion.id,
+            codigo: ubicacion.codigo,
+            nombre: ubicacion.nombre,
+          },
+          socios_activos: totalSocios,
+          cuentas: {
+            total: total_cuentas,
+            porcentaje_penetracion: totalSocios > 0 ? (total_cuentas / totalSocios) * 100 : 0,
+          },
+          saldos: {
+            total_usd: total_saldo_usd,
+            total_bs: total_saldo_bs,
+            promedio_usd: promedio_saldo_usd,
+            bloqueado_usd: total_bloqueado_usd,
+            bloqueado_bs: total_bloqueado_bs,
+          },
+        };
+      })
+    );
+
+    // Calcular totales generales
+    const totales = estadisticas.reduce(
+      (acc, est) => ({
+        total_socios: acc.total_socios + est.socios_activos,
+        total_cuentas: acc.total_cuentas + est.cuentas.total,
+        total_saldo_usd: acc.total_saldo_usd + est.saldos.total_usd,
+        total_saldo_bs: acc.total_saldo_bs + est.saldos.total_bs,
+        total_bloqueado_usd: acc.total_bloqueado_usd + est.saldos.bloqueado_usd,
+        total_bloqueado_bs: acc.total_bloqueado_bs + est.saldos.bloqueado_bs,
+      }),
+      {
+        total_socios: 0,
+        total_cuentas: 0,
+        total_saldo_usd: 0,
+        total_saldo_bs: 0,
+        total_bloqueado_usd: 0,
+        total_bloqueado_bs: 0,
+      }
+    );
+
+    res.json({
+      success: true,
+      data: estadisticas,
+      meta: {
+        totales,
+        total_ubicaciones: ubicaciones.length,
+      },
+    });
+  } catch (error) {
+    logger.error('Error al obtener estadísticas por feria:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al obtener estadísticas por feria',
+      },
+    });
+  }
+};
+
+/**
+ * GET /api/ahorro/estadisticas/resumen-ferias
+ * Obtener resumen simplificado de ahorro por ferias
+ */
+export const obtenerResumenPorFeria = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const ubicaciones = await prisma.ubicacion.findMany({
+      where: { estado: true },
+      select: {
+        id: true,
+        codigo: true,
+        nombre: true,
+        _count: {
+          select: { socios: true },
+        },
+      },
+      orderBy: { nombre: 'asc' },
+    });
+
+    const resumen = await Promise.all(
+      ubicaciones.map(async (ubicacion) => {
+        const resultado = await prisma.cuentaAhorro.aggregate({
+          where: {
+            estado: true,
+            socio: {
+              ubicacion_id: ubicacion.id,
+              estado: 'activo',
+            },
+          },
+          _sum: {
+            saldo_usd: true,
+            saldo_bs: true,
+          },
+          _count: true,
+        });
+
+        return {
+          ubicacion: {
+            id: ubicacion.id,
+            codigo: ubicacion.codigo,
+            nombre: ubicacion.nombre,
+          },
+          total_socios: ubicacion._count.socios,
+          total_cuentas: resultado._count,
+          total_saldo_usd: Number(resultado._sum.saldo_usd || 0),
+          total_saldo_bs: Number(resultado._sum.saldo_bs || 0),
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: resumen,
+    });
+  } catch (error) {
+    logger.error('Error al obtener resumen por feria:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al obtener resumen por feria',
       },
     });
   }

@@ -1,12 +1,12 @@
 /**
  * ============================================
- * PAGE: FUNERARIA
+ * PAGE: SALUD
  * ============================================
- * Gestión de acuerdos de funeraria
+ * Gestión de acuerdos de servicio de salud
  * - Listado de acuerdos
  * - Crear nuevos acuerdos
  * - Cambiar estados (suspender, reactivar, retirar)
- * - Estadísticas y alertas
+ * - Estadísticas, alertas y derecho al servicio
  */
 
 import { useState, useEffect } from 'react';
@@ -22,22 +22,20 @@ import {
   ChevronRight,
   ChevronLeft,
   Loader2,
-  Shield,
+  HeartPulse,
+  ShieldOff,
 } from 'lucide-react';
-import * as funerariaService from '../services/funerariaService';
-import type {
-  AcuerdoFuneraria,
-  EstadisticasFuneraria,
-} from '../services/funerariaService';
+import * as saludService from '../services/saludService';
+import type { AcuerdoSalud, EstadisticasSalud } from '../services/saludService';
 
 // ============================================
 // COMPONENT
 // ============================================
 
-export default function FunerariaPage() {
+export default function SaludPage() {
   // Estados
-  const [acuerdos, setAcuerdos] = useState<AcuerdoFuneraria[]>([]);
-  const [estadisticas, setEstadisticas] = useState<EstadisticasFuneraria>({
+  const [acuerdos, setAcuerdos] = useState<AcuerdoSalud[]>([]);
+  const [estadisticas, setEstadisticas] = useState<EstadisticasSalud>({
     total_acuerdos: 0,
     por_estado: {
       activos: 0,
@@ -49,6 +47,7 @@ export default function FunerariaPage() {
     },
     por_tipo: [],
     proximos_suspender: 0,
+    sin_derecho_servicio: 0,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +57,6 @@ export default function FunerariaPage() {
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'activo' | 'suspendido' | 'retirado'>(
     'todos'
   );
-  const [filtroTipo, setFiltroTipo] = useState('todos');
 
   // Paginación
   const [paginaActual, setPaginaActual] = useState(1);
@@ -70,22 +68,20 @@ export default function FunerariaPage() {
   const [modalAbierto, setModalAbierto] = useState<'crear' | 'detalle' | 'cambiar-estado' | null>(
     null
   );
-  const [_acuerdoSeleccionado, setAcuerdoSeleccionado] = useState<AcuerdoFuneraria | null>(null);
+  const [_acuerdoSeleccionado, setAcuerdoSeleccionado] = useState<AcuerdoSalud | null>(null);
 
   // ============================================
   // EFFECTS
   // ============================================
 
-  // Cargar estadísticas
   useEffect(() => {
     const cargarEstadisticas = async () => {
       try {
-        const response = await funerariaService.obtenerEstadisticas();
+        const response = await saludService.obtenerEstadisticas();
         if (response.success && response.data) {
-          const data = response.data as any;
-          // Calcular porcentajes
-          const total = data.total_acuerdos || 1; // Evitar división por 0
-          const estadisticasEnriquecidas: EstadisticasFuneraria = {
+          const data = response.data;
+          const total = data.total_acuerdos || 1;
+          const estadisticasEnriquecidas: EstadisticasSalud = {
             total_acuerdos: data.total_acuerdos || 0,
             por_estado: {
               activos: data.por_estado?.activos || 0,
@@ -97,6 +93,7 @@ export default function FunerariaPage() {
             },
             por_tipo: data.por_tipo || [],
             proximos_suspender: data.alertas?.proximos_suspender || 0,
+            sin_derecho_servicio: data.alertas?.sin_derecho_servicio || 0,
           };
           setEstadisticas(estadisticasEnriquecidas);
         }
@@ -107,7 +104,6 @@ export default function FunerariaPage() {
     void cargarEstadisticas();
   }, []);
 
-  // Cargar acuerdos
   useEffect(() => {
     const cargarAcuerdos = async () => {
       try {
@@ -121,7 +117,7 @@ export default function FunerariaPage() {
           ...(busqueda && { buscar: busqueda }),
         };
 
-        const response = await funerariaService.obtenerAcuerdos(params);
+        const response = await saludService.obtenerAcuerdos(params);
 
         if (response.success && response.data) {
           setAcuerdos(response.data);
@@ -130,7 +126,7 @@ export default function FunerariaPage() {
         }
       } catch (err) {
         console.error('Error al cargar acuerdos:', err);
-        setError('Error al cargar acuerdos de funeraria');
+        setError('Error al cargar acuerdos de salud');
         setAcuerdos([]);
       } finally {
         setLoading(false);
@@ -175,29 +171,24 @@ export default function FunerariaPage() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* ============================================ */}
       {/* HEADER */}
-      {/* ============================================ */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Funeraria</h1>
-          <p className="mt-1 text-sm text-gray-500">Gestión de acuerdos de servicio funerario</p>
+          <h1 className="text-3xl font-bold text-gray-900">Salud</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Gestión de acuerdos de servicio de salud · Derecho al servicio requiere pago al día
+          </p>
         </div>
         <div className="flex gap-3">
-          <Button
-            onClick={() => setModalAbierto('crear')}
-            className="flex items-center gap-2"
-          >
+          <Button onClick={() => setModalAbierto('crear')} className="flex items-center gap-2">
             <PlusCircle className="w-4 h-4" />
             Nuevo Acuerdo
           </Button>
         </div>
       </div>
 
-      {/* ============================================ */}
       {/* ESTADÍSTICAS */}
-      {/* ============================================ */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <Card className="p-5">
           <div className="flex items-center justify-between">
             <div>
@@ -205,12 +196,10 @@ export default function FunerariaPage() {
               <p className="text-2xl font-bold text-gray-900 mt-1">
                 {estadisticas.total_acuerdos.toLocaleString()}
               </p>
-              <p className="text-xs text-gray-500 mt-1">
-                {estadisticas.por_estado.activos} activos
-              </p>
+              <p className="text-xs text-gray-500 mt-1">{estadisticas.por_estado.activos} activos</p>
             </div>
             <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center">
-              <Shield className="w-6 h-6 text-indigo-600" />
+              <HeartPulse className="w-6 h-6 text-indigo-600" />
             </div>
           </div>
         </Card>
@@ -256,21 +245,33 @@ export default function FunerariaPage() {
               <p className="text-2xl font-bold text-rose-600 mt-1">
                 {estadisticas.proximos_suspender.toLocaleString()}
               </p>
-              <p className="text-xs text-gray-500 mt-1">≥ 5 semanas sin pago</p>
+              <p className="text-xs text-gray-500 mt-1">≥ 10 semanas sin pago</p>
             </div>
             <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center">
               <AlertTriangle className="w-6 h-6 text-rose-600" />
             </div>
           </div>
         </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Sin Derecho a Servicio</p>
+              <p className="text-2xl font-bold text-gray-700 mt-1">
+                {estadisticas.sin_derecho_servicio.toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Activos con atraso</p>
+            </div>
+            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center">
+              <ShieldOff className="w-6 h-6 text-gray-600" />
+            </div>
+          </div>
+        </Card>
       </div>
 
-      {/* ============================================ */}
       {/* FILTROS Y BÚSQUEDA */}
-      {/* ============================================ */}
       <Card className="p-4">
         <div className="flex flex-col md:flex-row gap-4">
-          {/* Búsqueda */}
           <div className="flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -287,7 +288,6 @@ export default function FunerariaPage() {
             </div>
           </div>
 
-          {/* Filtro Estado */}
           <select
             value={filtroEstado}
             onChange={(e) => {
@@ -301,25 +301,10 @@ export default function FunerariaPage() {
             <option value="suspendido">Suspendidos</option>
             <option value="retirado">Retirados</option>
           </select>
-
-          {/* Filtro Tipo */}
-          <select
-            value={filtroTipo}
-            onChange={(e) => {
-              setFiltroTipo(e.target.value);
-              setPaginaActual(1);
-            }}
-            className="px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-          >
-            <option value="todos">Todos los tipos</option>
-            <option value="01">Funeraria General</option>
-          </select>
         </div>
       </Card>
 
-      {/* ============================================ */}
       {/* LISTADO DE ACUERDOS */}
-      {/* ============================================ */}
       <Card>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
@@ -341,10 +326,10 @@ export default function FunerariaPage() {
                   Semanas Sin Pago
                 </th>
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
+                  Derecho a Servicio
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fecha Inicio
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Estado
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones
@@ -386,7 +371,7 @@ export default function FunerariaPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-10 w-10 bg-indigo-100 rounded-full flex items-center justify-center">
-                          <Shield className="h-5 w-5 text-indigo-600" />
+                          <HeartPulse className="h-5 w-5 text-indigo-600" />
                         </div>
                         <div className="ml-4">
                           <div className="text-sm font-medium text-gray-900">
@@ -410,9 +395,7 @@ export default function FunerariaPage() {
                           <div className="text-sm text-gray-900">
                             {acuerdo.socio.nombre_completo}
                           </div>
-                          <div className="text-xs text-gray-500">
-                            {acuerdo.socio.codigo_socio}
-                          </div>
+                          <div className="text-xs text-gray-500">{acuerdo.socio.codigo_socio}</div>
                         </>
                       ) : (
                         <div className="text-sm text-gray-400 italic">Sin socio asignado</div>
@@ -427,7 +410,7 @@ export default function FunerariaPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
-                      {acuerdo.semanas_sin_pago >= 5 ? (
+                      {acuerdo.semanas_sin_pago >= 10 ? (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-800">
                           <AlertTriangle className="w-3 h-3 mr-1" />
                           {acuerdo.semanas_sin_pago}
@@ -441,19 +424,25 @@ export default function FunerariaPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
+                      {acuerdo.derecho_al_servicio ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                          <CheckCircle className="w-3 h-3" />
+                          Sí
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                          <ShieldOff className="w-3 h-3" />
+                          No
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
                       <span
                         className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${obtenerColorEstado(acuerdo.estado)}`}
                       >
                         {obtenerIconoEstado(acuerdo.estado)}
                         {acuerdo.estado.charAt(0).toUpperCase() + acuerdo.estado.slice(1)}
                       </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(acuerdo.fecha_inicio).toLocaleDateString('es-ES', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                      })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button
@@ -474,9 +463,7 @@ export default function FunerariaPage() {
           </table>
         </div>
 
-        {/* ============================================ */}
         {/* PAGINACIÓN */}
-        {/* ============================================ */}
         {!loading && acuerdos.length > 0 && (
           <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
             <div className="flex-1 flex justify-between sm:hidden">
@@ -499,9 +486,7 @@ export default function FunerariaPage() {
               <div className="flex items-center gap-3">
                 <p className="text-sm text-gray-700">
                   Mostrando{' '}
-                  <span className="font-medium">
-                    {(paginaActual - 1) * ITEMS_POR_PAGINA + 1}
-                  </span>{' '}
+                  <span className="font-medium">{(paginaActual - 1) * ITEMS_POR_PAGINA + 1}</span>{' '}
                   a{' '}
                   <span className="font-medium">
                     {Math.min(paginaActual * ITEMS_POR_PAGINA, totalRegistros)}
@@ -584,10 +569,7 @@ export default function FunerariaPage() {
         )}
       </Card>
 
-      {/* ============================================ */}
       {/* MODALES */}
-      {/* ============================================ */}
-      {/* TODO: Implementar modales */}
       {modalAbierto === 'crear' && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <Card className="w-full max-w-md p-6">

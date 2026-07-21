@@ -6,6 +6,7 @@ import {
   crearSocio,
   actualizarSocio,
   eliminarSocio,
+  retirarSocio,
   obtenerBeneficiarios,
   agregarBeneficiario,
   actualizarBeneficiario,
@@ -100,6 +101,16 @@ router.delete(
   '/:id',
   authorize('socios', 'delete'),
   eliminarSocio
+);
+
+/**
+ * POST /api/socios/:id/retiro
+ * Registrar retiro de un socio con fecha y motivo
+ */
+router.post(
+  '/:id/retiro',
+  authorize('socios', 'update'),
+  retirarSocio
 );
 
 // ============================================

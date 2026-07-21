@@ -19,6 +19,7 @@ import impresionRouter from './routes/impresion';
 import sociosRouter from './routes/socios';
 import ahorroRouter from './routes/ahorro';
 import funerariaRouter from './routes/funeraria';
+import saludRouter from './routes/salud';
 
 const app: Application = express();
 
@@ -89,6 +90,7 @@ app.get('/api', (_req: Request, res: Response) => {
       socios: '/api/socios',
       ahorro: '/api/ahorro',
       funeraria: '/api/funeraria',
+      salud: '/api/salud',
       prestamos: '/api/prestamos',
       colecta: '/api/colecta',
     },
@@ -107,6 +109,7 @@ app.use('/api/impresion', impresionRouter);
 app.use('/api/socios', sociosRouter);
 app.use('/api/ahorro', ahorroRouter);
 app.use('/api/funeraria', funerariaRouter);
+app.use('/api/salud', saludRouter);
 
 // ============================================
 // 404 HANDLER
