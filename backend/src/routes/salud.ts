@@ -7,6 +7,7 @@
 
 import { Router } from 'express';
 import {
+  listarTiposAcuerdo,
   listarAcuerdos,
   obtenerEstadisticas,
   obtenerAcuerdosPorSocio,
@@ -22,6 +23,12 @@ const router = Router();
 // ============================================
 // RUTAS DE ACUERDOS DE SALUD
 // ============================================
+
+/**
+ * GET /api/salud/tipos-acuerdo
+ * Listar tipos de acuerdo activos (catálogo)
+ */
+router.get('/tipos-acuerdo', authenticate, listarTiposAcuerdo);
 
 /**
  * GET /api/salud/estadisticas

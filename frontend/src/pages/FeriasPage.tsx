@@ -58,7 +58,11 @@ export const FeriasPage = () => {
 
   const handleGuardar = async (id: number) => {
     try {
-      const response = await feriasService.actualizarUbicacion(id, formData);
+      const response = await feriasService.actualizarUbicacion(id, {
+        ...formData,
+        direccion: formData.direccion ?? undefined,
+        telefono: formData.telefono ?? undefined,
+      });
       if (response.success) {
         await cargarFerias(); // Recargar la lista
         setEditando(null);

@@ -80,6 +80,7 @@ model Socio {
   foto_url              String?            @db.VarChar(255)
   autorizado_nombre     String?            @db.VarChar(100) // Persona que autoriza al socio
   autorizado_cedula     String?            @db.VarChar(11)  // Cédula del autorizado
+  codigo_social         String?            @db.VarChar(30)  // Código de programas sociales
   notas                 String?            @db.Text         // Historial y observaciones
   created_at            DateTime           @default(now())
   updated_at            DateTime           @updatedAt
@@ -107,9 +108,11 @@ model Beneficiario {
   nombre               String                @db.VarChar(100)
   apellido             String                @db.VarChar(100)
   fecha_nacimiento     DateTime?             @db.Date
+  fecha_ingreso        DateTime?             @db.Date
   parentesco           String                @db.VarChar(50) // hijo, cónyuge, padre, madre, etc.
   telefono             String?               @db.VarChar(20)
   estado               EstadoBeneficiario    @default(activo)
+  fecha_fallecimiento  DateTime?             @db.Date
   created_at           DateTime              @default(now())
   updated_at           DateTime              @updatedAt
   
@@ -134,6 +137,7 @@ enum EstadoBeneficiario {
   activo
   inactivo
   retirado
+  fallecido
 }
 
 // ============================================
@@ -242,20 +246,25 @@ model AcuerdoFuneraria {
   id                   Int                   @id @default(autoincrement())
   beneficiario_id      Int
   tipo_acuerdo_id      Int
+  numero_acuerdo       String?               @unique @db.VarChar(20)
+  numero_contrato      String?               @db.VarChar(20)
   estado               EstadoServicio        @default(activo)
   semanas_sin_pago     Int                   @default(0)
   fecha_suspension     DateTime?             @db.Date
+  fecha_retiro         DateTime?             @db.Date
+  motivo_retiro        String?               @db.Text
   fecha_inicio         DateTime              @default(now()) @db.Date
   created_at           DateTime              @default(now())
   updated_at           DateTime              @updatedAt
-  
+
   // Relaciones
   beneficiario         Beneficiario          @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
   tipo_acuerdo         TipoAcuerdoFuneraria  @relation(fields: [tipo_acuerdo_id], references: [id])
   movimientos          MovimientoFuneraria[]
-  
+
   @@index([beneficiario_id])
   @@index([estado])
+  @@index([numero_acuerdo])
   @@map("acuerdos_funeraria")
 }
 

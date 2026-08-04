@@ -9,6 +9,7 @@ import { Router } from 'express';
 import {
   reporteSocios,
   reportePrestamos,
+  reporteFunerariaSuspendidos,
   listarTiposReportes,
 } from '../controllers/reportesController';
 import { authenticate } from '../middleware/authenticate';
@@ -39,5 +40,16 @@ router.post('/socios', authorize('reportes', 'generate'), reporteSocios);
  * Permiso: reportes:generate
  */
 router.post('/prestamos', authorize('reportes', 'generate'), reportePrestamos);
+
+/**
+ * POST /api/reportes/funeraria-suspendidos
+ * Generar reporte de acuerdos de funeraria suspendidos
+ * Permiso: reportes:export
+ */
+router.post(
+  '/funeraria-suspendidos',
+  authorize('reportes', 'export'),
+  reporteFunerariaSuspendidos
+);
 
 export default router;

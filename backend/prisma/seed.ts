@@ -11,50 +11,61 @@ async function main() {
   // ============================================
   console.log('📝 Creando roles...');
   
+  const permisosAdmin = {
+    socios: ['create', 'read', 'update', 'delete'],
+    ahorro: ['create', 'read', 'update', 'delete'],
+    funeraria: ['create', 'read', 'update', 'delete'],
+    prestamos: ['create', 'read', 'update', 'delete', 'approve'],
+    colecta: ['create', 'read', 'update'],
+    reportes: ['read', 'export'],
+    parametros: ['read', 'update'],
+    usuarios: ['create', 'read', 'update', 'delete'],
+    impresion: ['create', 'read'],
+  };
+
   const rolAdmin = await prisma.rol.upsert({
     where: { nombre: 'admin' },
-    update: {},
+    update: { permisos: permisosAdmin },
     create: {
       nombre: 'admin',
       descripcion: 'Administrador del sistema con acceso completo',
-      permisos: {
-        socios: ['create', 'read', 'update', 'delete'],
-        ahorro: ['create', 'read', 'update', 'delete'],
-        prestamos: ['create', 'read', 'update', 'delete', 'approve'],
-        colecta: ['create', 'read', 'update'],
-        reportes: ['read', 'export'],
-        parametros: ['read', 'update'],
-        usuarios: ['create', 'read', 'update', 'delete'],
-      },
+      permisos: permisosAdmin,
     },
   });
+
+  const permisosCajero = {
+    socios: ['read'],
+    funeraria: ['create', 'read', 'update'],
+    colecta: ['create', 'read'],
+    reportes: ['read'],
+    impresion: ['create', 'read'],
+  };
 
   const rolCajero = await prisma.rol.upsert({
     where: { nombre: 'cajero' },
-    update: {},
+    update: { permisos: permisosCajero },
     create: {
       nombre: 'cajero',
       descripcion: 'Cajero operador de colecta',
-      permisos: {
-        socios: ['read'],
-        colecta: ['create', 'read'],
-        reportes: ['read'],
-      },
+      permisos: permisosCajero,
     },
   });
 
+  const permisosAnalista = {
+    socios: ['create', 'read', 'update'],
+    ahorro: ['read'],
+    funeraria: ['read'],
+    prestamos: ['create', 'read', 'update'],
+    reportes: ['read', 'export'],
+  };
+
   const rolAnalista = await prisma.rol.upsert({
     where: { nombre: 'analista' },
-    update: {},
+    update: { permisos: permisosAnalista },
     create: {
       nombre: 'analista',
       descripcion: 'Analista de préstamos',
-      permisos: {
-        socios: ['create', 'read', 'update'],
-        ahorro: ['read'],
-        prestamos: ['create', 'read', 'update'],
-        reportes: ['read', 'export'],
-      },
+      permisos: permisosAnalista,
     },
   });
 
@@ -302,11 +313,12 @@ async function main() {
     },
   });
 
-  for (const beneficiario of beneficiarios) {
+  for (const [index, beneficiario] of beneficiarios.entries()) {
     await prisma.acuerdoFuneraria.create({
       data: {
         beneficiario_id: beneficiario.id,
         tipo_acuerdo_id: tipoFuneraria.id,
+        numero_acuerdo: `FUN-${String(index + 1).padStart(6, '0')}`,
         estado: 'activo',
         fecha_inicio: new Date('2020-01-01'),
       },

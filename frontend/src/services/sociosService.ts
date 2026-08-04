@@ -25,6 +25,7 @@ export interface Socio {
   ubicacion_id: number | null
   autorizado_nombre: string | null
   autorizado_cedula: string | null
+  codigo_social: string | null
   notas: string | null
   foto_url: string | null
   ubicacion?: Ubicacion
@@ -55,6 +56,90 @@ export interface SocioFormData {
 export interface RetiroSocioData {
   fecha_retiro: string
   motivo_retiro: 'Socio' | 'Voluntario' | 'Art. 5'
+}
+
+// Parentescos aceptados para traspasar la titularidad de un socio: solo familiar directo
+export const PARENTESCOS_TRASPASO_DIRECTO = [
+  'Esposo',
+  'Esposa',
+  'Hijo',
+  'Hija',
+  'Padre',
+  'Madre',
+  'Hermano',
+  'Hermana',
+] as const
+
+export const EDAD_MINIMA_TRASPASO = 60
+
+export interface TraspasoSocioData {
+  nueva_cedula: string
+  nuevo_nombre: string
+  nuevo_apellido: string
+  nueva_fecha_nacimiento: string
+  parentesco: (typeof PARENTESCOS_TRASPASO_DIRECTO)[number]
+  nuevo_telefono?: string
+  nuevo_email?: string
+  nueva_direccion?: string
+  motivo: string
+  confirma_acuerdo_titular: boolean
+  confirma_problemas_medicos: boolean
+}
+
+export const PARENTESCOS_BENEFICIARIO = [
+  'No tiene',
+  'Esposo',
+  'Esposa',
+  'Hijo',
+  'Hija',
+  'Padre',
+  'Madre',
+  'Abuelo',
+  'Abuela',
+  'Hermano',
+  'Hermana',
+  'Nieto',
+  'Nieta',
+  'Bisnieto',
+  'Cuñado',
+  'Cuñada',
+  'Suegro',
+  'Suegra',
+  'Sobrino',
+  'Tio',
+  'Tia',
+  'Primo',
+  'Prima',
+  'Yerno',
+  'Yerna',
+  'Ahijado',
+  'Otro',
+] as const
+
+export interface Beneficiario {
+  id: number
+  socio_id: number
+  cedula: string
+  nombre: string
+  apellido: string
+  fecha_nacimiento: string | null
+  fecha_ingreso: string | null
+  parentesco: string
+  telefono: string | null
+  estado: 'activo' | 'inactivo' | 'retirado' | 'fallecido'
+  fecha_fallecimiento: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BeneficiarioFormData {
+  cedula: string
+  nombre: string
+  apellido: string
+  fecha_nacimiento: string
+  fecha_ingreso: string
+  parentesco: string
+  telefono?: string | null
 }
 
 export interface EstadisticasSocios {
@@ -145,6 +230,33 @@ export const retirarSocio = async (id: number, data: RetiroSocioData): Promise<S
 }
 
 /**
+ * Actualizar únicamente el código de programas sociales de un socio
+ */
+export const actualizarCodigoSocial = async (
+  id: number,
+  codigo_social: string
+): Promise<SingleResponse<Socio>> => {
+  const response = await apiClient.patch(`/socios/${id}/codigo-social`, { codigo_social })
+  return response.data
+}
+
+/**
+ * Buscar socio por número de expediente (código de socio) exacto
+ */
+export const buscarSocioPorExpediente = async (codigo: string): Promise<SingleResponse<Socio>> => {
+  const response = await apiClient.get(`/socios/expediente/${codigo}`)
+  return response.data
+}
+
+/**
+ * Traspasar la titularidad de un socio a un familiar directo
+ */
+export const traspasarSocio = async (id: number, data: TraspasoSocioData): Promise<SingleResponse<Socio>> => {
+  const response = await apiClient.post(`/socios/${id}/traspaso`, data)
+  return response.data
+}
+
+/**
  * Obtener estadísticas generales de socios
  */
 export const obtenerEstadisticasSocios = async (): Promise<SingleResponse<EstadisticasSocios>> => {
@@ -157,5 +269,53 @@ export const obtenerEstadisticasSocios = async (): Promise<SingleResponse<Estadi
  */
 export const obtenerUbicaciones = async (): Promise<SingleResponse<Ubicacion[]>> => {
   const response = await apiClient.get('/ubicaciones')
+  return response.data
+}
+
+/**
+ * Obtener beneficiarios de un socio
+ * @param incluirRetirados Si es true, incluye beneficiarios retirados/fallecidos
+ */
+export const obtenerBeneficiarios = async (
+  socioId: number,
+  incluirRetirados = false
+): Promise<SingleResponse<Beneficiario[]>> => {
+  const response = await apiClient.get(`/socios/${socioId}/beneficiarios`, {
+    params: incluirRetirados ? { incluirRetirados: 'true' } : undefined,
+  })
+  return response.data
+}
+
+/**
+ * Agregar un beneficiario a un socio
+ */
+export const crearBeneficiario = async (
+  socioId: number,
+  data: BeneficiarioFormData
+): Promise<SingleResponse<Beneficiario>> => {
+  const response = await apiClient.post(`/socios/${socioId}/beneficiarios`, data)
+  return response.data
+}
+
+/**
+ * Actualizar un beneficiario (datos, estado, fecha de fallecimiento)
+ */
+export const actualizarBeneficiario = async (
+  socioId: number,
+  beneficiarioId: number,
+  data: Partial<BeneficiarioFormData> & { estado?: Beneficiario['estado']; fecha_fallecimiento?: string | null }
+): Promise<SingleResponse<Beneficiario>> => {
+  const response = await apiClient.put(`/socios/${socioId}/beneficiarios/${beneficiarioId}`, data)
+  return response.data
+}
+
+/**
+ * Eliminar (retirar) un beneficiario
+ */
+export const eliminarBeneficiario = async (
+  socioId: number,
+  beneficiarioId: number
+): Promise<SingleResponse<Beneficiario>> => {
+  const response = await apiClient.delete(`/socios/${socioId}/beneficiarios/${beneficiarioId}`)
   return response.data
 }

@@ -28,18 +28,30 @@ export interface TipoAcuerdo {
   estado: boolean;
 }
 
-export interface AcuerdoFuneraria {
+/**
+ * Forma real de GET /api/funeraria/acuerdos/:id (distinta del listado:
+ * el beneficiario viene con nombre/apellido separados, no nombre_completo)
+ */
+export interface AcuerdoDetalle {
   id: number;
-  estado: 'activo' | 'suspendido' | 'retirado';
-  fecha_inicio: string;
-  semanas_sin_pago: number;
-  fecha_suspension?: string | null;
-  beneficiario: Beneficiario;
+  numero_acuerdo: string | null;
+  numero_contrato: string | null;
+  beneficiario: {
+    id: number;
+    cedula: string;
+    nombre: string;
+    apellido: string;
+    parentesco: string;
+    telefono: string | null;
+  };
   socio: {
     id: number;
     codigo_socio: string;
     cedula: string;
     nombre_completo: string;
+    direccion?: string | null;
+    telefono?: string | null;
+    email?: string | null;
     estado: string;
   } | null;
   tipo_acuerdo: {
@@ -47,6 +59,46 @@ export interface AcuerdoFuneraria {
     codigo: string;
     nombre: string;
     monto_usd: number;
+    ubicacion?: string | null;
+  };
+  estado: 'activo' | 'suspendido' | 'retirado';
+  semanas_sin_pago: number;
+  fecha_suspension?: string | null;
+  fecha_retiro?: string | null;
+  motivo_retiro?: string | null;
+  fecha_inicio: string;
+  movimientos: MovimientoFuneraria[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AcuerdoFuneraria {
+  id: number;
+  numero_acuerdo: string | null;
+  numero_contrato: string | null;
+  estado: 'activo' | 'suspendido' | 'retirado';
+  fecha_inicio: string;
+  semanas_sin_pago: number;
+  fecha_suspension?: string | null;
+  fecha_retiro?: string | null;
+  motivo_retiro?: string | null;
+  beneficiario: Beneficiario;
+  socio: {
+    id: number;
+    codigo_socio: string;
+    cedula: string;
+    nombre_completo: string;
+    direccion?: string | null;
+    telefono?: string | null;
+    email?: string | null;
+    estado: string;
+  } | null;
+  tipo_acuerdo: {
+    id: number;
+    codigo: string;
+    nombre: string;
+    monto_usd: number;
+    ubicacion?: string | null;
   };
   created_at: string;
   updated_at: string;
@@ -103,12 +155,15 @@ export interface CrearAcuerdoData {
   socio_id: number;
   tipo_acuerdo_id: number;
   beneficiario_id?: number;
+  numero_acuerdo: string;
+  numero_contrato?: string;
   fecha_inicio?: string;
 }
 
 export interface CambiarEstadoData {
   estado: 'activo' | 'suspendido' | 'retirado';
   motivo?: string;
+  fecha_retiro?: string;
 }
 
 interface ApiResponse<T> {
@@ -135,6 +190,14 @@ interface PaginatedResponse<T> extends ApiResponse<T[]> {
 // ============================================
 
 /**
+ * Listar tipos de acuerdo de funeraria activos (catálogo para selects)
+ */
+export const obtenerTiposAcuerdo = async (): Promise<ApiResponse<TipoAcuerdo[]>> => {
+  const response = await apiClient.get<ApiResponse<TipoAcuerdo[]>>('/funeraria/tipos-acuerdo');
+  return response.data;
+};
+
+/**
  * Listar acuerdos de funeraria con filtros y paginación
  */
 export const obtenerAcuerdos = async (params?: {
@@ -150,28 +213,59 @@ export const obtenerAcuerdos = async (params?: {
   return response.data;
 };
 
+export interface AcuerdoFunerariaPorSocio {
+  id: number;
+  beneficiario: {
+    id: number;
+    cedula: string;
+    nombre_completo: string;
+    parentesco: string;
+  };
+  tipo_acuerdo: {
+    id: number;
+    codigo: string;
+    nombre: string;
+    monto_usd: number;
+  };
+  estado: 'activo' | 'suspendido' | 'retirado';
+  semanas_sin_pago: number;
+  fecha_suspension: string | null;
+  fecha_inicio: string;
+}
+
 /**
- * Obtener acuerdos de un socio específico
+ * Obtener todos los acuerdos de funeraria de un socio específico (a través
+ * de sus beneficiarios), sin paginar.
  */
 export const obtenerAcuerdosPorSocio = async (
   socioId: number
-): Promise<ApiResponse<{ socio: unknown; acuerdos: AcuerdoFuneraria[] }>> => {
+): Promise<ApiResponse<AcuerdoFunerariaPorSocio[]>> => {
   const response = await apiClient.get(`/funeraria/acuerdos/socio/${socioId}`);
+  return response.data;
+};
+
+export interface AcuerdoSuspendidoListado {
+  expediente: string;
+  numero_acuerdo: string;
+  apellidos: string;
+  nombres: string;
+  cedula: string;
+  telefono: string;
+  semanas_atraso: number;
+}
+
+/**
+ * Obtener el listado completo (sin paginar) de acuerdos suspendidos, para imprimir
+ */
+export const obtenerListadoSuspendidos = async (): Promise<ApiResponse<AcuerdoSuspendidoListado[]>> => {
+  const response = await apiClient.get('/funeraria/acuerdos/suspendidos/listado');
   return response.data;
 };
 
 /**
  * Obtener detalle completo de un acuerdo
  */
-export const obtenerAcuerdo = async (
-  id: number
-): Promise<
-  ApiResponse<
-    AcuerdoFuneraria & {
-      movimientos: MovimientoFuneraria[];
-    }
-  >
-> => {
+export const obtenerAcuerdo = async (id: number): Promise<ApiResponse<AcuerdoDetalle>> => {
   const response = await apiClient.get(`/funeraria/acuerdos/${id}`);
   return response.data;
 };
@@ -185,6 +279,37 @@ export const crearAcuerdo = async (
   const response = await apiClient.post<ApiResponse<AcuerdoFuneraria>>(
     '/funeraria/acuerdos',
     data
+  );
+  return response.data;
+};
+
+export interface ActualizarAcuerdoData {
+  tipo_acuerdo_id?: number;
+  numero_acuerdo?: string;
+  numero_contrato?: string | null;
+  fecha_inicio?: string;
+}
+
+/**
+ * Actualizar datos de un acuerdo de funeraria (tipo, número de acuerdo/contrato, fecha de inicio)
+ */
+export const actualizarAcuerdo = async (
+  id: number,
+  data: ActualizarAcuerdoData
+): Promise<ApiResponse<AcuerdoFuneraria>> => {
+  const response = await apiClient.put<ApiResponse<AcuerdoFuneraria>>(
+    `/funeraria/acuerdos/${id}`,
+    data
+  );
+  return response.data;
+};
+
+/**
+ * Eliminar un acuerdo de funeraria (solo si no tiene movimientos registrados)
+ */
+export const eliminarAcuerdo = async (id: number): Promise<ApiResponse<{ id: number }>> => {
+  const response = await apiClient.delete<ApiResponse<{ id: number }>>(
+    `/funeraria/acuerdos/${id}`
   );
   return response.data;
 };
@@ -227,5 +352,63 @@ export const verificarSuspensionesAutomaticas = async (): Promise<
   const response = await apiClient.post<ApiResponse<{ suspendidos: number }>>(
     '/funeraria/verificar-suspensiones'
   );
+  return response.data;
+};
+
+// ============================================
+// REPORTES E IMPRESIÓN
+// ============================================
+
+/**
+ * Descarga el reporte Excel de acuerdos suspendidos y dispara la descarga en el navegador
+ */
+export const descargarReporteSuspendidos = async (): Promise<void> => {
+  const response = await apiClient.post(
+    '/reportes/funeraria-suspendidos',
+    { formato: 'excel' },
+    { responseType: 'blob' }
+  );
+
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  const fecha = new Date().toISOString().split('T')[0];
+  link.setAttribute('download', `reporte-funeraria-suspendidos-${fecha}.xlsx`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+export interface FichaAcuerdoFunerariaData {
+  numero_acuerdo: string;
+  numero_contrato?: string;
+  fecha_inicio: string;
+  socio: {
+    codigo: string;
+    cedula: string;
+    nombre: string;
+    direccion?: string;
+    telefono?: string;
+  };
+  beneficiarios: {
+    id: number;
+    nombre: string;
+    cedula: string;
+    parentesco: string;
+    fecha_ingreso: string;
+    fecha_nacimiento?: string;
+    edad?: number;
+    estado?: string;
+  }[];
+}
+
+/**
+ * Genera e imprime (registra en audit log) la ficha del acuerdo de funeraria
+ */
+export const imprimirFichaAcuerdo = async (
+  data: FichaAcuerdoFunerariaData
+): Promise<ApiResponse<{ tipo: string; formato: string; contenido: string; longitud: number }>> => {
+  const response = await apiClient.post('/impresion/ficha-acuerdo-funeraria', data);
   return response.data;
 };

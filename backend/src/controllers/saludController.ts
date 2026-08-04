@@ -90,6 +90,38 @@ async function obtenerOCrearBeneficiario(socioId: number): Promise<number> {
 // ============================================
 
 /**
+ * GET /api/salud/tipos-acuerdo
+ * Listar tipos de acuerdo de salud activos (catálogo para selects)
+ */
+export const listarTiposAcuerdo = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const tipos = await prisma.tipoAcuerdoSalud.findMany({
+      where: { estado: true },
+      orderBy: { nombre: 'asc' },
+    });
+
+    res.json({
+      success: true,
+      data: tipos.map((tipo) => ({
+        id: tipo.id,
+        codigo: tipo.codigo,
+        nombre: tipo.nombre,
+        monto_usd: Number(tipo.monto_usd),
+      })),
+    });
+  } catch (error: any) {
+    logger.error('Error al listar tipos de acuerdo salud:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al listar tipos de acuerdo',
+      },
+    });
+  }
+};
+
+/**
  * GET /api/salud/acuerdos
  * Listar todos los acuerdos con filtros y paginación
  */

@@ -57,6 +57,29 @@ export interface CarnetSocio {
   qr_data?: string; // Para futuro: datos del QR
 }
 
+export interface FichaAcuerdoFuneraria {
+  numero_acuerdo: string;
+  numero_contrato?: string;
+  fecha_inicio: Date;
+  socio: {
+    codigo: string;
+    cedula: string;
+    nombre: string;
+    direccion?: string;
+    telefono?: string;
+  };
+  beneficiarios: {
+    id: number;
+    nombre: string;
+    cedula: string;
+    parentesco: string;
+    fecha_ingreso: Date;
+    fecha_nacimiento?: Date;
+    edad?: number;
+    estado?: string;
+  }[];
+}
+
 // ============================================
 // CONSTANTES DE FORMATO
 // ============================================
@@ -289,6 +312,70 @@ export function generarCarnetSocio(data: CarnetSocio): string {
   return lineas.join('\n');
 }
 
+/**
+ * Genera ficha imprimible de un acuerdo de funeraria (socio + beneficiarios cubiertos)
+ */
+export function generarFichaAcuerdoFuneraria(data: FichaAcuerdoFuneraria): string {
+  const lineas: string[] = [];
+
+  lineas.push('');
+  lineas.push(centrarTexto('COOPERATIVA EL TRIUNFO, R.L.'));
+  lineas.push(centrarTexto('RIF: J-00000000-0'));
+  lineas.push('');
+  lineas.push(SEPARADOR);
+  lineas.push(centrarTexto('FICHA DE ACUERDO - FUNERARIA'));
+  lineas.push(SEPARADOR);
+  lineas.push('');
+
+  lineas.push(`N. Acuerdo:  ${data.numero_acuerdo}`);
+  if (data.numero_contrato) {
+    lineas.push(`N. Contrato: ${data.numero_contrato}`);
+  }
+  lineas.push(`Fecha Inicio: ${formatearFechaHora(data.fecha_inicio)}`);
+  lineas.push('');
+  lineas.push(SEPARADOR_LIGERO);
+
+  lineas.push('DATOS DEL ASOCIADO');
+  lineas.push(`Expediente: ${data.socio.codigo}`);
+  lineas.push(`Cédula:     ${data.socio.cedula}`);
+  lineas.push(`Nombre:     ${data.socio.nombre}`);
+  if (data.socio.direccion) {
+    lineas.push(`Dirección:  ${data.socio.direccion}`);
+  }
+  if (data.socio.telefono) {
+    lineas.push(`Teléfono:   ${data.socio.telefono}`);
+  }
+  lineas.push('');
+  lineas.push(SEPARADOR_LIGERO);
+
+  lineas.push('BENEFICIARIOS CON DERECHO AL SERVICIO');
+  lineas.push('');
+
+  data.beneficiarios.forEach((beneficiario) => {
+    lineas.push(`[${beneficiario.id}] ${beneficiario.nombre}`);
+    lineas.push(`    Cédula: ${beneficiario.cedula}   Parentesco: ${beneficiario.parentesco}`);
+    const edadTexto = beneficiario.edad !== undefined ? `${beneficiario.edad} años` : 'N/D';
+    const fechaNacTexto = beneficiario.fecha_nacimiento
+      ? formatearFechaHora(beneficiario.fecha_nacimiento).split(',')[0]
+      : 'N/D';
+    lineas.push(`    Nacimiento: ${fechaNacTexto}   Edad: ${edadTexto}`);
+    lineas.push(`    Ingreso: ${formatearFechaHora(beneficiario.fecha_ingreso).split(',')[0]}`);
+    if (beneficiario.estado && beneficiario.estado !== 'activo') {
+      lineas.push(`    Estado: ${beneficiario.estado.toUpperCase()}`);
+    }
+    lineas.push('');
+  });
+
+  lineas.push(SEPARADOR);
+  lineas.push('');
+  lineas.push('_____________________    _____________________');
+  lineas.push('     Firma Socio             Firma Cooperativa');
+  lineas.push('');
+  lineas.push('');
+
+  return lineas.join('\n');
+}
+
 // ============================================
 // FUNCIONES DE GUARDADO
 // ============================================
@@ -324,5 +411,6 @@ export default {
   generarTicketColecta,
   generarNotaOperacion,
   generarCarnetSocio,
+  generarFichaAcuerdoFuneraria,
   registrarImpresion
 };

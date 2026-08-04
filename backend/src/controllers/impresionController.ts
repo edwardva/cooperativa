@@ -9,10 +9,12 @@ import {
   generarTicketColecta,
   generarNotaOperacion,
   generarCarnetSocio,
+  generarFichaAcuerdoFuneraria,
   registrarImpresion,
   type TicketColecta,
   type NotaOperacion,
-  type CarnetSocio
+  type CarnetSocio,
+  type FichaAcuerdoFuneraria
 } from '../services/impresionService';
 
 // ============================================
@@ -63,6 +65,29 @@ const imprimirCarnetSocioSchema = z.object({
   ubicacion: z.string(),
   tipo_socio: z.string(),
   qr_data: z.string().optional()
+});
+
+const imprimirFichaAcuerdoFunerariaSchema = z.object({
+  numero_acuerdo: z.string(),
+  numero_contrato: z.string().optional(),
+  fecha_inicio: z.string().transform((str) => new Date(str)),
+  socio: z.object({
+    codigo: z.string(),
+    cedula: z.string(),
+    nombre: z.string(),
+    direccion: z.string().optional(),
+    telefono: z.string().optional()
+  }),
+  beneficiarios: z.array(z.object({
+    id: z.number(),
+    nombre: z.string(),
+    cedula: z.string(),
+    parentesco: z.string(),
+    fecha_ingreso: z.string().transform((str) => new Date(str)),
+    fecha_nacimiento: z.string().transform((str) => new Date(str)).optional(),
+    edad: z.number().optional(),
+    estado: z.string().optional()
+  }))
 });
 
 // ============================================
@@ -223,6 +248,57 @@ export const imprimirCarnetSocio = async (
 };
 
 /**
+ * Imprimir ficha de acuerdo de funeraria
+ * POST /api/impresion/ficha-acuerdo-funeraria
+ */
+export const imprimirFichaAcuerdoFuneraria = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const validacion = imprimirFichaAcuerdoFunerariaSchema.safeParse(req.body);
+
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Datos de entrada inválidos',
+          details: validacion.error.errors
+        }
+      });
+      return;
+    }
+
+    const data = validacion.data as FichaAcuerdoFuneraria;
+    const contenido = generarFichaAcuerdoFuneraria(data);
+
+    // Registrar en audit log
+    if (req.user?.userId) {
+      await registrarImpresion(
+        'ficha_acuerdo_funeraria',
+        parseInt(data.numero_acuerdo.replace(/\D/g, '') || '0'),
+        req.user.userId,
+        contenido
+      );
+    }
+
+    res.json({
+      success: true,
+      data: {
+        tipo: 'ficha_acuerdo_funeraria',
+        formato: 'texto_80mm',
+        contenido,
+        longitud: contenido.length
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Obtener formatos disponibles de impresión
  * GET /api/impresion/formatos
  */
@@ -257,6 +333,14 @@ export const obtenerFormatosDisponibles = async (
         formato: 'texto',
         orientacion: 'vertical',
         nota: 'Próximamente incluirá código QR'
+      },
+      {
+        id: 'ficha_acuerdo_funeraria',
+        nombre: 'Ficha de Acuerdo Funeraria',
+        descripcion: 'Datos del socio y beneficiarios cubiertos por el acuerdo',
+        ancho_mm: 80,
+        formato: 'texto',
+        orientacion: 'vertical'
       }
     ];
 
@@ -341,6 +425,22 @@ export const generarVistaPrevia = async (
           return;
         }
         contenido = generarCarnetSocio(carnetValidacion.data as CarnetSocio);
+        break;
+
+      case 'ficha_acuerdo_funeraria':
+        const fichaValidacion = imprimirFichaAcuerdoFunerariaSchema.safeParse(data);
+        if (!fichaValidacion.success) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Datos inválidos para ficha de acuerdo funeraria',
+              details: fichaValidacion.error.errors
+            }
+          });
+          return;
+        }
+        contenido = generarFichaAcuerdoFuneraria(fichaValidacion.data as FichaAcuerdoFuneraria);
         break;
 
       default:

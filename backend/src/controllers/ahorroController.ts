@@ -1165,7 +1165,7 @@ export const obtenerEstadisticasPorFeria = async (req: Request, res: Response): 
  * GET /api/ahorro/estadisticas/resumen-ferias
  * Obtener resumen simplificado de ahorro por ferias
  */
-export const obtenerResumenPorFeria = async (req: Request, res: Response): Promise<void> => {
+export const obtenerResumenPorFeria = async (_req: Request, res: Response): Promise<void> => {
   try {
     const ubicaciones = await prisma.ubicacion.findMany({
       where: { estado: true },
