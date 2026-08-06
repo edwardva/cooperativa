@@ -66,18 +66,20 @@ enum EstadoUsuario {
 model Socio {
   id                    Int                @id @default(autoincrement())
   codigo_socio          String             @unique @db.VarChar(20) // Expediente/Número de socio (manual, único)
-  cedula                String             @unique @db.VarChar(11) // Sin guiones: 01234567890
+  cedula                String             @db.VarChar(11) // Sin guiones: 01234567890
   nombre                String             @db.VarChar(100)
   apellido              String             @db.VarChar(100)
+  sexo                  Sexo?              // M = Masculino, F = Femenino
   fecha_nacimiento      DateTime?          @db.Date
   direccion             String?            @db.Text
-  telefono              String?            @db.VarChar(20)
+  telefono              String?            @db.VarChar(100) // Aumentado para múltiples teléfonos
   email                 String?            @db.VarChar(100)
   fecha_inscripcion     DateTime           @db.Date
   estado                EstadoSocio        @default(activo)
   es_delegado           Boolean            @default(false)
   ubicacion_id          Int?
-  foto_url              String?            @db.VarChar(255)
+  foto_url              String?            @db.VarChar(255) // URL antigua (deprecado)
+  foto                  Bytes?             // Foto del socio almacenada como BLOB
   autorizado_nombre     String?            @db.VarChar(100) // Persona que autoriza al socio
   autorizado_cedula     String?            @db.VarChar(11)  // Cédula del autorizado
   notas                 String?            @db.Text         // Historial y observaciones
@@ -108,7 +110,7 @@ model Beneficiario {
   apellido             String                @db.VarChar(100)
   fecha_nacimiento     DateTime?             @db.Date
   parentesco           String                @db.VarChar(50) // hijo, cónyuge, padre, madre, etc.
-  telefono             String?               @db.VarChar(20)
+  telefono             String?               @db.VarChar(100)
   estado               EstadoBeneficiario    @default(activo)
   created_at           DateTime              @default(now())
   updated_at           DateTime              @updatedAt
@@ -125,15 +127,19 @@ model Beneficiario {
 
 enum EstadoSocio {
   activo
-  suspendido
-  inactivo
   retirado
+  invalido
 }
 
 enum EstadoBeneficiario {
   activo
   inactivo
   retirado
+}
+
+enum Sexo {
+  M  // Masculino
+  F  // Femenino
 }
 
 // ============================================

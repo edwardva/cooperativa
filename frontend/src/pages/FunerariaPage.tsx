@@ -9,11 +9,14 @@
  * - Estadísticas y alertas
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { PrintableListado } from '../components/print/PrintableListado';
+import { SortableHeader } from '../components/ui/SortableHeader';
 import {
+  Download,
   PlusCircle,
   Search,
   AlertTriangle,
@@ -65,6 +68,20 @@ export default function FunerariaPage() {
   const [totalPaginas, setTotalPaginas] = useState(1);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [ITEMS_POR_PAGINA, setItemsPorPagina] = useState(20);
+
+  // Ordenamiento
+  const [sortField, setSortField] = useState<string>('id');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Función para manejar el ordenamiento
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Modales
   const [modalAbierto, setModalAbierto] = useState<'crear' | 'detalle' | 'cambiar-estado' | null>(
@@ -169,6 +186,65 @@ export default function FunerariaPage() {
     }
   };
 
+  // Ordenar acuerdos según el campo seleccionado
+  const acuerdosOrdenados = useMemo(() => {
+    const acuerdosCopia = [...acuerdos];
+
+    const obtenerValorOrdenable = (acuerdo: AcuerdoFuneraria): any => {
+      if (!sortField.includes('.')) {
+        return (acuerdo as any)[sortField];
+      }
+
+      const partes = sortField.split('.');
+      const obj = partes[0] ?? '';
+      const prop = partes[1] ?? '';
+      if (!obj || !prop) {
+        return undefined;
+      }
+
+      const base = (acuerdo as any)[obj];
+      return base?.[prop];
+    };
+    
+    acuerdosCopia.sort((a, b) => {
+      let compareA: any = obtenerValorOrdenable(a);
+      let compareB: any = obtenerValorOrdenable(b);
+
+      // Manejar valores nulos
+      if (compareA === null || compareA === undefined) compareA = '';
+      if (compareB === null || compareB === undefined) compareB = '';
+
+      // Comparación
+      if (typeof compareA === 'string') {
+        compareA = compareA.toLowerCase();
+        compareB = compareB.toLowerCase();
+      }
+
+      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
+      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return acuerdosCopia;
+  }, [acuerdos, sortField, sortOrder]);
+
+  const filtrosImpresion = [
+    { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
+    { label: 'Estado', value: filtroEstado === 'todos' ? 'Todos' : filtroEstado },
+    { label: 'Tipo', value: filtroTipo === 'todos' ? 'Todos' : filtroTipo },
+    { label: 'Página', value: `${paginaActual} de ${totalPaginas}` },
+  ];
+
+  const filasImpresion = acuerdosOrdenados.map((acuerdo) => [
+    String(acuerdo.id),
+    acuerdo.beneficiario.nombre_completo,
+    acuerdo.socio?.nombre_completo ?? '-',
+    acuerdo.tipo_acuerdo.nombre,
+    String(acuerdo.semanas_sin_pago ?? 0),
+    acuerdo.estado,
+    acuerdo.fecha_inicio ? new Date(acuerdo.fecha_inicio).toLocaleDateString('es-VE') : '-',
+  ]);
+
   // ============================================
   // RENDER
   // ============================================
@@ -184,6 +260,10 @@ export default function FunerariaPage() {
           <p className="mt-1 text-sm text-gray-500">Gestión de acuerdos de servicio funerario</p>
         </div>
         <div className="flex gap-3">
+          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+            <Download className="w-4 h-4" />
+            Imprimir listado
+          </Button>
           <Button
             onClick={() => setModalAbierto('crear')}
             className="flex items-center gap-2"
@@ -193,6 +273,20 @@ export default function FunerariaPage() {
           </Button>
         </div>
       </div>
+
+      <PrintableListado
+        titulo="Listado de Acuerdos Funerarios"
+        subtitulo="Listado generado con los filtros y orden actual del módulo de funeraria"
+        filtros={filtrosImpresion}
+        resumenes={[
+          { label: 'Acuerdos visibles', value: String(acuerdosOrdenados.length) },
+          { label: 'Total acuerdos', value: String(estadisticas.total_acuerdos) },
+          { label: 'Activos', value: String(estadisticas.por_estado.activos) },
+          { label: 'Suspendidos', value: String(estadisticas.por_estado.suspendidos) },
+        ]}
+        columnas={['Acuerdo', 'Beneficiario', 'Socio', 'Tipo', 'Semanas sin pago', 'Estado', 'Fecha inicio']}
+        filas={filasImpresion}
+      />
 
       {/* ============================================ */}
       {/* ESTADÍSTICAS */}
@@ -325,27 +419,57 @@ export default function FunerariaPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Acuerdo
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Beneficiario
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Socio
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tipo
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Semanas Sin Pago
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fecha Inicio
-                </th>
+                <SortableHeader
+                  label="Acuerdo"
+                  field="id"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Beneficiario"
+                  field="nombre_beneficiario"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Socio"
+                  field="socio.apellido"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Tipo"
+                  field="tipo"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Semanas Sin Pago"
+                  field="semanas_sin_pago"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="center"
+                />
+                <SortableHeader
+                  label="Estado"
+                  field="estado"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="center"
+                />
+                <SortableHeader
+                  label="Fecha Inicio"
+                  field="fecha_inicio"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones
                 </th>
@@ -374,7 +498,7 @@ export default function FunerariaPage() {
                   </td>
                 </tr>
               ) : (
-                acuerdos.map((acuerdo) => (
+                acuerdosOrdenados.map((acuerdo) => (
                   <tr
                     key={acuerdo.id}
                     className="hover:bg-gray-50 cursor-pointer transition-colors"

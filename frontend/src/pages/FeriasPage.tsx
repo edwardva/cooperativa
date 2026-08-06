@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { ChangeEvent } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { PrintableListado } from '../components/print/PrintableListado';
+import { SortableHeader } from '../components/ui/SortableHeader';
 import { Edit2, Trash2, Save, X, Plus, MapPin } from 'lucide-react';
 import * as feriasService from '../services/feriasService';
 import type { Ubicacion } from '../services/feriasService';
@@ -14,6 +16,20 @@ export const FeriasPage = () => {
   const [ferias, setFerias] = useState<Ubicacion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Estados de ordenamiento
+  const [sortField, setSortField] = useState<string>('codigo');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Función para manejar el ordenamiento
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Cargar ferias desde la API
   useEffect(() => {
@@ -38,10 +54,48 @@ export const FeriasPage = () => {
     }
   };
 
-  const feriasFiltradas = ferias.filter((feria) =>
+  // Ordenar ferias seg\u00fan el campo seleccionado
+  const feriasOrdenadas = useMemo(() => {
+    const feriasCopia = [...ferias];
+    
+    feriasCopia.sort((a, b) => {
+      let compareA: any = (a as any)[sortField];
+      let compareB: any = (b as any)[sortField];
+
+      // Manejar valores nulos
+      if (compareA === null || compareA === undefined) compareA = '';
+      if (compareB === null || compareB === undefined) compareB = '';
+
+      // Comparaci\u00f3n
+      if (typeof compareA === 'string') {
+        compareA = compareA.toLowerCase();
+        compareB = compareB.toLowerCase();
+      }
+
+      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
+      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return feriasCopia;
+  }, [ferias, sortField, sortOrder]);
+
+  const feriasFiltradas = feriasOrdenadas.filter((feria) =>
     feria.codigo.toLowerCase().includes(busqueda.toLowerCase()) ||
     (feria.direccion && feria.direccion.toLowerCase().includes(busqueda.toLowerCase()))
   );
+
+  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }];
+
+  const filasImpresion = feriasFiltradas.map((feria) => [
+    feria.codigo,
+    feria.nombre,
+    feria.direccion || '-',
+    feria.telefono || '-',
+    String(feria._count?.socios ?? 0),
+    feria.estado ? 'Activa' : 'Inactiva',
+    formatearFecha(feria.created_at),
+  ]);
 
   const handleEditar = (feria: Ubicacion) => {
     setEditando(feria.id);
@@ -58,7 +112,13 @@ export const FeriasPage = () => {
 
   const handleGuardar = async (id: number) => {
     try {
-      const response = await feriasService.actualizarUbicacion(id, formData);
+      // Filtrar valores null para que solo sean undefined o string
+      const datosActualizacion = {
+        ...formData,
+        direccion: formData.direccion ?? undefined,
+        telefono: formData.telefono ?? undefined,
+      };
+      const response = await feriasService.actualizarUbicacion(id, datosActualizacion);
       if (response.success) {
         await cargarFerias(); // Recargar la lista
         setEditando(null);
@@ -121,11 +181,25 @@ export const FeriasPage = () => {
             Gestión de ferias y puntos de colecta
           </p>
         </div>
-        <Button onClick={handleCrear} className="flex items-center gap-2">
-          <Plus className="w-4 h-4" />
-          Nueva Feria
-        </Button>
+        <div className="flex gap-3">
+          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+            <MapPin className="w-4 h-4" />
+            Imprimir listado
+          </Button>
+          <Button onClick={handleCrear} className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Nueva Feria
+          </Button>
+        </div>
       </div>
+
+      <PrintableListado
+        titulo="Ferias y Ubicaciones"
+        subtitulo="Listado generado con los filtros actuales"
+        filtros={filtrosImpresion}
+        columnas={['Código', 'Nombre', 'Dirección', 'Teléfono', 'Socios', 'Estado', 'Registrada']}
+        filas={filasImpresion}
+      />
 
       {/* Búsqueda y Filtros */}
       <Card className="p-4">
@@ -164,24 +238,44 @@ export const FeriasPage = () => {
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Código
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Descripción
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Teléfono
-                </th>
+                <SortableHeader
+                  label="Código"
+                  field="codigo"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Descripción"
+                  field="direccion"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Teléfono"
+                  field="telefono"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Socios
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Registrada
-                </th>
+                <SortableHeader
+                  label="Estado"
+                  field="activo"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Registrada"
+                  field="created_at"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones
                 </th>

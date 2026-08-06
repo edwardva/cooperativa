@@ -9,6 +9,7 @@ export function formatearFecha(fechaISO: string | null | undefined): string {
   try {
     // Extraer solo la parte de la fecha si viene con hora
     const soloFecha = fechaISO.split('T')[0]
+    if (!soloFecha) return ''
     
     // Validar formato YYYY-MM-DD
     const regex = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -17,6 +18,7 @@ export function formatearFecha(fechaISO: string | null | undefined): string {
     if (!match) return ''
     
     const [, anio, mes, dia] = match
+    if (!anio || !mes || !dia) return ''
     
     // Validar que sean números válidos
     const diaNum = parseInt(dia, 10)
@@ -69,6 +71,7 @@ export function normalizarFechaParaInput(fechaISO: string | null | undefined): s
   try {
     // Si viene con timestamp, extraer solo la parte de fecha
     const soloFecha = fechaISO.split('T')[0]
+    if (!soloFecha) return ''
     
     // Validar formato YYYY-MM-DD
     const regex = /^(\d{4})-(\d{2})-(\d{2})$/

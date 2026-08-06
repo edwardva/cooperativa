@@ -27,6 +27,7 @@ export interface Socio {
   autorizado_cedula: string | null
   notas: string | null
   foto_url: string | null
+  foto: string | null // Base64 de la foto
   ubicacion?: Ubicacion
   _count?: {
     beneficiarios: number
@@ -50,6 +51,7 @@ export interface SocioFormData {
   autorizado_nombre: string
   autorizado_cedula: string
   notas: string
+  foto?: string // Base64 de la foto
 }
 
 export interface RetiroSocioData {
@@ -105,9 +107,9 @@ export const obtenerSocioPorId = async (id: number): Promise<SingleResponse<Soci
 }
 
 /**
- * Buscar socio por cédula
+ * Buscar socio por cédula (retorna TODOS los socios con esa cédula)
  */
-export const buscarSocioPorCedula = async (cedula: string): Promise<SingleResponse<Socio>> => {
+export const buscarSocioPorCedula = async (cedula: string): Promise<SingleResponse<Socio[]>> => {
   const response = await apiClient.get(`/socios/buscar/${cedula}`)
   return response.data
 }

@@ -13,7 +13,18 @@ async function main() {
   
   const rolAdmin = await prisma.rol.upsert({
     where: { nombre: 'admin' },
-    update: {},
+    update: {
+      permisos: {
+        socios: ['create', 'read', 'update', 'delete'],
+        ahorro: ['create', 'read', 'update', 'delete'],
+        prestamos: ['create', 'read', 'update', 'delete', 'approve'],
+        colecta: ['create', 'read', 'update'],
+        reportes: ['read', 'export'],
+        parametros: ['read', 'update'],
+        usuarios: ['create', 'read', 'update', 'delete'],
+        ubicaciones: ['create', 'read', 'update', 'delete'],
+      },
+    },
     create: {
       nombre: 'admin',
       descripcion: 'Administrador del sistema con acceso completo',
@@ -25,13 +36,21 @@ async function main() {
         reportes: ['read', 'export'],
         parametros: ['read', 'update'],
         usuarios: ['create', 'read', 'update', 'delete'],
+        ubicaciones: ['create', 'read', 'update', 'delete'],
       },
     },
   });
 
   const rolCajero = await prisma.rol.upsert({
     where: { nombre: 'cajero' },
-    update: {},
+    update: {
+      permisos: {
+        socios: ['read'],
+        colecta: ['create', 'read'],
+        reportes: ['read'],
+        ubicaciones: ['read'],
+      },
+    },
     create: {
       nombre: 'cajero',
       descripcion: 'Cajero operador de colecta',
@@ -39,13 +58,22 @@ async function main() {
         socios: ['read'],
         colecta: ['create', 'read'],
         reportes: ['read'],
+        ubicaciones: ['read'],
       },
     },
   });
 
   const rolAnalista = await prisma.rol.upsert({
     where: { nombre: 'analista' },
-    update: {},
+    update: {
+      permisos: {
+        socios: ['create', 'read', 'update'],
+        ahorro: ['read'],
+        prestamos: ['create', 'read', 'update'],
+        reportes: ['read', 'export'],
+        ubicaciones: ['read'],
+      },
+    },
     create: {
       nombre: 'analista',
       descripcion: 'Analista de préstamos',
@@ -54,6 +82,7 @@ async function main() {
         ahorro: ['read'],
         prestamos: ['create', 'read', 'update'],
         reportes: ['read', 'export'],
+        ubicaciones: ['read'],
       },
     },
   });
@@ -105,33 +134,84 @@ async function main() {
   });
 
   // ============================================
-  // 3. UBICACIONES
+  // 3. UBICACIONES/FERIAS
   // ============================================
-  console.log('📍 Creando ubicaciones...');
+  console.log('📍 Creando ubicaciones/ferias...');
   
-  const ubicacion1 = await prisma.ubicacion.upsert({
-    where: { codigo: 'SUC001' },
-    update: {},
-    create: {
-      codigo: 'SUC001',
-      nombre: 'Sede Principal',
-      direccion: 'Av. Principal, Caracas',
-      telefono: '0212-1234567',
-      estado: true,
-    },
-  });
+  const ubicaciones = await Promise.all([
+    prisma.ubicacion.upsert({
+      where: { codigo: 'FER-PRIN' },
+      update: {},
+      create: {
+        codigo: 'FER-PRIN',
+        nombre: 'Sede Principal',
+        direccion: 'Av. Principal, Edificio Cooperativa El Triunfo, Caracas',
+        telefono: '0212-5556789',
+        estado: true,
+      },
+    }),
+    prisma.ubicacion.upsert({
+      where: { codigo: 'FER-CENT' },
+      update: {},
+      create: {
+        codigo: 'FER-CENT',
+        nombre: 'Feria Central',
+        direccion: 'Calle Libertad con Avenida Bolívar, Sector Centro',
+        telefono: '0212-5551234',
+        estado: true,
+      },
+    }),
+    prisma.ubicacion.upsert({
+      where: { codigo: 'FER-ESTE' },
+      update: {},
+      create: {
+        codigo: 'FER-ESTE',
+        nombre: 'Feria Este',
+        direccion: 'Carretera Nacional km 15, Sector Este',
+        telefono: '0212-5552345',
+        estado: true,
+      },
+    }),
+    prisma.ubicacion.upsert({
+      where: { codigo: 'FER-OESTE' },
+      update: {},
+      create: {
+        codigo: 'FER-OESTE',
+        nombre: 'Feria Oeste',
+        direccion: 'Zona Industrial, Sector Oeste',
+        telefono: '0212-5553456',
+        estado: true,
+      },
+    }),
+    prisma.ubicacion.upsert({
+      where: { codigo: 'FER-NORTE' },
+      update: {},
+      create: {
+        codigo: 'FER-NORTE',
+        nombre: 'Feria Norte',
+        direccion: 'Urbanización Los Pinos, Sector Norte',
+        telefono: '0212-5554567',
+        estado: true,
+      },
+    }),
+    prisma.ubicacion.upsert({
+      where: { codigo: 'FER-SUR' },
+      update: {},
+      create: {
+        codigo: 'FER-SUR',
+        nombre: 'Feria Sur',
+        direccion: 'Parroquia La Paz, Sector Sur',
+        telefono: '0212-5555678',
+        estado: true,
+      },
+    }),
+  ]);
 
-  const ubicacion2 = await prisma.ubicacion.upsert({
-    where: { codigo: 'SUC002' },
-    update: {},
-    create: {
-      codigo: 'SUC002',
-      nombre: 'Sucursal Valencia',
-      direccion: 'Av. Bolívar, Valencia',
-      telefono: '0241-9876543',
-      estado: true,
-    },
-  });
+  console.log(`✅ ${ubicaciones.length} ubicaciones creadas`);
+  
+  // Usar la primera ubicación (Sede Principal) como predeterminada
+  const ubicacionPrincipal = ubicaciones[0]!;
+  const ubicacionCentro = ubicaciones[1]!;
 
   // ============================================
   // 4. SOCIOS
@@ -151,7 +231,7 @@ async function main() {
         email: 'juan.perez@email.com',
         fecha_inscripcion: new Date('2020-01-15'),
         estado: 'activo',
-        ubicacion_id: ubicacion1.id,
+        ubicacion_id: ubicacionPrincipal.id,
       },
     }),
     prisma.socio.create({
@@ -166,7 +246,7 @@ async function main() {
         email: 'maria.garcia@email.com',
         fecha_inscripcion: new Date('2020-03-10'),
         estado: 'activo',
-        ubicacion_id: ubicacion1.id,
+        ubicacion_id: ubicacionCentro.id,
       },
     }),
     prisma.socio.create({
@@ -180,7 +260,7 @@ async function main() {
         telefono: '0412-3456789',
         fecha_inscripcion: new Date('2019-06-20'),
         estado: 'activo',
-        ubicacion_id: ubicacion2.id,
+        ubicacion_id: ubicaciones[2]!.id, // Feria Este
       },
     }),
     prisma.socio.create({
@@ -195,7 +275,7 @@ async function main() {
         email: 'ana.lopez@email.com',
         fecha_inscripcion: new Date('2021-02-15'),
         estado: 'activo',
-        ubicacion_id: ubicacion1.id,
+        ubicacion_id: ubicacionPrincipal.id,
       },
     }),
     prisma.socio.create({
@@ -209,7 +289,7 @@ async function main() {
         telefono: '0426-5678901',
         fecha_inscripcion: new Date('2020-09-01'),
         estado: 'activo',
-        ubicacion_id: ubicacion2.id,
+        ubicacion_id: ubicaciones[3]!.id, // Feria Oeste
       },
     }),
   ]);

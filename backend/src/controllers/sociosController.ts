@@ -25,6 +25,7 @@ const crearSocioSchema = z.object({
   autorizado_cedula: z.string().max(11).regex(/^\d*$/, 'Cédula solo debe contener números').optional().nullable().or(z.literal('')),
   notas: z.string().optional().nullable(),
   foto_url: z.string().max(255).optional().nullable(),
+  foto: z.string().optional(), // Base64 de la foto
   es_delegado: z.boolean().optional(),
 });
 
@@ -44,6 +45,7 @@ const actualizarSocioSchema = z.object({
   autorizado_cedula: z.string().max(11).regex(/^\d*$/).optional().nullable().or(z.literal('')),
   notas: z.string().optional().nullable(),
   foto_url: z.string().max(255).optional().nullable(),
+  foto: z.string().optional(), // Base64 de la foto
   es_delegado: z.boolean().optional(),
   estado: z.enum(['activo', 'retirado', 'invalido']).optional(),
 });
@@ -65,6 +67,54 @@ const retiroSocioSchema = z.object({
   fecha_retiro: z.string().min(1, 'Fecha de retiro requerida'),
   motivo_retiro: z.enum(['Socio', 'Voluntario', 'Art. 5']),
 });
+
+// ============================================
+// HELPERS
+// ============================================
+
+/**
+ * Convertir base64 a Buffer para almacenar en DB
+ */
+const convertirBase64ABuffer = (base64String: string): Buffer | null => {
+  if (!base64String) {
+    return null;
+  }
+  
+  try {
+    // Remover el prefijo data:image/...;base64, si existe
+    const base64Data = base64String.replace(/^data:image\/\w+;base64,/, '');
+    return Buffer.from(base64Data, 'base64');
+  } catch (error) {
+    logger.error('Error convirtiendo base64 a Buffer:', error);
+    return null;
+  }
+};
+
+/**
+ * Convertir Buffer a base64 para enviar al frontend
+ */
+const convertirBufferABase64 = (buffer: Buffer | null): string | null => {
+  if (!buffer) {
+    return null;
+  }
+  
+  try {
+    return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+  } catch (error) {
+    logger.error('Error convirtiendo Buffer a base64:', error);
+    return null;
+  }
+};
+
+/**
+ * Preparar un socio para respuesta API (convertir foto Buffer a base64)
+ */
+const prepararSocioParaRespuesta = (socio: any) => {
+  return {
+    ...socio,
+    foto: socio.foto ? convertirBufferABase64(socio.foto) : null,
+  };
+};
 
 const contarAsociacionesSocio = async (socioId: number) => {
   const [beneficiarios, cuentasAhorro, prestamos, fiadores, colectas, usuarioDigital, auditorias] = await Promise.all([
@@ -172,7 +222,7 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
 
     res.json({
       success: true,
-      data: socios,
+      data: socios.map(prepararSocioParaRespuesta),
       meta: {
         page,
         limit,
@@ -247,7 +297,7 @@ export const obtenerSocioPorId = async (req: Request, res: Response): Promise<vo
 
     res.json({
       success: true,
-      data: socio,
+      data: prepararSocioParaRespuesta(socio),
     });
   } catch (error) {
     logger.error('Error al obtener socio:', error);
@@ -262,8 +312,9 @@ export const obtenerSocioPorId = async (req: Request, res: Response): Promise<vo
 };
 
 /**
- * Buscar socio rápido por cédula (para Colecta - Performance crítico)
+ * Buscar socio(s) por cédula
  * GET /api/socios/buscar/:cedula
+ * NOTA: Retorna array porque una cédula puede tener múltiples expedientes
  */
 export const buscarSocioPorCedula = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -280,15 +331,17 @@ export const buscarSocioPorCedula = async (req: Request, res: Response): Promise
       return;
     }
 
-    const socio = await prisma.socio.findFirst({
+    // Buscar TODOS los socios con esta cédula (pueden haber múltiples expedientes)
+    const socios = await prisma.socio.findMany({
       where: { cedula },
       orderBy: [
-        { estado: 'asc' },
-        { codigo_socio: 'asc' },
+        { estado: 'asc' }, // Activos primero
+        { codigo_socio: 'asc' }, // Luego por expediente
       ],
       include: {
         ubicacion: {
           select: {
+            codigo: true,
             nombre: true,
             direccion: true,
           },
@@ -306,7 +359,7 @@ export const buscarSocioPorCedula = async (req: Request, res: Response): Promise
       },
     });
 
-    if (!socio) {
+    if (socios.length === 0) {
       res.status(404).json({
         success: false,
         error: {
@@ -317,21 +370,15 @@ export const buscarSocioPorCedula = async (req: Request, res: Response): Promise
       return;
     }
 
-    // Validar estado para colecta
-    if (socio.estado !== 'activo') {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'SOCIO_INACTIVO',
-          message: `Socio está ${socio.estado}`,
-        },
-      });
-      return;
-    }
-
-    res.json({
+    // Retornar todos los socios encontrados
+    // El frontend decidirá qué hacer si hay múltiples expedientes
+    res.status(200).json({
       success: true,
-      data: socio,
+      data: socios,
+      meta: {
+        total: socios.length,
+        multipleExpedientes: socios.length > 1,
+      },
     });
   } catch (error) {
     logger.error('Error al buscar socio por cédula:', error);
@@ -400,6 +447,9 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
       }
     }
 
+    // Convertir foto de base64 a Buffer si se proporciona
+    const fotoBuffer = datos.foto ? convertirBase64ABuffer(datos.foto) : null;
+
     // Crear socio
     const socio = await prisma.socio.create({
       data: {
@@ -407,6 +457,7 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
         cedula: datos.cedula,
         nombre: datos.nombre,
         apellido: datos.apellido,
+        sexo: datos.sexo,
         fecha_nacimiento: datos.fecha_nacimiento ? new Date(datos.fecha_nacimiento) : null,
         direccion: datos.direccion,
         telefono: datos.telefono,
@@ -417,6 +468,7 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
         autorizado_cedula: datos.autorizado_cedula || null,
         notas: datos.notas,
         foto_url: datos.foto_url,
+        foto: fotoBuffer,
         es_delegado: datos.es_delegado || false,
       },
       include: {
@@ -441,7 +493,7 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
 
     res.status(201).json({
       success: true,
-      data: socio,
+      data: prepararSocioParaRespuesta(socio),
     });
   } catch (error) {
     logger.error('Error al crear socio:', error);
@@ -557,6 +609,10 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
     if (datos.autorizado_cedula === '') {
       datosActualizacion.autorizado_cedula = null;
     }
+    // Convertir foto de base64 a Buffer si se proporciona
+    if (datos.foto) {
+      datosActualizacion.foto = convertirBase64ABuffer(datos.foto);
+    }
 
     // Actualizar socio
     const socio = await prisma.socio.update({
@@ -585,7 +641,7 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
 
     res.json({
       success: true,
-      data: socio,
+      data: prepararSocioParaRespuesta(socio),
     });
   } catch (error) {
     logger.error('Error al actualizar socio:', error);
@@ -801,7 +857,7 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
 
     res.json({
       success: true,
-      data: socioActualizado,
+      data: prepararSocioParaRespuesta(socioActualizado),
     });
   } catch (error) {
     logger.error('Error al retirar socio:', error);

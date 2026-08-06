@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
+import { PrintableListado } from '../components/print/PrintableListado'
+import { SortableHeader } from '../components/ui/SortableHeader'
 import * as sociosService from '../services/sociosService'
 import { formatearFecha, normalizarFechaParaInput } from '../utils/formatters'
 
@@ -47,6 +49,7 @@ interface Socio {
   autorizado_cedula: string | null
   notas: string | null
   foto_url: string | null
+  foto: string | null // Base64 de la foto
   ubicacion?: Ubicacion
   _count?: {
     beneficiarios: number
@@ -70,6 +73,7 @@ interface SocioFormData {
   autorizado_nombre: string
   autorizado_cedula: string
   notas: string
+  foto?: string // Base64 de la foto
 }
 
 interface RetiroSocioFormData {
@@ -125,12 +129,17 @@ export const SociosPage = () => {
   const [errorRetiro, setErrorRetiro] = useState('')
   const [procesandoRetiro, setProcesandoRetiro] = useState(false)
   const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null)
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null)
   
   // Estados de paginación
   const [paginaActual, setPaginaActual] = useState(1)
   const [totalPaginas, setTotalPaginas] = useState(1)
   const [totalRegistros, setTotalRegistros] = useState(0)
   const [registrosPorPagina, setRegistrosPorPagina] = useState(20)
+  
+  // Estados de ordenamiento
+  const [sortField, setSortField] = useState<string>('codigo_socio')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   
   // Estadísticas del backend
   const [estadisticasBackend, setEstadisticasBackend] = useState<Estadisticas | null>(null)
@@ -213,7 +222,7 @@ export const SociosPage = () => {
   }, [socios, estadisticasBackend, totalRegistros])
 
   const sociosFiltrados = useMemo(() => {
-    return socios.filter((socio) => {
+    let resultado = socios.filter((socio) => {
       const matchBusqueda =
         !busqueda ||
         socio.codigo_socio.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -227,7 +236,47 @@ export const SociosPage = () => {
 
       return matchBusqueda && matchEstado && matchUbicacion
     })
-  }, [socios, busqueda, filtroEstado, filtroUbicacion])
+
+    // Aplicar ordenamiento
+    resultado.sort((a, b) => {
+      let compareA: any = a[sortField as keyof Socio]
+      let compareB: any = b[sortField as keyof Socio]
+
+      // Manejar campos anidados
+      if (sortField === 'ubicacion') {
+        compareA = a.ubicacion?.direccion ?? ''
+        compareB = b.ubicacion?.direccion ?? ''
+      }
+
+      // Manejar valores nulos
+      if (compareA === null || compareA === undefined) compareA = ''
+      if (compareB === null || compareB === undefined) compareB = ''
+
+      // Comparación
+      if (typeof compareA === 'string') {
+        compareA = compareA.toLowerCase()
+        compareB = compareB.toLowerCase()
+      }
+
+      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1
+      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1
+      return 0
+    })
+
+    return resultado
+  }, [socios, busqueda, filtroEstado, filtroUbicacion, sortField, sortOrder])
+
+  // Función para manejar el ordenamiento
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      // Alternar entre asc y desc
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      // Nuevo campo, empezar con asc
+      setSortField(field)
+      setSortOrder('asc')
+    }
+  }
 
   const cargarSocios = async () => {
     setLoading(true)
@@ -285,6 +334,7 @@ export const SociosPage = () => {
     setModoEdicion(false)
     setSocioSeleccionado(null)
     setFormData(emptyForm())
+    setFotoPreview(null)
     setErrorFormulario('')
     setModalAbierto(true)
   }
@@ -307,7 +357,9 @@ export const SociosPage = () => {
       autorizado_nombre: socio.autorizado_nombre ?? '',
       autorizado_cedula: socio.autorizado_cedula ?? '',
       notas: socio.notas ?? '',
+      foto: socio.foto ?? undefined,
     })
+    setFotoPreview(socio.foto)
     setErrorFormulario('')
     setModalAbierto(true)
   }
@@ -331,6 +383,39 @@ export const SociosPage = () => {
 
   const actualizarCampo = (campo: keyof SocioFormData, valor: string | boolean | number | null) => {
     setFormData((prev) => ({ ...prev, [campo]: valor }))
+  }
+
+  const manejarCambioFoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const archivo = e.target.files?.[0]
+    if (!archivo) {
+      return
+    }
+
+    // Validar tipo de archivo
+    if (!archivo.type.startsWith('image/')) {
+      setErrorFormulario('El archivo debe ser una imagen')
+      return
+    }
+
+    // Validar tamaño (máximo 2MB)
+    if (archivo.size > 2 * 1024 * 1024) {
+      setErrorFormulario('La imagen debe pesar menos de 2MB')
+      return
+    }
+
+    // Convertir a base64
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const base64 = reader.result as string
+      setFormData((prev) => ({ ...prev, foto: base64 }))
+      setFotoPreview(base64)
+    }
+    reader.readAsDataURL(archivo)
+  }
+
+  const eliminarFoto = () => {
+    setFormData((prev) => ({ ...prev, foto: undefined }))
+    setFotoPreview(null)
   }
 
   const validarFormulario = (): boolean => {
@@ -368,65 +453,24 @@ export const SociosPage = () => {
     return true
   }
 
-  const guardarSocio = () => {
+  const guardarSocio = async () => {
     if (!validarFormulario()) {
       return
     }
 
-    if (modoEdicion && socioSeleccionado) {
-      setSocios((prev) =>
-        prev.map((item) => {
-          if (item.id !== socioSeleccionado.id) {
-            return item
-          }
-
-          const ubicacion = ubicaciones.find((ubi) => ubi.id === formData.ubicacion_id)
-          return {
-            ...item,
-            ...formData,
-            fecha_nacimiento: formData.fecha_nacimiento || null,
-            direccion: formData.direccion || null,
-            telefono: formData.telefono || null,
-            email: formData.email || null,
-            autorizado_nombre: formData.autorizado_nombre || null,
-            autorizado_cedula: formData.autorizado_cedula || null,
-            notas: formData.notas || null,
-            ubicacion: ubicacion,
-          }
-        })
-      )
-    } else {
-      const idNuevo = socios.length > 0 ? Math.max(...socios.map((item) => item.id)) + 1 : 1
-      const ubicacion = ubicaciones.find((ubi) => ubi.id === formData.ubicacion_id)
-
-      setSocios((prev) => [
-        {
-          id: idNuevo,
-          codigo_socio: formData.codigo_socio,
-          cedula: formData.cedula,
-          nombre: formData.nombre,
-          apellido: formData.apellido,
-          sexo: formData.sexo || null,
-          fecha_nacimiento: formData.fecha_nacimiento || null,
-          direccion: formData.direccion || null,
-          telefono: formData.telefono || null,
-          email: formData.email || null,
-          fecha_inscripcion: formData.fecha_inscripcion,
-          estado: 'activo',
-          es_delegado: false,
-          ubicacion_id: formData.ubicacion_id,
-          autorizado_nombre: formData.autorizado_nombre || null,
-          autorizado_cedula: formData.autorizado_cedula || null,
-          notas: formData.notas || null,
-          foto_url: null,
-          ubicacion,
-          _count: { beneficiarios: 0, cuentas_ahorro: 0, prestamos: 0 },
-        },
-        ...prev,
-      ])
+    try {
+      if (modoEdicion && socioSeleccionado) {
+        await sociosService.actualizarSocio(socioSeleccionado.id, formData)
+      } else {
+        await sociosService.crearSocio(formData)
+      }
+      
+      setModalAbierto(false)
+      await cargarSocios()
+    } catch (error) {
+      console.error('Error guardando socio:', error)
+      setErrorFormulario('Error al guardar el socio. Por favor, intente nuevamente.')
     }
-
-    setModalAbierto(false)
   }
 
   const confirmarRetiro = async () => {
@@ -482,6 +526,23 @@ export const SociosPage = () => {
     return (socio._count?.beneficiarios ?? 0) + (socio._count?.cuentas_ahorro ?? 0) + (socio._count?.prestamos ?? 0)
   }
 
+  const filtrosImpresion = [
+    { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
+    { label: 'Estado', value: filtroEstado || 'Todos los estados' },
+    { label: 'Feria', value: filtroUbicacion || 'Todas las ferias' },
+    { label: 'Registros por página', value: String(registrosPorPagina) },
+  ]
+
+  const filasImpresion = sociosFiltrados.map((socio) => [
+    socio.codigo_socio,
+    socio.cedula,
+    `${socio.apellido}, ${socio.nombre}`,
+    socio.telefono ?? 'Sin teléfono',
+    formatearFecha(socio.fecha_inscripcion),
+    socio.estado,
+    socio.ubicacion?.direccion ?? 'Sin feria',
+  ])
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-primary-100 bg-[linear-gradient(135deg,rgba(255,107,28,0.08),rgba(58,122,44,0.06))] p-5">
@@ -508,6 +569,20 @@ export const SociosPage = () => {
           </div>
         </div>
       </section>
+
+      <PrintableListado
+        titulo="Listado de Socios y Ferias"
+        subtitulo="Reporte generado con los filtros actuales del módulo de socios"
+        filtros={filtrosImpresion}
+        resumenes={[
+          { label: 'Total visibles', value: String(sociosFiltrados.length) },
+          { label: 'Total sistema', value: String(estadisticas.totalSocios) },
+          { label: 'Activos', value: String(estadisticas.sociosActivos) },
+          { label: 'Retirados', value: String(estadisticas.sociosRetirados) },
+        ]}
+        columnas={['Expediente', 'Cédula', 'Socio', 'Teléfono', 'Fecha ingreso', 'Estado', 'Feria']}
+        filas={filasImpresion}
+      />
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Card className="border-primary-100">
@@ -580,12 +655,48 @@ export const SociosPage = () => {
               <table className="min-w-full">
                 <thead className="bg-neutral-50">
                   <tr className="border-b border-neutral-200 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">
-                    <th className="px-4 py-3">Expediente</th>
-                    <th className="px-4 py-3">Cedula</th>
-                    <th className="px-4 py-3">Socio</th>
-                    <th className="px-4 py-3">Telefono</th>
-                    <th className="px-4 py-3">Fecha ing</th>
-                    <th className="px-4 py-3">Estado</th>
+                    <SortableHeader
+                      label="Expediente"
+                      field="codigo_socio"
+                      currentSortField={sortField}
+                      currentSortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      label="Cédula"
+                      field="cedula"
+                      currentSortField={sortField}
+                      currentSortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      label="Socio"
+                      field="apellido"
+                      currentSortField={sortField}
+                      currentSortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      label="Teléfono"
+                      field="telefono"
+                      currentSortField={sortField}
+                      currentSortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      label="Fecha ing"
+                      field="fecha_inscripcion"
+                      currentSortField={sortField}
+                      currentSortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      label="Estado"
+                      field="estado"
+                      currentSortField={sortField}
+                      currentSortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
                     <th className="w-12 px-2 py-3 text-right"></th>
                   </tr>
                 </thead>
@@ -711,21 +822,20 @@ export const SociosPage = () => {
             </div>
             
             {/* Controles de paginación */}
-            <div className="border-t border-neutral-200 bg-neutral-50 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+            {!loading && sociosFiltrados.length > 0 && (
+              <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <p className="text-sm text-neutral-600">
-                    Mostrando <span className="font-semibold">{socios.length === 0 ? 0 : (paginaActual - 1) * registrosPorPagina + 1}</span> a{' '}
-                    <span className="font-semibold">{Math.min(paginaActual * registrosPorPagina, totalRegistros)}</span> de{' '}
-                    <span className="font-semibold">{totalRegistros}</span> socios
-                  </p>
+                  <div className="text-sm text-gray-700">
+                    Mostrando {(paginaActual - 1) * registrosPorPagina + 1} a{' '}
+                    {Math.min(paginaActual * registrosPorPagina, totalRegistros)} de {totalRegistros} socios
+                  </div>
                   <select
                     value={registrosPorPagina}
                     onChange={(e) => {
                       setRegistrosPorPagina(Number(e.target.value))
                       setPaginaActual(1)
                     }}
-                    className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                    className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                   >
                     <option value={10}>10</option>
                     <option value={20}>20</option>
@@ -733,19 +843,19 @@ export const SociosPage = () => {
                     <option value={100}>100</option>
                   </select>
                 </div>
-                
+
                 <div className="flex items-center gap-2">
                   <Button
-                    variant="outline"
-                    onClick={() => setPaginaActual(prev => Math.max(1, prev - 1))}
+                    onClick={() => setPaginaActual(paginaActual - 1)}
                     disabled={paginaActual === 1}
-                    className="h-9 px-3"
+                    variant="secondary"
+                    className="flex items-center gap-1"
                   >
-                    <ChevronLeft className="h-4 w-4" />
+                    <ChevronLeft className="w-4 h-4" />
                     Anterior
                   </Button>
-                  
-                  <div className="flex items-center gap-1">
+
+                  <div className="flex gap-1">
                     {Array.from({ length: Math.min(5, totalPaginas) }, (_, i) => {
                       let pageNum: number
                       if (totalPaginas <= 5) {
@@ -757,42 +867,39 @@ export const SociosPage = () => {
                       } else {
                         pageNum = paginaActual - 2 + i
                       }
-                      
+
                       return (
-                        <button
+                        <Button
                           key={pageNum}
                           onClick={() => setPaginaActual(pageNum)}
-                          className={`h-9 min-w-[36px] rounded-lg px-2 text-sm font-medium transition ${
-                            paginaActual === pageNum
-                              ? 'bg-primary-600 text-white'
-                              : 'text-neutral-600 hover:bg-neutral-100'
-                          }`}
+                          variant={paginaActual === pageNum ? 'primary' : 'secondary'}
+                          className="w-9 h-9 p-0"
                         >
                           {pageNum}
-                        </button>
+                        </Button>
                       )
                     })}
                   </div>
-                  
+
                   <Button
-                    variant="outline"
-                    onClick={() => setPaginaActual(prev => Math.min(totalPaginas, prev + 1))}
+                    onClick={() => setPaginaActual(paginaActual + 1)}
                     disabled={paginaActual === totalPaginas}
-                    className="h-9 px-3"
+                    variant="secondary"
+                    className="flex items-center gap-1"
                   >
                     Siguiente
-                    <ChevronRight className="h-4 w-4" />
+                    <ChevronRight className="w-4 h-4" />
                   </Button>
                 </div>
               </div>
-            </div>
+            )}
           </Card>
         </div>
       </section>
 
       {modalAbierto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm">
-          <Card className="max-h-[92vh] w-full max-w-5xl overflow-y-auto border-neutral-200">
+        <div className="fixed top-0 left-0 right-0 bottom-0 m-0 z-[100] flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm overflow-y-auto">
+          <Card className="w-full max-w-5xl border-neutral-200 my-8">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-2xl font-semibold text-neutral-900">
@@ -810,11 +917,14 @@ export const SociosPage = () => {
               </button>
             </div>
 
-            <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-              <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                <p className="text-sm font-semibold text-neutral-800">Datos principales</p>
+            <div className="mt-5 grid grid-cols-1 gap-5">
+              {/* Fila 1: Datos principales + Foto */}
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+                {/* Datos principales - Ocupa 2 columnas */}
+                <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4 lg:col-span-2">
+                  <p className="text-sm font-semibold text-neutral-800">Datos principales</p>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="space-y-1 text-sm text-neutral-700">
                     <span>Expediente *</span>
                     <input
@@ -904,17 +1014,68 @@ export const SociosPage = () => {
                   </label>
                 </div>
 
-                <label className="space-y-1 text-sm text-neutral-700">
-                  <span>Direccion</span>
-                  <input
-                    value={formData.direccion}
-                    onChange={(e) => actualizarCampo('direccion', e.target.value)}
-                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-                  />
-                </label>
+                  <label className="space-y-1 text-sm text-neutral-700 sm:col-span-2">
+                    <span>Direccion</span>
+                    <input
+                      value={formData.direccion}
+                      onChange={(e) => actualizarCampo('direccion', e.target.value)}
+                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                    />
+                  </label>
+                </div>
               </div>
 
+              {/* Sección de foto - Ocupa 1 columna */}
               <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
+                <p className="text-sm font-semibold text-neutral-800">Fotografía del socio</p>
+                
+                <div className="flex flex-col items-center gap-4">
+                  {fotoPreview ? (
+                    <div className="relative">
+                      <img 
+                        src={fotoPreview} 
+                        alt="Foto del socio" 
+                        className="h-32 w-32 rounded-lg object-cover border-2 border-neutral-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={eliminarFoto}
+                        className="absolute -right-2 -top-2 rounded-full bg-red-500 p-1 text-white hover:bg-red-600 transition"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex h-32 w-32 items-center justify-center rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-100">
+                      <svg className="h-12 w-12 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                  )}
+                  
+                  <label className="cursor-pointer">
+                    <span className="rounded-lg border border-primary-400 bg-primary-50 px-4 py-2 text-sm font-medium text-primary-700 hover:bg-primary-100 transition inline-block">
+                      {fotoPreview ? 'Cambiar foto' : 'Seleccionar foto'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={manejarCambioFoto}
+                      className="hidden"
+                    />
+                  </label>
+                  
+                  <p className="text-xs text-neutral-500 text-center">
+                    Formatos: JPG, PNG, GIF. Máximo 2MB
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Fila 2: Control interno - Full width */}
+            <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
                 <p className="text-sm font-semibold text-neutral-800">Control interno y autorizacion</p>
 
                 <label className="space-y-1 text-sm text-neutral-700">
@@ -966,7 +1127,6 @@ export const SociosPage = () => {
                   />
                 </label>
               </div>
-            </div>
 
             {errorFormulario && (
               <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -985,8 +1145,8 @@ export const SociosPage = () => {
       )}
 
       {modalRetiroAbierto && socioParaRetiro && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-lg border-neutral-200">
+        <div className="fixed top-0 left-0 right-0 bottom-0 m-0 z-[100] flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm overflow-y-auto">
+          <Card className="w-full max-w-lg border-neutral-200 my-8">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-2xl font-semibold text-neutral-900">Registrar retiro</h2>
@@ -1055,7 +1215,7 @@ export const SociosPage = () => {
       )}
 
       {modalDetalleAbierto && socioDetalle && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm">
+        <div className="fixed top-0 left-0 right-0 bottom-0 m-0 z-[100] flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm">
           <Card className="max-h-[92vh] w-full max-w-4xl overflow-y-auto border-neutral-200">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -1071,6 +1231,19 @@ export const SociosPage = () => {
                 Cerrar
               </button>
             </div>
+
+            {/* Foto del socio */}
+            {socioDetalle.foto && (
+              <div className="mt-4 flex justify-center">
+                <div className="rounded-xl border-2 border-neutral-200 bg-white p-2">
+                  <img 
+                    src={socioDetalle.foto} 
+                    alt={`Foto de ${socioDetalle.nombre} ${socioDetalle.apellido}`}
+                    className="h-40 w-40 rounded-lg object-cover"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
               <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">

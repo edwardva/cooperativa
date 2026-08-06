@@ -35,13 +35,14 @@ const movimientoSchema = z.object({
 });
 
 const consultaMovimientosSchema = z.object({
-  cuenta_id: z.number().int().positive().optional(),
-  socio_id: z.number().int().positive().optional(),
+  cuenta_id: z.coerce.number().int().positive().optional(),
+  socio_id: z.coerce.number().int().positive().optional(),
+  tipo_cuenta_id: z.coerce.number().int().positive().optional(),
   tipo_movimiento: z.enum(['deposito', 'retiro']).optional(),
   fecha_desde: z.string().datetime().optional(),
   fecha_hasta: z.string().datetime().optional(),
-  page: z.number().int().positive().optional().default(1),
-  limit: z.number().int().positive().max(100).optional().default(50),
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(50),
 });
 
 // ============================================
@@ -70,7 +71,20 @@ async function obtenerTasaActual(): Promise<number> {
 /**
  * Generar número de cuenta único
  */
-async function generarNumeroCuenta(tipoCuentaId: number): Promise<string> {
+/**
+ * Genera un número de cuenta único siguiendo el formato del sistema viejo
+ * Formato: XX-XX-XX-XXXXXX
+ * - XX: código tipo de cuenta (01, 02, 12, etc.)
+ * - XX-XX: código de ubicación/feria (01-00, 08-00, etc.)
+ * - XXXXXX: correlativo secuencial por tipo+feria (6 dígitos)
+ * 
+ * Ejemplo: 01-08-00-121753
+ * - Tipo: 01 (CUENTA A LA VISTA)
+ * - Feria: 08-00
+ * - Correlativo: 121753
+ */
+async function generarNumeroCuenta(tipoCuentaId: number, socioId: number): Promise<string> {
+  // Obtener tipo de cuenta
   const tipoCuenta = await prisma.tipoCuentaAhorro.findUnique({
     where: { id: tipoCuentaId },
   });
@@ -79,16 +93,72 @@ async function generarNumeroCuenta(tipoCuentaId: number): Promise<string> {
     throw new Error('Tipo de cuenta no encontrado');
   }
 
-  // Contar cuentas del tipo
-  const totalCuentas = await prisma.cuentaAhorro.count({
-    where: { tipo_cuenta_id: tipoCuentaId },
+  // Obtener socio y su ubicación
+  const socio = await prisma.socio.findUnique({
+    where: { id: socioId },
+    include: {
+      ubicacion: true,
+    },
   });
 
-  // Formato: TIPO-NNNNNN (ej: AHO-000001)
-  const codigo = tipoCuenta.codigo.substring(0, 3).toUpperCase();
-  const numero = String(totalCuentas + 1).padStart(6, '0');
+  if (!socio || !socio.ubicacion) {
+    throw new Error('Socio o ubicación no encontrados');
+  }
+
+  // Prefijo del número de cuenta: TIPO-UBICACION (ej: "01-08-00")
+  const prefijo = `${tipoCuenta.codigo}-${socio.ubicacion.codigo}`;
   
-  return `${codigo}-${numero}`;
+  // Buscar la última cuenta con este prefijo para obtener el último correlativo
+  const ultimaCuenta = await prisma.cuentaAhorro.findFirst({
+    where: {
+      numero_cuenta: {
+        startsWith: `${prefijo}-`,
+      },
+    },
+    orderBy: {
+      numero_cuenta: 'desc',
+    },
+    select: {
+      numero_cuenta: true,
+    },
+  });
+  
+  let proximoCorrelativo = 100001; // Empezar desde 100001 para nuevas cuentas
+  
+  if (ultimaCuenta) {
+    // Extraer el correlativo de la última cuenta
+    // Formato: XX-XX-XX-XXXXXX, el correlativo está después del tercer guion
+    const partes = ultimaCuenta.numero_cuenta.split('-');
+    if (partes.length === 4) {
+      const ultimoCorrelativo = parseInt(partes[3], 10);
+      if (!isNaN(ultimoCorrelativo)) {
+        proximoCorrelativo = ultimoCorrelativo + 1;
+      }
+    }
+  }
+  
+  // Generar número de cuenta con validación de unicidad
+  let intentos = 0;
+  const MAX_INTENTOS = 100;
+  
+  while (intentos < MAX_INTENTOS) {
+    const numeroCuenta = `${prefijo}-${String(proximoCorrelativo).padStart(6, '0')}`;
+    
+    // Verificar que no exista
+    const existe = await prisma.cuentaAhorro.findUnique({
+      where: { numero_cuenta: numeroCuenta },
+    });
+    
+    if (!existe) {
+      return numeroCuenta;
+    }
+    
+    // Si existe, incrementar y reintentar
+    proximoCorrelativo++;
+    intentos++;
+  }
+  
+  throw new Error(`No se pudo generar un número de cuenta único después de ${MAX_INTENTOS} intentos`);
 }
 
 // ============================================
@@ -358,6 +428,77 @@ export const obtenerCuenta = async (req: Request, res: Response): Promise<void> 
 };
 
 /**
+ * GET /api/ahorro/tipos-cuenta
+ * Listar tipos de cuenta activos
+ */
+export const listarTiposCuenta = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const tipos = await prisma.tipoCuentaAhorro.findMany({
+      where: { estado: true },
+      orderBy: { codigo: 'asc' },
+      select: {
+        id: true,
+        codigo: true,
+        nombre: true,
+        descripcion: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: tipos,
+    });
+  } catch (error) {
+    logger.error('Error al listar tipos de cuenta:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al listar tipos de cuenta',
+      },
+    });
+  }
+};
+
+/**
+ * GET /api/ahorro/tipos-cuenta/todos
+ * Listar TODOS los tipos de cuenta (incluyendo inactivos) con conteo de cuentas
+ * Para uso en CRUD/administración
+ */
+export const listarTodosTiposCuenta = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const tipos = await prisma.tipoCuentaAhorro.findMany({
+      orderBy: { codigo: 'asc' },
+      select: {
+        id: true,
+        codigo: true,
+        nombre: true,
+        descripcion: true,
+        estado: true,
+        created_at: true,
+        _count: {
+          select: { cuentas: true },
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: tipos,
+    });
+  } catch (error) {
+    logger.error('Error al listar todos los tipos de cuenta:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al listar tipos de cuenta',
+      },
+    });
+  }
+};
+
+/**
  * POST /api/ahorro/cuentas/apertura
  * Apertura de nueva cuenta de ahorro
  */
@@ -431,8 +572,8 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
     // Obtener tasa de cambio actual
     const tasaCambio = await obtenerTasaActual();
 
-    // Generar número de cuenta
-    const numeroCuenta = await generarNumeroCuenta(datos.tipo_cuenta_id);
+    // Generar número de cuenta (formato: XX-XX-XX-XXXXXX)
+    const numeroCuenta = await generarNumeroCuenta(datos.tipo_cuenta_id, datos.socio_id);
 
     // Crear cuenta en transacción
     const resultado = await prisma.$transaction(async (tx) => {
@@ -806,10 +947,10 @@ export const consultarMovimientos = async (req: Request, res: Response): Promise
     if (filtros.cuenta_id) where.cuenta_id = filtros.cuenta_id;
     if (filtros.tipo_movimiento) where.tipo_movimiento = filtros.tipo_movimiento;
 
-    if (filtros.socio_id) {
-      where.cuenta = {
-        socio_id: filtros.socio_id,
-      };
+    if (filtros.socio_id || filtros.tipo_cuenta_id) {
+      where.cuenta = {};
+      if (filtros.socio_id) where.cuenta.socio_id = filtros.socio_id;
+      if (filtros.tipo_cuenta_id) where.cuenta.tipo_cuenta_id = filtros.tipo_cuenta_id;
     }
 
     if (filtros.fecha_desde || filtros.fecha_hasta) {
@@ -1165,7 +1306,7 @@ export const obtenerEstadisticasPorFeria = async (req: Request, res: Response): 
  * GET /api/ahorro/estadisticas/resumen-ferias
  * Obtener resumen simplificado de ahorro por ferias
  */
-export const obtenerResumenPorFeria = async (req: Request, res: Response): Promise<void> => {
+export const obtenerResumenPorFeria = async (_req: Request, res: Response): Promise<void> => {
   try {
     const ubicaciones = await prisma.ubicacion.findMany({
       where: { estado: true },
