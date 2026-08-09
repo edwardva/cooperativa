@@ -10,6 +10,7 @@ import { z } from 'zod';
 import {
   generarReporteSocios,
   generarReportePrestamos,
+  generarReporteFunerariaSuspendidos,
 } from '../services/reportesService';
 
 // ============================================
@@ -28,6 +29,10 @@ const reportePrestamosSchema = z.object({
   estado: z.enum(['activo', 'saldado', 'mora', 'todos']).optional(),
   fecha_desde: z.string().optional(),
   fecha_hasta: z.string().optional(),
+});
+
+const reporteFunerariaSuspendidosSchema = z.object({
+  formato: z.literal('excel').default('excel'),
 });
 
 // ============================================
@@ -127,6 +132,46 @@ export const reportePrestamos = async (
 };
 
 /**
+ * POST /api/reportes/funeraria-suspendidos
+ * Generar reporte de acuerdos de funeraria suspendidos
+ */
+export const reporteFunerariaSuspendidos = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const validacion = reporteFunerariaSuspendidosSchema.safeParse(req.body);
+
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Datos inválidos',
+          details: validacion.error.errors,
+        },
+      });
+      return;
+    }
+
+    const buffer = await generarReporteFunerariaSuspendidos(validacion.data.formato);
+
+    const fecha = new Date().toISOString().split('T')[0];
+    const filename = `reporte-funeraria-suspendidos-${fecha}.xlsx`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * GET /api/reportes/tipos
  * Listar tipos de reportes disponibles
  */
@@ -159,6 +204,13 @@ export const listarTiposReportes = async (
           { campo: 'fecha_desde', tipo: 'date' },
           { campo: 'fecha_hasta', tipo: 'date' },
         ],
+      },
+      {
+        id: 'funeraria-suspendidos',
+        nombre: 'Reporte de Acuerdos de Funeraria Suspendidos',
+        descripcion: 'Listado de acuerdos suspendidos con semanas de atraso',
+        formatos: ['excel'],
+        filtros: [],
       },
     ],
   });

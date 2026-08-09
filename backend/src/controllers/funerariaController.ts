@@ -24,13 +24,28 @@ const crearAcuerdoSchema = z.object({
   socio_id: z.number().int().positive(),
   tipo_acuerdo_id: z.number().int().positive(),
   beneficiario_id: z.number().int().positive().optional(),
+  numero_acuerdo: z.string().trim().min(1, 'El número de acuerdo es requerido').max(20),
+  numero_contrato: z.string().trim().max(20).optional(),
   fecha_inicio: z.string().datetime().optional(),
 });
 
-const cambiarEstadoSchema = z.object({
-  estado: z.enum(['activo', 'suspendido', 'retirado']),
-  motivo: z.string().max(500).optional(),
+const actualizarAcuerdoSchema = z.object({
+  tipo_acuerdo_id: z.number().int().positive().optional(),
+  numero_acuerdo: z.string().trim().min(1, 'El número de acuerdo es requerido').max(20).optional(),
+  numero_contrato: z.string().trim().max(20).optional().nullable(),
+  fecha_inicio: z.string().datetime().optional(),
 });
+
+const cambiarEstadoSchema = z
+  .object({
+    estado: z.enum(['activo', 'suspendido', 'retirado']),
+    motivo: z.string().max(500).optional(),
+    fecha_retiro: z.string().datetime().optional(),
+  })
+  .refine((data) => data.estado !== 'retirado' || !!data.fecha_retiro, {
+    message: 'La fecha de retiro es requerida al retirar un acuerdo',
+    path: ['fecha_retiro'],
+  });
 
 const listarAcuerdosSchema = z.object({
   estado: z.enum(['activo', 'suspendido', 'retirado']).optional(),
@@ -123,6 +138,39 @@ async function verificarSuspensionAutomatica(acuerdoId: number): Promise<void> {
 // ============================================
 
 /**
+ * GET /api/funeraria/tipos-acuerdo
+ * Listar tipos de acuerdo de funeraria activos (catálogo para selects)
+ */
+export const listarTiposAcuerdo = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const tipos = await prisma.tipoAcuerdoFuneraria.findMany({
+      where: { estado: true },
+      orderBy: { nombre: 'asc' },
+    });
+
+    res.json({
+      success: true,
+      data: tipos.map((tipo) => ({
+        id: tipo.id,
+        codigo: tipo.codigo,
+        nombre: tipo.nombre,
+        monto_usd: Number(tipo.monto_usd),
+        ubicacion: tipo.ubicacion,
+      })),
+    });
+  } catch (error: any) {
+    logger.error('Error al listar tipos de acuerdo funeraria:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al listar tipos de acuerdo',
+      },
+    });
+  }
+};
+
+/**
  * GET /api/funeraria/acuerdos
  * Listar todos los acuerdos con filtros y paginación
  */
@@ -147,15 +195,21 @@ export const listarAcuerdos = async (req: Request, res: Response): Promise<void>
       where.tipo_acuerdo_id = params.tipo_acuerdo_id;
     }
 
-    // Búsqueda por nombre/cédula del socio
+    // Búsqueda por nombre/cédula del beneficiario o número de acuerdo/contrato
     if (params.buscar) {
-      where.beneficiario = {
-        OR: [
-          { nombre: { contains: params.buscar, mode: 'insensitive' } },
-          { apellido: { contains: params.buscar, mode: 'insensitive' } },
-          { cedula: { contains: params.buscar } },
-        ],
-      };
+      where.OR = [
+        { numero_acuerdo: { contains: params.buscar, mode: 'insensitive' } },
+        { numero_contrato: { contains: params.buscar, mode: 'insensitive' } },
+        {
+          beneficiario: {
+            OR: [
+              { nombre: { contains: params.buscar, mode: 'insensitive' } },
+              { apellido: { contains: params.buscar, mode: 'insensitive' } },
+              { cedula: { contains: params.buscar } },
+            ],
+          },
+        },
+      ];
     }
 
     // Paginación
@@ -202,6 +256,8 @@ export const listarAcuerdos = async (req: Request, res: Response): Promise<void>
     // Formatear respuesta
     const acuerdosFormateados = acuerdos.map((acuerdo) => ({
       id: acuerdo.id,
+      numero_acuerdo: acuerdo.numero_acuerdo,
+      numero_contrato: acuerdo.numero_contrato,
       beneficiario: {
         id: acuerdo.beneficiario.id,
         cedula: acuerdo.beneficiario.cedula,
@@ -224,6 +280,8 @@ export const listarAcuerdos = async (req: Request, res: Response): Promise<void>
       estado: acuerdo.estado,
       semanas_sin_pago: acuerdo.semanas_sin_pago,
       fecha_suspension: acuerdo.fecha_suspension,
+      fecha_retiro: acuerdo.fecha_retiro,
+      motivo_retiro: acuerdo.motivo_retiro,
       fecha_inicio: acuerdo.fecha_inicio,
       created_at: acuerdo.created_at,
       updated_at: acuerdo.updated_at,
@@ -445,6 +503,46 @@ export const obtenerAcuerdosPorSocio = async (req: Request, res: Response): Prom
 };
 
 /**
+ * GET /api/funeraria/acuerdos/suspendidos/listado
+ * Listado completo (sin paginar) de acuerdos suspendidos, para imprimir.
+ */
+export const listarSuspendidosParaImpresion = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const acuerdos = await prisma.acuerdoFuneraria.findMany({
+      where: { estado: 'suspendido' },
+      include: {
+        beneficiario: {
+          include: { socio: true },
+        },
+      },
+      orderBy: { semanas_sin_pago: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: acuerdos.map((acuerdo) => ({
+        expediente: acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
+        numero_acuerdo: acuerdo.numero_acuerdo || 'N/D',
+        apellidos: acuerdo.beneficiario.socio?.apellido || acuerdo.beneficiario.apellido,
+        nombres: acuerdo.beneficiario.socio?.nombre || acuerdo.beneficiario.nombre,
+        cedula: acuerdo.beneficiario.socio?.cedula || acuerdo.beneficiario.cedula,
+        telefono: acuerdo.beneficiario.socio?.telefono || acuerdo.beneficiario.telefono || 'N/D',
+        semanas_atraso: acuerdo.semanas_sin_pago,
+      })),
+    });
+  } catch (error: any) {
+    logger.error('Error al listar suspendidos para impresión:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al listar acuerdos suspendidos',
+      },
+    });
+  }
+};
+
+/**
  * GET /api/funeraria/acuerdos/:id
  * Obtener detalle de un acuerdo específico
  */
@@ -474,6 +572,7 @@ export const obtenerAcuerdo = async (req: Request, res: Response): Promise<void>
                 codigo_socio: true,
                 nombre: true,
                 apellido: true,
+                direccion: true,
                 telefono: true,
                 email: true,
                 estado: true,
@@ -503,6 +602,8 @@ export const obtenerAcuerdo = async (req: Request, res: Response): Promise<void>
       success: true,
       data: {
         id: acuerdo.id,
+        numero_acuerdo: acuerdo.numero_acuerdo,
+        numero_contrato: acuerdo.numero_contrato,
         beneficiario: {
           id: acuerdo.beneficiario.id,
           cedula: acuerdo.beneficiario.cedula,
@@ -516,6 +617,7 @@ export const obtenerAcuerdo = async (req: Request, res: Response): Promise<void>
           codigo_socio: acuerdo.beneficiario.socio.codigo_socio,
           cedula: acuerdo.beneficiario.socio.cedula,
           nombre_completo: `${acuerdo.beneficiario.socio.nombre} ${acuerdo.beneficiario.socio.apellido}`,
+          direccion: acuerdo.beneficiario.socio.direccion,
           telefono: acuerdo.beneficiario.socio.telefono,
           email: acuerdo.beneficiario.socio.email,
           estado: acuerdo.beneficiario.socio.estado,
@@ -529,6 +631,8 @@ export const obtenerAcuerdo = async (req: Request, res: Response): Promise<void>
         },
         estado: acuerdo.estado,
         semanas_sin_pago: acuerdo.semanas_sin_pago,
+        fecha_retiro: acuerdo.fecha_retiro,
+        motivo_retiro: acuerdo.motivo_retiro,
         fecha_suspension: acuerdo.fecha_suspension,
         fecha_inicio: acuerdo.fecha_inicio,
         movimientos: acuerdo.movimientos.map((mov) => ({
@@ -593,6 +697,21 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       });
     }
 
+    // Verificar que el número de acuerdo no esté en uso
+    const numeroAcuerdoExistente = await prisma.acuerdoFuneraria.findUnique({
+      where: { numero_acuerdo: data.numero_acuerdo },
+    });
+
+    if (numeroAcuerdoExistente) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'NUMERO_ACUERDO_EN_USO',
+          message: `El número de acuerdo ${data.numero_acuerdo} ya está registrado`,
+        },
+      });
+    }
+
     // Obtener o crear beneficiario
     const beneficiarioId = data.beneficiario_id || await obtenerOCrearBeneficiario(data.socio_id);
 
@@ -621,6 +740,8 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       data: {
         beneficiario_id: beneficiarioId,
         tipo_acuerdo_id: data.tipo_acuerdo_id,
+        numero_acuerdo: data.numero_acuerdo,
+        numero_contrato: data.numero_contrato,
         estado: 'activo',
         semanas_sin_pago: 0,
         fecha_inicio: data.fecha_inicio ? new Date(data.fecha_inicio) : new Date(),
@@ -641,7 +762,8 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
         usuario_id: (req as any).user?.userId || 1,
         accion: 'CREATE',
         modulo: 'funeraria',
-        datos_despues: `Acuerdo creado: ${nuevoAcuerdo.id} - Socio: ${socio.nombre} ${socio.apellido}` as any,
+        registro_id: nuevoAcuerdo.id,
+        datos_despues: `Acuerdo ${nuevoAcuerdo.numero_acuerdo} creado: ${nuevoAcuerdo.id} - Socio: ${socio.nombre} ${socio.apellido}` as any,
       },
     });
 
@@ -649,6 +771,8 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       success: true,
       data: {
         id: nuevoAcuerdo.id,
+        numero_acuerdo: nuevoAcuerdo.numero_acuerdo,
+        numero_contrato: nuevoAcuerdo.numero_contrato,
         beneficiario: {
           id: nuevoAcuerdo.beneficiario.id,
           nombre_completo: `${nuevoAcuerdo.beneficiario.nombre} ${nuevoAcuerdo.beneficiario.apellido}`,
@@ -686,6 +810,220 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Error al crear acuerdo',
+      },
+    });
+  }
+};
+
+/**
+ * PUT /api/funeraria/acuerdos/:id
+ * Actualizar datos de un acuerdo de funeraria (tipo, número de acuerdo/contrato, fecha de inicio)
+ */
+export const actualizarAcuerdo = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const acuerdoId = parseInt(req.params.id!);
+
+    if (isNaN(acuerdoId)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ID',
+          message: 'ID de acuerdo inválido',
+        },
+      });
+    }
+
+    const data = actualizarAcuerdoSchema.parse(req.body);
+
+    const acuerdoExistente = await prisma.acuerdoFuneraria.findUnique({
+      where: { id: acuerdoId },
+    });
+
+    if (!acuerdoExistente) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'ACUERDO_NOT_FOUND',
+          message: 'Acuerdo no encontrado',
+        },
+      });
+    }
+
+    if (data.numero_acuerdo && data.numero_acuerdo !== acuerdoExistente.numero_acuerdo) {
+      const numeroAcuerdoExistente = await prisma.acuerdoFuneraria.findUnique({
+        where: { numero_acuerdo: data.numero_acuerdo },
+      });
+
+      if (numeroAcuerdoExistente) {
+        return res.status(409).json({
+          success: false,
+          error: {
+            code: 'NUMERO_ACUERDO_EN_USO',
+            message: `El número de acuerdo ${data.numero_acuerdo} ya está registrado`,
+          },
+        });
+      }
+    }
+
+    if (data.tipo_acuerdo_id) {
+      const tipoAcuerdo = await prisma.tipoAcuerdoFuneraria.findUnique({
+        where: { id: data.tipo_acuerdo_id },
+      });
+
+      if (!tipoAcuerdo || !tipoAcuerdo.estado) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'TIPO_ACUERDO_NOT_FOUND',
+            message: 'Tipo de acuerdo no encontrado o inactivo',
+          },
+        });
+      }
+    }
+
+    const acuerdoActualizado = await prisma.acuerdoFuneraria.update({
+      where: { id: acuerdoId },
+      data: {
+        ...(data.tipo_acuerdo_id !== undefined && { tipo_acuerdo_id: data.tipo_acuerdo_id }),
+        ...(data.numero_acuerdo !== undefined && { numero_acuerdo: data.numero_acuerdo }),
+        ...(data.numero_contrato !== undefined && { numero_contrato: data.numero_contrato || null }),
+        ...(data.fecha_inicio !== undefined && { fecha_inicio: new Date(data.fecha_inicio) }),
+      },
+      include: {
+        beneficiario: {
+          include: { socio: true },
+        },
+        tipo_acuerdo: true,
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        usuario_id: (req as any).user?.userId || 1,
+        accion: 'UPDATE',
+        modulo: 'funeraria',
+        registro_id: acuerdoId,
+        datos_antes: acuerdoExistente as any,
+        datos_despues: acuerdoActualizado as any,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: acuerdoActualizado.id,
+        numero_acuerdo: acuerdoActualizado.numero_acuerdo,
+        numero_contrato: acuerdoActualizado.numero_contrato,
+        tipo_acuerdo: {
+          id: acuerdoActualizado.tipo_acuerdo.id,
+          codigo: acuerdoActualizado.tipo_acuerdo.codigo,
+          nombre: acuerdoActualizado.tipo_acuerdo.nombre,
+          monto_usd: Number(acuerdoActualizado.tipo_acuerdo.monto_usd),
+        },
+        fecha_inicio: acuerdoActualizado.fecha_inicio,
+        estado: acuerdoActualizado.estado,
+      },
+    });
+
+    logger.info(`Acuerdo funeraria ${acuerdoId} actualizado`);
+  } catch (error: any) {
+    logger.error('Error al actualizar acuerdo funeraria:', error);
+
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Errores de validación',
+          details: error.errors,
+        },
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al actualizar acuerdo',
+      },
+    });
+  }
+};
+
+/**
+ * DELETE /api/funeraria/acuerdos/:id
+ * Eliminar un acuerdo de funeraria solo si no tiene movimientos registrados
+ */
+export const eliminarAcuerdo = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const acuerdoId = parseInt(req.params.id!);
+
+    if (isNaN(acuerdoId)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ID',
+          message: 'ID de acuerdo inválido',
+        },
+      });
+    }
+
+    const acuerdo = await prisma.acuerdoFuneraria.findUnique({
+      where: { id: acuerdoId },
+      include: {
+        _count: {
+          select: { movimientos: true },
+        },
+      },
+    });
+
+    if (!acuerdo) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'ACUERDO_NOT_FOUND',
+          message: 'Acuerdo no encontrado',
+        },
+      });
+    }
+
+    if (acuerdo._count.movimientos > 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'ACUERDO_CON_MOVIMIENTOS',
+          message: 'El acuerdo no puede eliminarse porque ya tiene movimientos registrados en el sistema',
+        },
+      });
+    }
+
+    await prisma.acuerdoFuneraria.delete({
+      where: { id: acuerdoId },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        usuario_id: (req as any).user?.userId || 1,
+        accion: 'DELETE',
+        modulo: 'funeraria',
+        registro_id: acuerdoId,
+        datos_antes: acuerdo as any,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: { id: acuerdoId },
+    });
+
+    logger.info(`Acuerdo funeraria ${acuerdoId} eliminado`);
+  } catch (error: any) {
+    logger.error('Error al eliminar acuerdo funeraria:', error);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al eliminar acuerdo',
       },
     });
   }
@@ -757,6 +1095,12 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
       updateData.semanas_sin_pago = 0;
     }
 
+    // Si se retira, registrar fecha y motivo del retiro
+    if (data.estado === 'retirado') {
+      updateData.fecha_retiro = new Date(data.fecha_retiro!);
+      updateData.motivo_retiro = data.motivo || null;
+    }
+
     // Actualizar acuerdo
     const acuerdoActualizado = await prisma.acuerdoFuneraria.update({
       where: { id: acuerdoId },
@@ -773,6 +1117,7 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
         usuario_id: (req as any).user?.userId || 1,
         accion: 'UPDATE',
         modulo: 'funeraria',
+        registro_id: acuerdoId,
         datos_despues: `Estado cambiado: ${acuerdoExistente.estado} → ${data.estado}. Acuerdo: ${acuerdoId}. Motivo: ${data.motivo || 'No especificado'}` as any,
       },
     });
@@ -784,6 +1129,8 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
         estado_anterior: acuerdoExistente.estado,
         estado_nuevo: acuerdoActualizado.estado,
         fecha_suspension: acuerdoActualizado.fecha_suspension,
+        fecha_retiro: acuerdoActualizado.fecha_retiro,
+        motivo_retiro: acuerdoActualizado.motivo_retiro,
       },
     });
 

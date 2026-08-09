@@ -129,6 +129,14 @@ interface PaginatedResponse<T> extends ApiResponse<T[]> {
 // ============================================
 
 /**
+ * Listar tipos de acuerdo de salud activos (catálogo para selects)
+ */
+export const obtenerTiposAcuerdo = async (): Promise<ApiResponse<TipoAcuerdo[]>> => {
+  const response = await apiClient.get<ApiResponse<TipoAcuerdo[]>>('/salud/tipos-acuerdo');
+  return response.data;
+};
+
+/**
  * Listar acuerdos de salud con filtros y paginación
  */
 export const obtenerAcuerdos = async (params?: {

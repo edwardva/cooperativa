@@ -8,18 +8,16 @@ export function formatearFecha(fechaISO: string | null | undefined): string {
   
   try {
     // Extraer solo la parte de la fecha si viene con hora
-    const soloFecha = fechaISO.split('T')[0]
-    if (!soloFecha) return ''
-    
+    const soloFecha = fechaISO.split('T')[0] ?? ''
+
     // Validar formato YYYY-MM-DD
     const regex = /^(\d{4})-(\d{2})-(\d{2})$/
     const match = soloFecha.match(regex)
     
     if (!match) return ''
     
-    const [, anio, mes, dia] = match
-    if (!anio || !mes || !dia) return ''
-    
+    const [, anio, mes, dia] = match as unknown as [string, string, string, string]
+
     // Validar que sean números válidos
     const diaNum = parseInt(dia, 10)
     const mesNum = parseInt(mes, 10)
@@ -60,6 +58,28 @@ export function parsearFecha(fechaDDMMYYYY: string): string {
 }
 
 /**
+ * Calcula la edad en años a partir de una fecha de nacimiento
+ * @param fechaNacimiento Fecha en formato ISO (YYYY-MM-DD o con hora)
+ * @returns Edad en años, o null si la fecha es inválida
+ */
+export function calcularEdad(fechaNacimiento: string | null | undefined): number | null {
+  if (!fechaNacimiento) return null
+
+  const nacimiento = new Date(fechaNacimiento)
+  if (isNaN(nacimiento.getTime())) return null
+
+  const hoy = new Date()
+  let edad = hoy.getFullYear() - nacimiento.getFullYear()
+  const mesDiff = hoy.getMonth() - nacimiento.getMonth()
+
+  if (mesDiff < 0 || (mesDiff === 0 && hoy.getDate() < nacimiento.getDate())) {
+    edad--
+  }
+
+  return edad >= 0 ? edad : null
+}
+
+/**
  * Normaliza una fecha para inputs type="date"
  * Extrae solo la parte YYYY-MM-DD de cualquier formato ISO
  * @param fechaISO Fecha en formato YYYY-MM-DD o YYYY-MM-DDTHH:mm:ss.sssZ
@@ -70,9 +90,8 @@ export function normalizarFechaParaInput(fechaISO: string | null | undefined): s
   
   try {
     // Si viene con timestamp, extraer solo la parte de fecha
-    const soloFecha = fechaISO.split('T')[0]
-    if (!soloFecha) return ''
-    
+    const soloFecha = fechaISO.split('T')[0] ?? ''
+
     // Validar formato YYYY-MM-DD
     const regex = /^(\d{4})-(\d{2})-(\d{2})$/
     if (regex.test(soloFecha)) {

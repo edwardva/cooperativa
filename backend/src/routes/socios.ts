@@ -3,10 +3,13 @@ import {
   obtenerSocios,
   obtenerSocioPorId,
   buscarSocioPorCedula,
+  buscarSocioPorExpediente,
   crearSocio,
   actualizarSocio,
+  actualizarCodigoSocial,
   eliminarSocio,
   retirarSocio,
+  traspasarSocio,
   obtenerBeneficiarios,
   agregarBeneficiario,
   actualizarBeneficiario,
@@ -60,6 +63,17 @@ router.get(
 );
 
 /**
+ * GET /api/socios/expediente/:codigo
+ * Buscar socio por número de expediente exacto (para Traspaso en Funeraria)
+ * Permisos: socios:read
+ */
+router.get(
+  '/expediente/:codigo',
+  authorize('socios', 'read'),
+  buscarSocioPorExpediente
+);
+
+/**
  * GET /api/socios/:id
  * Obtener un socio por ID con sus relaciones
  * Permisos: socios:read
@@ -93,6 +107,17 @@ router.put(
 );
 
 /**
+ * PATCH /api/socios/:id/codigo-social
+ * Actualizar únicamente el código de programas sociales
+ * Permisos: socios:update
+ */
+router.patch(
+  '/:id/codigo-social',
+  authorize('socios', 'update'),
+  actualizarCodigoSocial
+);
+
+/**
  * DELETE /api/socios/:id
  * Eliminar un socio (soft delete, cambio de estado a 'retirado')
  * Permisos: socios:delete
@@ -111,6 +136,17 @@ router.post(
   '/:id/retiro',
   authorize('socios', 'update'),
   retirarSocio
+);
+
+/**
+ * POST /api/socios/:id/traspaso
+ * Traspasar la titularidad del socio a un familiar directo
+ * Permisos: socios:update
+ */
+router.post(
+  '/:id/traspaso',
+  authorize('socios', 'update'),
+  traspasarSocio
 );
 
 // ============================================

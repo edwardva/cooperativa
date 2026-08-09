@@ -112,13 +112,11 @@ export const FeriasPage = () => {
 
   const handleGuardar = async (id: number) => {
     try {
-      // Filtrar valores null para que solo sean undefined o string
-      const datosActualizacion = {
+      const response = await feriasService.actualizarUbicacion(id, {
         ...formData,
         direccion: formData.direccion ?? undefined,
         telefono: formData.telefono ?? undefined,
-      };
-      const response = await feriasService.actualizarUbicacion(id, datosActualizacion);
+      });
       if (response.success) {
         await cargarFerias(); // Recargar la lista
         setEditando(null);

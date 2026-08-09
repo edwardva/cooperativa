@@ -10,6 +10,9 @@
  */
 
 import ExcelJS from 'exceljs';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 /**
  * Opciones para generación de reportes
@@ -175,6 +178,56 @@ export const generarReporteSocios = async (
     subtitulo: filtros?.ubicacion ? `Ubicación: ${filtros.ubicacion}` : undefined,
     fecha: new Date(),
     filtros,
+  };
+
+  if (formato === 'pdf') {
+    return await generarPDFTabla(opciones, columnas, datos);
+  } else {
+    return await generarExcelTabla(opciones, columnas, datos);
+  }
+};
+
+/**
+ * Reporte de Acuerdos de Funeraria Suspendidos
+ * (consulta real a la base de datos, no mock)
+ */
+export const generarReporteFunerariaSuspendidos = async (formato: 'pdf' | 'excel') => {
+  const acuerdos = await prisma.acuerdoFuneraria.findMany({
+    where: { estado: 'suspendido' },
+    include: {
+      beneficiario: {
+        include: { socio: true },
+      },
+    },
+    orderBy: { semanas_sin_pago: 'desc' },
+  });
+
+  const columnas = [
+    'Expediente',
+    'N° Acuerdo',
+    'N° Contrato',
+    'Apellidos y Nombres',
+    'Cédula',
+    'Teléfono',
+    'Semanas de Atraso',
+    'Estado',
+  ];
+
+  const datos = acuerdos.map((acuerdo) => [
+    acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
+    acuerdo.numero_acuerdo || 'N/D',
+    acuerdo.numero_contrato || 'N/D',
+    `${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`,
+    acuerdo.beneficiario.cedula,
+    acuerdo.beneficiario.socio?.telefono || acuerdo.beneficiario.telefono || 'N/D',
+    acuerdo.semanas_sin_pago,
+    acuerdo.estado.toUpperCase(),
+  ]);
+
+  const opciones: ReporteOpciones = {
+    titulo: 'Reporte de Acuerdos de Funeraria Suspendidos',
+    subtitulo: `Total suspendidos: ${acuerdos.length}`,
+    fecha: new Date(),
   };
 
   if (formato === 'pdf') {
