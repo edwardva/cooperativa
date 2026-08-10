@@ -10,8 +10,13 @@ import {
   FileText,
   ArrowUpRight,
   ArrowDownRight,
-  Sparkles
+  Sparkles,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import * as dashboardService from '../services/dashboardService'
+import type { EstadisticasDashboard, ActividadReciente } from '../services/dashboardService'
 
 /**
  * Página de Dashboard principal
@@ -19,49 +24,164 @@ import {
 export default function DashboardPage() {
   const { user } = useAuth()
 
+  // Estados
+  const [estadisticas, setEstadisticas] = useState<EstadisticasDashboard | null>(null)
+  const [actividades, setActividades] = useState<ActividadReciente[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Cargar datos al montar el componente
+  useEffect(() => {
+    const cargarDatos = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        const [estadisticasRes, actividadesRes] = await Promise.all([
+          dashboardService.obtenerEstadisticas(),
+          dashboardService.obtenerActividadReciente(),
+        ])
+
+        if (estadisticasRes.success) {
+          setEstadisticas(estadisticasRes.data)
+        } else {
+          throw new Error(estadisticasRes.error?.message || 'Error al cargar estadísticas')
+        }
+
+        if (actividadesRes.success) {
+          setActividades(actividadesRes.data)
+        } else {
+          throw new Error(actividadesRes.error?.message || 'Error al cargar actividades')
+        }
+      } catch (err) {
+        console.error('Error cargando dashboard:', err)
+        setError(err instanceof Error ? err.message : 'Error al cargar datos del dashboard')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void cargarDatos()
+  }, [])
+
   if (!user) return null
+
+  // Formatear números
+  const formatNumber = (num: number): string => {
+    if (num >= 1000000) {
+      return `$${(num / 1000000).toFixed(1)}M`
+    }
+    if (num >= 1000) {
+      return `$${(num / 1000).toFixed(1)}K`
+    }
+    return `$${num.toFixed(0)}`
+  }
+
+  // Calcular cambios (dummy por ahora - en producción se debe guardar histórico)
+  const calcularCambio = (tipo: string): { change: string; trend: 'up' | 'down' } => {
+    // TODO: Implementar cálculo real con histórico
+    return { change: '+0', trend: 'up' }
+  }
+
+  // Estado de carga
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary-600" />
+          <p className="text-gray-600">Cargando dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Estado de error
+  if (error || !estadisticas) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <Card className="max-w-md">
+          <CardContent>
+            <div className="text-center">
+              <AlertCircle className="w-12 h-12 text-error-600 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Error al cargar el dashboard</h3>
+              <p className="text-gray-600 mb-4">{error || 'Error desconocido'}</p>
+              <Button onClick={() => window.location.reload()}>
+                Reintentar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   const stats = [
     {
       title: 'Total Socios',
-      value: '9,585',
-      change: '+12',
-      trend: 'up',
+      value: estadisticas.socios.total.toLocaleString(),
+      change: `+${estadisticas.socios.nuevos_hoy}`,
+      trend: estadisticas.socios.nuevos_hoy > 0 ? 'up' : 'down' as const,
       icon: Users,
-      color: 'primary'
+      color: 'primary' as const
     },
     {
       title: 'Préstamos Activos',
-      value: '$145.5K',
-      change: '+5.2%',
-      trend: 'up',
+      value: formatNumber(estadisticas.prestamos.monto_total_usd),
+      change: calcularCambio('prestamos').change,
+      trend: calcularCambio('prestamos').trend,
       icon: DollarSign,
-      color: 'secondary'
+      color: 'secondary' as const
     },
     {
       title: 'Ahorros Total',
-      value: '$892.3K',
-      change: '+8.1%',
-      trend: 'up',
+      value: formatNumber(estadisticas.ahorro.total_saldo_usd),
+      change: calcularCambio('ahorro').change,
+      trend: calcularCambio('ahorro').trend,
       icon: Wallet,
-      color: 'accent'
+      color: 'accent' as const
     },
     {
       title: 'Colectas Hoy',
-      value: '247',
-      change: '-3',
-      trend: 'down',
+      value: estadisticas.colectas.hoy.toString(),
+      change: calcularCambio('colectas').change,
+      trend: calcularCambio('colectas').trend,
       icon: ClipboardList,
-      color: 'neutral'
+      color: 'neutral' as const
     }
   ]
 
-  const recentActivity = [
-    { type: 'Colecta', socio: 'Juan Pérez', monto: '$45.00', fecha: 'Hace 5 min' },
-    { type: 'Préstamo', socio: 'María González', monto: '$2,500.00', fecha: 'Hace 12 min' },
-    { type: 'Nuevo Socio', socio: 'Carlos Ramírez', monto: '-', fecha: 'Hace 23 min' },
-    { type: 'Ahorro', socio: 'Ana Martínez', monto: '$100.00', fecha: 'Hace 35 min' },
-  ]
+  // Formatear fecha relativa
+  const formatearFechaRelativa = (fecha: string): string => {
+    const ahora = new Date()
+    const fechaMovimiento = new Date(fecha)
+    const diffMs = ahora.getTime() - fechaMovimiento.getTime()
+    const diffMinutos = Math.floor(diffMs / 60000)
+    
+    if (diffMinutos < 1) return 'Justo ahora'
+    if (diffMinutos < 60) return `Hace ${diffMinutos} min`
+    
+    const diffHoras = Math.floor(diffMinutos / 60)
+    if (diffHoras < 24) return `Hace ${diffHoras}h`
+    
+    const diffDias = Math.floor(diffHoras / 24)
+    return `Hace ${diffDias}d`
+  }
+
+  // Formatear monto
+  const formatearMonto = (actividad: ActividadReciente): string => {
+    if (!actividad.monto) return '-'
+    const simbolo = actividad.moneda === 'USD' ? '$' : ''
+    const sufijo = actividad.moneda === 'Bs' ? ' Bs' : ''
+    return `${simbolo}${actividad.monto.toFixed(2)}${sufijo}`
+  }
+
+  // Mapeo de tipos a etiquetas legibles
+  const tipoLabels: Record<string, string> = {
+    'colecta': 'Colecta',
+    'prestamo': 'Préstamo',
+    'socio': 'Nuevo Socio',
+    'ahorro': 'Ahorro',
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -86,15 +206,21 @@ export default function DashboardPage() {
           <div className="grid grid-cols-3 gap-3 rounded-3xl border border-white bg-white/80 p-4 shadow-sm">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">Socios</p>
-              <p className="mt-2 text-2xl font-semibold text-neutral-900">9,585</p>
+              <p className="mt-2 text-2xl font-semibold text-neutral-900">
+                {estadisticas.socios.total.toLocaleString()}
+              </p>
             </div>
             <div className="border-x border-neutral-200 px-4">
               <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">Préstamos</p>
-              <p className="mt-2 text-2xl font-semibold text-neutral-900">$145K</p>
+              <p className="mt-2 text-2xl font-semibold text-neutral-900">
+                {formatNumber(estadisticas.prestamos.monto_total_usd)}
+              </p>
             </div>
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">Hoy</p>
-              <p className="mt-2 text-2xl font-semibold text-secondary-700">247</p>
+              <p className="mt-2 text-2xl font-semibold text-secondary-700">
+                {estadisticas.colectas.hoy}
+              </p>
             </div>
           </div>
         </div>
@@ -169,30 +295,38 @@ export default function DashboardPage() {
       <Card glass>
         <CardHeader title="Actividad Reciente" description="Últimas transacciones del sistema" />
         <CardContent>
-          <div className="space-y-3">
-            {recentActivity.map((activity, index) => (
-              <div 
-                key={index}
-                className="flex cursor-pointer items-center justify-between rounded-2xl border border-transparent p-3 transition-colors group hover:border-primary-100 hover:bg-white"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[linear-gradient(135deg,_rgba(255,107,28,0.14),_rgba(255,184,28,0.18))] text-sm font-semibold text-primary-700">
-                    {activity.socio.split(' ').map(n => n[0]).join('')}
+          {actividades.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-500">No hay actividad reciente</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {actividades.map((actividad) => (
+                <div 
+                  key={`${actividad.tipo}-${actividad.id}`}
+                  className="flex cursor-pointer items-center justify-between rounded-2xl border border-transparent p-3 transition-colors group hover:border-primary-100 hover:bg-white"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[linear-gradient(135deg,_rgba(255,107,28,0.14),_rgba(255,184,28,0.18))] text-sm font-semibold text-primary-700">
+                      {actividad.socio_nombre.charAt(0)}{actividad.socio_apellido.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-medium text-neutral-900 group-hover:text-primary-600 transition-colors">
+                        {actividad.socio_nombre} {actividad.socio_apellido}
+                      </p>
+                      <p className="text-sm text-neutral-500">{tipoLabels[actividad.tipo] || actividad.tipo}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-neutral-900 group-hover:text-primary-600 transition-colors">
-                      {activity.socio}
+                  <div className="text-right">
+                    <p className="font-semibold text-neutral-900 font-mono-numbers">
+                      {formatearMonto(actividad)}
                     </p>
-                    <p className="text-sm text-neutral-500">{activity.type}</p>
+                    <p className="text-sm text-neutral-500">{formatearFechaRelativa(actividad.fecha)}</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-semibold text-neutral-900 font-mono-numbers">{activity.monto}</p>
-                  <p className="text-sm text-neutral-500">{activity.fecha}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
           <Button variant="ghost" className="mt-4 w-full bg-white/70">
             Ver todas las transacciones
           </Button>

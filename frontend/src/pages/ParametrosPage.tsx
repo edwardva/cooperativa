@@ -11,6 +11,7 @@ import { Plus, Search, Edit2, Trash2, Save, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { PrintableListado } from '../components/print/PrintableListado';
 
 interface Parametro {
   id: number;
@@ -65,6 +66,16 @@ export const ParametrosPage = () => {
     p.clave.toLowerCase().includes(busqueda.toLowerCase()) ||
     p.descripcion?.toLowerCase().includes(busqueda.toLowerCase())
   );
+
+  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }];
+
+  const filasImpresion = parametrosFiltrados.map((parametro) => [
+    parametro.clave,
+    parametro.valor,
+    parametro.descripcion || '-',
+    parametro.tipo_dato,
+    formatearFecha(parametro.updated_at),
+  ]);
 
   const formatearFecha = (fecha: string) => {
     return new Date(fecha).toLocaleDateString('es-VE', {
@@ -126,6 +137,21 @@ export const ParametrosPage = () => {
           </Button>
         </div>
       </Card>
+
+      <div className="flex justify-end">
+        <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+          <Search className="h-4 w-4" />
+          Imprimir listado
+        </Button>
+      </div>
+
+      <PrintableListado
+        titulo="Parámetros del Sistema"
+        subtitulo="Listado generado con los filtros actuales"
+        filtros={filtrosImpresion}
+        columnas={['Clave', 'Valor', 'Descripción', 'Tipo', 'Última actualización']}
+        filas={filasImpresion}
+      />
 
       {/* Tabla de Parámetros */}
       <Card>

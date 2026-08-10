@@ -3,6 +3,14 @@
 @tailwind utilities;
 
 @layer base {
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+  }
+
   body {
     @apply bg-neutral-50 text-neutral-900;
     font-feature-settings: 'rlig' 1, 'calt' 1;

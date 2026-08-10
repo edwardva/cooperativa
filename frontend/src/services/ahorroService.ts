@@ -58,15 +58,30 @@ export interface MovimientoAhorro {
   monto_bs: number;
   tasa_cambio: number;
   saldo_anterior_usd: number;
-  saldo_posterior_usd: number;
+  saldo_nuevo_usd: number;
   concepto?: string;
   referencia?: string;
-  fecha: string;
-  usuario_id: number;
-  usuario?: {
-    nombre: string;
-    apellido: string;
+  fecha_movimiento: string;
+  created_at: string;
+  cuenta?: {
+    id: number;
+    numero_cuenta: string;
+    socio: {
+      codigo_socio: string;
+      nombre: string;
+      apellido: string;
+    };
+    tipo_cuenta: {
+      nombre: string;
+    };
   };
+}
+
+export interface TipoCuentaAhorro {
+  id: number;
+  codigo: string;
+  nombre: string;
+  descripcion?: string;
 }
 
 export interface AperturaCuentaData {
@@ -138,6 +153,23 @@ export const obtenerCuentasPorSocio = async (
  */
 export const obtenerCuenta = async (id: number): Promise<ApiResponse<CuentaAhorro>> => {
   const response = await apiClient.get<ApiResponse<CuentaAhorro>>(`/ahorro/cuentas/${id}`);
+  return response.data;
+};
+
+/**
+ * Obtener tipos de cuenta activos
+ */
+export const obtenerTiposCuenta = async (): Promise<ApiResponse<TipoCuentaAhorro[]>> => {
+  const response = await apiClient.get<ApiResponse<TipoCuentaAhorro[]>>('/ahorro/tipos-cuenta');
+  return response.data;
+};
+
+/**
+ * Obtener TODOS los tipos de cuenta (incluyendo inactivos, con conteo)
+ * Para uso en CRUD/administración
+ */
+export const obtenerTodosTiposCuenta = async (): Promise<ApiResponse<TipoCuentaAhorro[]>> => {
+  const response = await apiClient.get<ApiResponse<TipoCuentaAhorro[]>>('/ahorro/tipos-cuenta/todos');
   return response.data;
 };
 

@@ -3,6 +3,7 @@ import type { ChangeEvent } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { PrintableListado } from '../components/print/PrintableListado';
 import { Edit2, Trash2, Save, X, Plus, DollarSign, CheckCircle2, XCircle } from 'lucide-react';
 
 // TODO: Mover a types/index.ts cuando integremos con API
@@ -102,6 +103,20 @@ export const TiposPrestamoPage = () => {
     tipo.descripcion?.toLowerCase().includes(busqueda.toLowerCase())
   );
 
+  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }];
+
+  const filasImpresion = tiposPrestamoFiltrados.map((tipo) => [
+    tipo.codigo,
+    tipo.nombre,
+    tipo.descripcion || 'Sin descripción',
+    `${tipo.tasa_interes_anual.toFixed(2)}%`,
+    `${tipo.tasa_mora_mensual.toFixed(2)}%`,
+    `${tipo.plazo_maximo_semanas} semanas`,
+    tipo.requiere_fiadores ? 'Sí' : 'No',
+    String(tipo._count?.prestamos ?? 0),
+    tipo.estado ? 'Activo' : 'Inactivo',
+  ]);
+
   const handleEditar = (tipo: TipoPrestamo) => {
     setEditando(tipo.id);
     setFormData({
@@ -162,11 +177,25 @@ export const TiposPrestamoPage = () => {
             Gestión de tipos de préstamo, tasas de interés y condiciones
           </p>
         </div>
-        <Button onClick={handleCrear} className="flex items-center gap-2">
-          <Plus className="w-4 h-4" />
-          Nuevo Tipo de Préstamo
-        </Button>
+        <div className="flex gap-3">
+          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+            <DollarSign className="w-4 h-4" />
+            Imprimir listado
+          </Button>
+          <Button onClick={handleCrear} className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Nuevo Tipo de Préstamo
+          </Button>
+        </div>
       </div>
+
+      <PrintableListado
+        titulo="Tipos de Préstamo"
+        subtitulo="Listado generado con los filtros actuales"
+        filtros={filtrosImpresion}
+        columnas={['Código', 'Nombre', 'Descripción', 'Tasa anual', 'Mora mensual', 'Plazo máximo', 'Fiadores', 'Préstamos', 'Estado']}
+        filas={filasImpresion}
+      />
 
       {/* Búsqueda */}
       <Card className="p-4">

@@ -11,6 +11,8 @@ import {
   listarCuentas,
   obtenerCuentasPorSocio,
   obtenerCuenta,
+  listarTiposCuenta,
+  listarTodosTiposCuenta,
   aperturaCuenta,
   cambiarEstadoCuenta,
   
@@ -31,6 +33,18 @@ const router = Router();
 // ============================================
 // RUTAS DE CUENTAS DE AHORRO
 // ============================================
+
+/**
+ * GET /api/ahorro/tipos-cuenta
+ * Listar tipos de cuenta activos
+ */
+router.get('/tipos-cuenta', authenticate, listarTiposCuenta);
+
+/**
+ * GET /api/ahorro/tipos-cuenta/todos
+ * Listar TODOS los tipos de cuenta (incluyendo inactivos) con conteo
+ */
+router.get('/tipos-cuenta/todos', authenticate, listarTodosTiposCuenta);
 
 /**
  * GET /api/ahorro/cuentas

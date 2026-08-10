@@ -1,82 +1,70 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { ChangeEvent } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Edit2, Trash2, Save, X, Plus, Wallet } from 'lucide-react';
+import { PrintableListado } from '../components/print/PrintableListado';
+import { SortableHeader } from '../components/ui/SortableHeader';
+import { Edit2, Trash2, Save, X, Plus, Wallet, Loader2 } from 'lucide-react';
+import * as ahorroService from '../services/ahorroService';
 
-// TODO: Mover a types/index.ts cuando integremos con API
 interface TipoCuentaAhorro {
   id: number;
   codigo: string;
   nombre: string;
-  descripcion?: string;
+  descripcion?: string | null;
   estado: boolean;
   _count?: {
     cuentas: number;
   };
-  created_at: string;
+  created_at?: string;
 }
 
 export const TiposCuentaPage = () => {
   const [busqueda, setBusqueda] = useState('');
   const [editando, setEditando] = useState<number | null>(null);
   const [formData, setFormData] = useState<Partial<TipoCuentaAhorro>>({});
+  const [tiposCuenta, setTiposCuenta] = useState<TipoCuentaAhorro[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // TODO: Reemplazar con llamada a API real (GET /api/tipos-cuenta)
-  const [tiposCuenta] = useState<TipoCuentaAhorro[]>([
-    {
-      id: 1,
-      codigo: 'JUVENIL',
-      nombre: 'Cuenta Juvenil',
-      descripcion: 'Cuenta de ahorro para jóvenes menores de 25 años con beneficios especiales',
-      estado: true,
-      _count: { cuentas: 1847 },
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: 2,
-      codigo: 'PROGRAMADA',
-      nombre: 'Cuenta Programada',
-      descripcion: 'Ahorro programado con depósitos periódicos y metas establecidas',
-      estado: true,
-      _count: { cuentas: 3215 },
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: 3,
-      codigo: 'NAVIDEÑA',
-      nombre: 'Cuenta Navideña',
-      descripcion: 'Ahorro especial para la temporada navideña con retiro programado en diciembre',
-      estado: true,
-      _count: { cuentas: 2893 },
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: 4,
-      codigo: 'BASICA',
-      nombre: 'Cuenta Básica',
-      descripcion: 'Cuenta de ahorro estándar sin requisitos especiales',
-      estado: true,
-      _count: { cuentas: 1630 },
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: 5,
-      codigo: 'VIVIENDA',
-      nombre: 'Ahorro para Vivienda',
-      descripcion: 'Ahorro destinado a la adquisición o mejora de vivienda',
-      estado: false,
-      _count: { cuentas: 0 },
-      created_at: new Date().toISOString(),
-    },
-  ]);
+  // Cargar tipos de cuenta desde API
+  useEffect(() => {
+    const cargarTipos = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        // Usar endpoint que trae TODOS los tipos (incluyendo inactivos con conteo)
+        const response = await ahorroService.obtenerTodosTiposCuenta();
+        if (response.success) {
+          setTiposCuenta(response.data as TipoCuentaAhorro[]);
+        }
+      } catch (err: any) {
+        console.error('Error al cargar tipos:', err);
+        setError('Error al cargar tipos de cuenta');
+      } finally {
+        setLoading(false);
+      }
+    };
+    void cargarTipos();
+  }, []);
 
   const tiposCuentaFiltrados = tiposCuenta.filter((tipo) =>
     tipo.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     tipo.codigo.toLowerCase().includes(busqueda.toLowerCase()) ||
     tipo.descripcion?.toLowerCase().includes(busqueda.toLowerCase())
   );
+
+  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }];
+
+  const filasImpresion = tiposCuentaFiltrados.map((tipo) => [
+    tipo.codigo,
+    tipo.nombre,
+    tipo.descripcion || 'Sin descripción',
+    String(tipo._count?.cuentas ?? 0),
+    tipo.estado ? 'Activo' : 'Inactivo',
+    tipo.created_at ? formatearFecha(tipo.created_at) : '-',
+  ]);
 
   const handleEditar = (tipo: TipoCuentaAhorro) => {
     setEditando(tipo.id);
@@ -128,6 +116,27 @@ export const TiposCuentaPage = () => {
     });
   };
 
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center h-64">
+        <div className="flex items-center gap-2 text-gray-500">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span>Cargando tipos de cuenta...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
+          {error}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -138,11 +147,25 @@ export const TiposCuentaPage = () => {
             Gestión de tipos de cuenta y productos de ahorro
           </p>
         </div>
-        <Button onClick={handleCrear} className="flex items-center gap-2">
-          <Plus className="w-4 h-4" />
-          Nuevo Tipo de Cuenta
-        </Button>
+        <div className="flex gap-3">
+          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+            <Wallet className="w-4 h-4" />
+            Imprimir listado
+          </Button>
+          <Button onClick={handleCrear} className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Nuevo Tipo de Cuenta
+          </Button>
+        </div>
       </div>
+
+      <PrintableListado
+        titulo="Tipos de Cuenta de Ahorro"
+        subtitulo="Listado generado con los filtros actuales"
+        filtros={filtrosImpresion}
+        columnas={['Código', 'Nombre', 'Descripción', 'Cuentas activas', 'Estado', 'Registrado']}
+        filas={filasImpresion}
+      />
 
       {/* Búsqueda */}
       <Card className="p-4">
@@ -240,7 +263,7 @@ export const TiposCuentaPage = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatearFecha(tipo.created_at)}
+                    {tipo.created_at ? formatearFecha(tipo.created_at) : '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     {editando === tipo.id ? (

@@ -9,10 +9,12 @@
  * - Estadísticas, alertas y derecho al servicio
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { PrintableListado } from '../components/print/PrintableListado';
+import { SortableHeader } from '../components/ui/SortableHeader';
 import {
   PlusCircle,
   Search,
@@ -63,6 +65,20 @@ export default function SaludPage() {
   const [totalPaginas, setTotalPaginas] = useState(1);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [ITEMS_POR_PAGINA, setItemsPorPagina] = useState(20);
+
+  // Ordenamiento
+  const [sortField, setSortField] = useState<string>('id');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Función para manejar el ordenamiento
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Modales
   const [modalAbierto, setModalAbierto] = useState<'crear' | 'detalle' | 'cambiar-estado' | null>(
@@ -165,6 +181,58 @@ export default function SaludPage() {
     }
   };
 
+  // Ordenar acuerdos según el campo seleccionado
+  const acuerdosOrdenados = useMemo(() => {
+    const acuerdosCopia = [...acuerdos];
+    
+    acuerdosCopia.sort((a, b) => {
+      let compareA: any;
+      let compareB: any;
+
+      // Manejar campos anidados
+      if (sortField.includes('.')) {
+        const [obj, prop] = sortField.split('.');
+        compareA = (a as any)[obj]?.[prop];
+        compareB = (b as any)[obj]?.[prop];
+      } else {
+        compareA = (a as any)[sortField];
+        compareB = (b as any)[sortField];
+      }
+
+      // Manejar valores nulos
+      if (compareA === null || compareA === undefined) compareA = '';
+      if (compareB === null || compareB === undefined) compareB = '';
+
+      // Comparación
+      if (typeof compareA === 'string') {
+        compareA = compareA.toLowerCase();
+        compareB = compareB.toLowerCase();
+      }
+
+      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
+      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return acuerdosCopia;
+  }, [acuerdos, sortField, sortOrder]);
+
+  const filtrosImpresion = [
+    { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
+    { label: 'Estado', value: filtroEstado === 'todos' ? 'Todos' : filtroEstado },
+    { label: 'Página', value: `${paginaActual} de ${totalPaginas}` },
+  ];
+
+  const filasImpresion = acuerdosOrdenados.map((acuerdo) => [
+    String(acuerdo.id),
+    acuerdo.nombre_beneficiario,
+    `${acuerdo.socio?.apellido ?? ''}, ${acuerdo.socio?.nombre ?? ''}`.trim(),
+    acuerdo.tipo,
+    String(acuerdo.semanas_sin_pago ?? 0),
+    acuerdo.derecho_servicio ? 'Sí' : 'No',
+    acuerdo.estado,
+  ]);
+
   // ============================================
   // RENDER
   // ============================================
@@ -180,12 +248,30 @@ export default function SaludPage() {
           </p>
         </div>
         <div className="flex gap-3">
+          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+            <FileDown className="w-4 h-4" />
+            Imprimir listado
+          </Button>
           <Button onClick={() => setModalAbierto('crear')} className="flex items-center gap-2">
             <PlusCircle className="w-4 h-4" />
             Nuevo Acuerdo
           </Button>
         </div>
       </div>
+
+      <PrintableListado
+        titulo="Listado de Acuerdos de Salud"
+        subtitulo="Listado generado con los filtros y orden actual del módulo de salud"
+        filtros={filtrosImpresion}
+        resumenes={[
+          { label: 'Acuerdos visibles', value: String(acuerdosOrdenados.length) },
+          { label: 'Total acuerdos', value: String(estadisticas.total_acuerdos) },
+          { label: 'Activos', value: String(estadisticas.por_estado.activos) },
+          { label: 'Sin derecho', value: String(estadisticas.sin_derecho_servicio) },
+        ]}
+        columnas={['Acuerdo', 'Beneficiario', 'Socio', 'Tipo', 'Semanas sin pago', 'Derecho a servicio', 'Estado']}
+        filas={filasImpresion}
+      />
 
       {/* ESTADÍSTICAS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -310,27 +396,53 @@ export default function SaludPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Acuerdo
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Beneficiario
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Socio
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tipo
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Semanas Sin Pago
-                </th>
+                <SortableHeader
+                  label="Acuerdo"
+                  field="id"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Beneficiario"
+                  field="nombre_beneficiario"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Socio"
+                  field="socio.apellido"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Tipo"
+                  field="tipo"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Semanas Sin Pago"
+                  field="semanas_sin_pago"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="center"
+                />
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Derecho a Servicio
                 </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
-                </th>
+                <SortableHeader
+                  label="Estado"
+                  field="estado"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="center"
+                />
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones
                 </th>
@@ -359,7 +471,7 @@ export default function SaludPage() {
                   </td>
                 </tr>
               ) : (
-                acuerdos.map((acuerdo) => (
+                acuerdosOrdenados.map((acuerdo) => (
                   <tr
                     key={acuerdo.id}
                     className="hover:bg-gray-50 cursor-pointer transition-colors"

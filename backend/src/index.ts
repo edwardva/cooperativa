@@ -9,6 +9,7 @@ import { logger } from './utils/logger';
 
 // Routers
 import authRouter from './routes/auth';
+import dashboardRouter from './routes/dashboard';
 import parametrosRouter from './routes/parametros';
 import ubicacionesRouter from './routes/ubicaciones';
 import tiposCuentaRouter from './routes/tiposCuenta';
@@ -80,6 +81,7 @@ app.get('/api', (_req: Request, res: Response) => {
     version: '1.0.0',
     endpoints: {
       auth: '/api/auth',
+      dashboard: '/api/dashboard',
       parametros: '/api/parametros',
       ubicaciones: '/api/ubicaciones',
       tipos_cuenta: '/api/tipos-cuenta',
@@ -98,6 +100,7 @@ app.get('/api', (_req: Request, res: Response) => {
 });
 
 // Rutas de API
+app.use('/api/dashboard', dashboardRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/parametros', parametrosRouter);
 app.use('/api/ubicaciones', ubicacionesRouter);

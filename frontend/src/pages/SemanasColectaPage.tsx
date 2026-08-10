@@ -3,11 +3,13 @@
 // Semanas de Colecta (Gestión Tasa Semanal)
 // ============================================
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Calendar, DollarSign, TrendingUp, Search, Plus, Edit, Trash2, CheckCircle2, XCircle, Target } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
+import { PrintableListado } from '../components/print/PrintableListado';
+import { SortableHeader } from '../components/ui/SortableHeader';
 
 // ============================================
 // TIPOS
@@ -37,6 +39,20 @@ export const SemanasColectaPage = () => {
   const [busqueda, setBusqueda] = useState('');
   const [editando, setEditando] = useState<number | null>(null);
   const [formData, setFormData] = useState<Partial<SemanaColecta>>({});
+
+  // Estados de ordenamiento
+  const [sortField, setSortField] = useState<string>('id');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
+  // Función para manejar el ordenamiento
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Datos mock (TODO: reemplazar con API calls)
   const semanas: SemanaColecta[] = [
@@ -138,7 +154,34 @@ export const SemanasColectaPage = () => {
   };
 
   // Filtrar semanas por búsqueda
-  const semanasFiltradas = semanas.filter((semana) => {
+  // Ordenar semanas según el campo seleccionado
+  const semanasOrdenadas = useMemo(() => {
+    const semanasCopia = [...semanas];
+    
+    semanasCopia.sort((a, b) => {
+      let compareA: any = (a as any)[sortField];
+      let compareB: any = (b as any)[sortField];
+
+      // Manejar valores nulos
+      if (compareA === null || compareA === undefined) compareA = '';
+      if (compareB === null || compareB === undefined) compareB = '';
+
+      // Comparación
+      if (typeof compareA === 'string') {
+        compareA = compareA.toLowerCase();
+        compareB = compareB.toLowerCase();
+      }
+
+      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
+      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return semanasCopia;
+  }, [semanas, sortField, sortOrder]);
+
+  // Filtrar semanas ordenadas
+  const semanasFiltradas = semanasOrdenadas.filter((semana) => {
     const searchLower = busqueda.toLowerCase();
     return (
       semana.semana.toString().includes(searchLower) ||
@@ -153,6 +196,19 @@ export const SemanasColectaPage = () => {
   const tasaActual = semanas.find(s => s.estado)?.tasa_usd_bs || 0;
   const totalColectas = semanas.reduce((sum, s) => sum + (s._count?.colectas || 0), 0);
 
+  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }];
+
+  const filasImpresion = semanasFiltradas.map((semana) => [
+    `${semana.semana}/${semana.ano}`,
+    `${formatearFecha(semana.fecha_inicio)} - ${formatearFecha(semana.fecha_fin)}`,
+    `Bs ${formatearMoneda(semana.tasa_usd_bs)}`,
+    `Bs ${formatearMoneda(semana.meta_ahorro)}`,
+    `Bs ${formatearMoneda(semana.meta_funeraria)}`,
+    `Bs ${formatearMoneda(semana.meta_salud)}`,
+    String(semana._count?.colectas ?? 0),
+    semana.estado ? 'Activa' : 'Inactiva',
+  ]);
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -165,11 +221,25 @@ export const SemanasColectaPage = () => {
             Gestión de tasa semanal USD/Bs y metas de colecta
           </p>
         </div>
-        <Button className="flex items-center gap-2">
-          <Plus size={20} />
-          Nueva Semana
-        </Button>
+        <div className="flex gap-3">
+          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+            <Calendar size={20} />
+            Imprimir listado
+          </Button>
+          <Button className="flex items-center gap-2">
+            <Plus size={20} />
+            Nueva Semana
+          </Button>
+        </div>
       </div>
+
+      <PrintableListado
+        titulo="Semanas de Colecta"
+        subtitulo="Listado generado con los filtros actuales"
+        filtros={filtrosImpresion}
+        columnas={['Semana/Año', 'Período', 'Tasa USD/Bs', 'Meta ahorro', 'Meta funeraria', 'Meta salud', 'Colectas', 'Estado']}
+        filas={filasImpresion}
+      />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -242,30 +312,63 @@ export const SemanasColectaPage = () => {
           <table className="w-full">
             <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Semana / Año
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Período
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Tasa USD/Bs
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Meta Ahorro
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Meta Funeraria
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Meta Salud
-                </th>
+                <SortableHeader
+                  label="Semana / Año"
+                  field="semana"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Período"
+                  field="fecha_inicio"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Tasa USD/Bs"
+                  field="tasa_usd_bs"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="right"
+                />
+                <SortableHeader
+                  label="Meta Ahorro"
+                  field="meta_ahorro"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="right"
+                />
+                <SortableHeader
+                  label="Meta Funeraria"
+                  field="meta_funeraria"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="right"
+                />
+                <SortableHeader
+                  label="Meta Salud"
+                  field="meta_salud"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="right"
+                />
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Colectas
                 </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Estado
-                </th>
+                <SortableHeader
+                  label="Estado"
+                  field="estado"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                  align="center"
+                />
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Acciones
                 </th>
