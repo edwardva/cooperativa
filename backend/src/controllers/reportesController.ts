@@ -11,6 +11,8 @@ import {
   generarReporteSocios,
   generarReportePrestamos,
   generarReporteFunerariaSuspendidos,
+  generarReporteSaludSuspendidos,
+  generarReporteSaludAcuerdos,
 } from '../services/reportesService';
 
 // ============================================
@@ -32,6 +34,14 @@ const reportePrestamosSchema = z.object({
 });
 
 const reporteFunerariaSuspendidosSchema = z.object({
+  formato: z.literal('excel').default('excel'),
+});
+
+const reporteSaludSuspendidosSchema = z.object({
+  formato: z.enum(['pdf', 'excel']),
+});
+
+const reporteSaludAcuerdosSchema = z.object({
   formato: z.literal('excel').default('excel'),
 });
 
@@ -172,6 +182,90 @@ export const reporteFunerariaSuspendidos = async (
 };
 
 /**
+ * POST /api/reportes/salud-suspendidos
+ * Generar reporte de acuerdos de salud suspendidos (PDF o Excel)
+ */
+export const reporteSaludSuspendidos = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const validacion = reporteSaludSuspendidosSchema.safeParse(req.body);
+
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Datos inválidos',
+          details: validacion.error.errors,
+        },
+      });
+      return;
+    }
+
+    const { formato } = validacion.data;
+    const buffer = await generarReporteSaludSuspendidos(formato);
+
+    const extension = formato === 'pdf' ? 'pdf' : 'xlsx';
+    const mimeType =
+      formato === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+    const fecha = new Date().toISOString().split('T')[0];
+    const filename = `reporte-salud-suspendidos-${fecha}.${extension}`;
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/reportes/salud-acuerdos
+ * Generar reporte con TODOS los acuerdos de salud (no solo suspendidos)
+ */
+export const reporteSaludAcuerdos = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const validacion = reporteSaludAcuerdosSchema.safeParse(req.body);
+
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Datos inválidos',
+          details: validacion.error.errors,
+        },
+      });
+      return;
+    }
+
+    const buffer = await generarReporteSaludAcuerdos(validacion.data.formato);
+
+    const fecha = new Date().toISOString().split('T')[0];
+    const filename = `reporte-salud-acuerdos-${fecha}.xlsx`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * GET /api/reportes/tipos
  * Listar tipos de reportes disponibles
  */
@@ -209,6 +303,20 @@ export const listarTiposReportes = async (
         id: 'funeraria-suspendidos',
         nombre: 'Reporte de Acuerdos de Funeraria Suspendidos',
         descripcion: 'Listado de acuerdos suspendidos con semanas de atraso',
+        formatos: ['excel'],
+        filtros: [],
+      },
+      {
+        id: 'salud-suspendidos',
+        nombre: 'Reporte de Acuerdos de Salud Suspendidos',
+        descripcion: 'Listado de acuerdos de salud suspendidos con semanas de atraso',
+        formatos: ['pdf', 'excel'],
+        filtros: [],
+      },
+      {
+        id: 'salud-acuerdos',
+        nombre: 'Reporte de Acuerdos de Salud',
+        descripcion: 'Listado completo de todos los acuerdos de salud',
         formatos: ['excel'],
         filtros: [],
       },

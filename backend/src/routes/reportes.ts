@@ -10,6 +10,8 @@ import {
   reporteSocios,
   reportePrestamos,
   reporteFunerariaSuspendidos,
+  reporteSaludSuspendidos,
+  reporteSaludAcuerdos,
   listarTiposReportes,
 } from '../controllers/reportesController';
 import { authenticate } from '../middleware/authenticate';
@@ -50,6 +52,28 @@ router.post(
   '/funeraria-suspendidos',
   authorize('reportes', 'export'),
   reporteFunerariaSuspendidos
+);
+
+/**
+ * POST /api/reportes/salud-suspendidos
+ * Generar reporte de acuerdos de salud suspendidos (PDF o Excel)
+ * Permiso: reportes:export
+ */
+router.post(
+  '/salud-suspendidos',
+  authorize('reportes', 'export'),
+  reporteSaludSuspendidos
+);
+
+/**
+ * POST /api/reportes/salud-acuerdos
+ * Generar reporte Excel con todos los acuerdos de salud
+ * Permiso: reportes:export
+ */
+router.post(
+  '/salud-acuerdos',
+  authorize('reportes', 'export'),
+  reporteSaludAcuerdos
 );
 
 export default router;

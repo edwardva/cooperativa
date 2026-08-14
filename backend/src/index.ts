@@ -21,6 +21,7 @@ import sociosRouter from './routes/socios';
 import ahorroRouter from './routes/ahorro';
 import funerariaRouter from './routes/funeraria';
 import saludRouter from './routes/salud';
+import { iniciarJobSemanalSalud } from './jobs/saludSuspension';
 
 const app: Application = express();
 
@@ -141,6 +142,8 @@ app.listen(PORT, () => {
   logger.info(`🚀 Servidor iniciado en puerto ${PORT}`);
   logger.info(`📝 Ambiente: ${config.nodeEnv}`);
   logger.info(`🌐 CORS habilitado para: ${config.corsOrigin}`);
+
+  iniciarJobSemanalSalud();
 });
 
 // Manejo de errores no capturados
