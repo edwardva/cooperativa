@@ -7,10 +7,9 @@
  * suspendidos e importación rápida hacia Salud.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Download,
   PlusCircle,
   Search,
   AlertTriangle,
@@ -39,6 +38,8 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
+import { SortableHeader } from '../components/ui/SortableHeader'
+import { PrintableListado } from '../components/print/PrintableListado'
 import * as funerariaService from '../services/funerariaService'
 import * as sociosService from '../services/sociosService'
 import * as saludService from '../services/saludService'
@@ -86,6 +87,19 @@ export default function FunerariaPage() {
   const [totalPaginas, setTotalPaginas] = useState(1)
   const [totalRegistros, setTotalRegistros] = useState(0)
   const [itemsPorPagina, setItemsPorPagina] = useState(5)
+
+  // Ordenamiento de la tabla
+  const [sortField, setSortField] = useState<string>('socio.codigo_socio')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortOrder('asc')
+    }
+  }
 
   // Menú de acciones por fila
   const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null)
@@ -754,7 +768,11 @@ export default function FunerariaPage() {
       if (!respuesta.success || !respuesta.data) {
         throw new Error('Socio no encontrado')
       }
-      setWizardSocio(respuesta.data)
+      const socioEncontrado = respuesta.data[0]
+      if (!socioEncontrado) {
+        throw new Error('Socio no encontrado')
+      }
+      setWizardSocio(socioEncontrado)
       setWizardPaso(2)
     } catch (err) {
       setWizardError(getErrorMessage(err) || 'Socio no encontrado')
@@ -1122,19 +1140,21 @@ export default function FunerariaPage() {
 
   const filtrosImpresion = [
     { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
-    { label: 'Estado', value: filtroEstado === 'todos' ? 'Todos' : filtroEstado },
-    { label: 'Tipo', value: filtroTipo === 'todos' ? 'Todos' : filtroTipo },
+    { label: 'Estado', value: tabs.find((t) => t.id === tab)?.label ?? 'Todos' },
     { label: 'Página', value: `${paginaActual} de ${totalPaginas}` },
   ];
 
   const filasImpresion = acuerdosOrdenados.map((acuerdo) => [
-    String(acuerdo.id),
-    acuerdo.beneficiario.nombre_completo,
+    acuerdo.socio?.codigo_socio ?? '-',
+    acuerdo.numero_acuerdo ?? '-',
     acuerdo.socio?.nombre_completo ?? '-',
+    acuerdo.beneficiario.nombre_completo,
     acuerdo.tipo_acuerdo.nombre,
     String(acuerdo.semanas_sin_pago ?? 0),
     acuerdo.estado,
-    acuerdo.fecha_inicio ? new Date(acuerdo.fecha_inicio).toLocaleDateString('es-VE') : '-',
+    formatearFecha(
+      acuerdo.estado === 'retirado' && acuerdo.fecha_retiro ? acuerdo.fecha_retiro : acuerdo.fecha_inicio
+    ),
   ]);
 
   // ============================================
@@ -1151,6 +1171,10 @@ export default function FunerariaPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
+          <Button variant="outline" onClick={() => window.print()}>
+            <Printer className="w-4 h-4" />
+            Imprimir listado
+          </Button>
           <Button
             variant="outline"
             onClick={() => void descargarReporteSuspendidos()}
@@ -1167,6 +1191,20 @@ export default function FunerariaPage() {
           )}
         </div>
       </div>
+
+      <PrintableListado
+        titulo="Listado de Acuerdos de Funeraria"
+        subtitulo="Listado generado con los filtros y orden actual del módulo de funeraria"
+        filtros={filtrosImpresion}
+        resumenes={[
+          { label: 'Acuerdos visibles', value: String(acuerdosOrdenados.length) },
+          { label: 'Total acuerdos', value: String(estadisticas.total_acuerdos) },
+          { label: 'Activos', value: String(estadisticas.activos) },
+          { label: 'Suspendidos', value: String(estadisticas.suspendidos) },
+        ]}
+        columnas={['N° Expediente', 'N° Acuerdo', 'Socio', 'Beneficiario', 'Tipo de acuerdo', 'Semanas sin pago', 'Estado', 'Fecha']}
+        filas={filasImpresion}
+      />
 
       {/* ESTADÍSTICAS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1281,25 +1319,51 @@ export default function FunerariaPage() {
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-neutral-200">
             <thead className="bg-neutral-50">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  N° Expediente
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  N° Acuerdo
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Socio
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Semanas Sin Pago
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Estado
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Fecha
-                </th>
+              <tr className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                <SortableHeader
+                  label="N° Expediente"
+                  field="socio.codigo_socio"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="N° Acuerdo"
+                  field="numero_acuerdo"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Socio"
+                  field="socio.nombre_completo"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Semanas Sin Pago"
+                  field="semanas_sin_pago"
+                  align="center"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Estado"
+                  field="estado"
+                  align="center"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Fecha"
+                  field="fecha_inicio"
+                  currentSortField={sortField}
+                  currentSortOrder={sortOrder}
+                  onSort={handleSort}
+                />
                 <th className="px-2 py-3" />
               </tr>
             </thead>

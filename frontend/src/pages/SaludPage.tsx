@@ -26,6 +26,7 @@ import {
   Loader2,
   HeartPulse,
   ShieldOff,
+  FileDown,
 } from 'lucide-react';
 import * as saludService from '../services/saludService';
 import type { AcuerdoSalud, EstadisticasSalud } from '../services/saludService';
@@ -191,7 +192,7 @@ export default function SaludPage() {
 
       // Manejar campos anidados
       if (sortField.includes('.')) {
-        const [obj, prop] = sortField.split('.');
+        const [obj = '', prop = ''] = sortField.split('.');
         compareA = (a as any)[obj]?.[prop];
         compareB = (b as any)[obj]?.[prop];
       } else {
@@ -225,11 +226,11 @@ export default function SaludPage() {
 
   const filasImpresion = acuerdosOrdenados.map((acuerdo) => [
     String(acuerdo.id),
-    acuerdo.nombre_beneficiario,
-    `${acuerdo.socio?.apellido ?? ''}, ${acuerdo.socio?.nombre ?? ''}`.trim(),
-    acuerdo.tipo,
+    acuerdo.beneficiario.nombre_completo,
+    acuerdo.socio?.nombre_completo ?? '-',
+    acuerdo.tipo_acuerdo.nombre,
     String(acuerdo.semanas_sin_pago ?? 0),
-    acuerdo.derecho_servicio ? 'Sí' : 'No',
+    acuerdo.derecho_al_servicio ? 'Sí' : 'No',
     acuerdo.estado,
   ]);
 

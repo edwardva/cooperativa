@@ -1,10 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import type { ChangeEvent } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PrintableListado } from '../components/print/PrintableListado';
-import { SortableHeader } from '../components/ui/SortableHeader';
 import { Edit2, Trash2, Save, X, Plus, Wallet, Loader2 } from 'lucide-react';
 import * as ahorroService from '../services/ahorroService';
 

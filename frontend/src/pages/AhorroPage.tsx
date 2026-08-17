@@ -668,7 +668,7 @@ export const AhorroPage = () => {
 
       // Manejar campos anidados
       if (sortField.includes('.')) {
-        const [obj, prop] = sortField.split('.');
+        const [obj = '', prop = ''] = sortField.split('.');
         compareA = (a as any)[obj]?.[prop];
         compareB = (b as any)[obj]?.[prop];
       } else {
@@ -708,7 +708,7 @@ export const AhorroPage = () => {
     `$${cuenta.saldo_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     `Bs ${cuenta.saldo_bs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     `${cuenta.monto_bloqueado_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`,
-    String(cuenta.movimientos_count ?? 0),
+    String(cuenta._count?.movimientos ?? 0),
     cuenta.estado ? 'Activa' : 'Inactiva',
   ]);
 
