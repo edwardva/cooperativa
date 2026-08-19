@@ -7,7 +7,7 @@
  * suspendidos e importación rápida hacia Salud.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Download,
@@ -78,6 +78,10 @@ export default function FunerariaPage() {
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const [sortField, setSortField] = useState<string>('id')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [filtroTipo, setFiltroTipo] = useState<string>('todos')
 
   // Filtros y paginación
   const [busqueda, setBusqueda] = useState('')
@@ -754,7 +758,7 @@ export default function FunerariaPage() {
       if (!respuesta.success || !respuesta.data) {
         throw new Error('Socio no encontrado')
       }
-      setWizardSocio(respuesta.data)
+      setWizardSocio(respuesta.data[0] ?? null)
       setWizardPaso(2)
     } catch (err) {
       setWizardError(getErrorMessage(err) || 'Socio no encontrado')
@@ -1122,7 +1126,7 @@ export default function FunerariaPage() {
 
   const filtrosImpresion = [
     { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
-    { label: 'Estado', value: filtroEstado === 'todos' ? 'Todos' : filtroEstado },
+    { label: 'Estado', value: tab === 'todos' ? 'Todos' : tab },
     { label: 'Tipo', value: filtroTipo === 'todos' ? 'Todos' : filtroTipo },
     { label: 'Página', value: `${paginaActual} de ${totalPaginas}` },
   ];
