@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { validarCedula } from '../utils/cedula';
 
 const prisma = new PrismaClient();
 
@@ -11,7 +12,8 @@ const prisma = new PrismaClient();
 
 const crearSocioSchema = z.object({
   codigo_socio: z.string().min(1, 'Código de socio requerido').max(20),
-  cedula: z.string().min(7, 'Cédula debe tener al menos 7 dígitos').max(11).regex(/^\d+$/, 'Cédula solo debe contener números'),
+  // El formato lo valida revisarCedula(): acepta 'V-12.345.678' y normaliza a dígitos
+  cedula: z.string().min(1, 'Cédula requerida').max(20),
   nombre: z.string().min(2, 'Nombre debe tener al menos 2 caracteres').max(100),
   apellido: z.string().min(2, 'Apellido debe tener al menos 2 caracteres').max(100),
   sexo: z.enum(['M', 'F']).optional().nullable(),
@@ -31,7 +33,7 @@ const crearSocioSchema = z.object({
 
 const actualizarSocioSchema = z.object({
   codigo_socio: z.string().min(1).max(20).optional(),
-  cedula: z.string().min(7).max(11).regex(/^\d+$/, 'Cédula solo debe contener números').optional(),
+  cedula: z.string().min(1).max(20).optional(),
   nombre: z.string().min(2).max(100).optional(),
   apellido: z.string().min(2).max(100).optional(),
   sexo: z.enum(['M', 'F']).optional().nullable(),
@@ -101,12 +103,41 @@ const actualizarBeneficiarioSchema = agregarBeneficiarioSchema.extend({
 
 const retiroSocioSchema = z.object({
   fecha_retiro: z.string().min(1, 'Fecha de retiro requerida'),
-  motivo_retiro: z.enum(['Socio', 'Voluntario', 'Art. 5']),
+  motivo_retiro: z.enum(['Fallecimiento', 'Renuncia', 'Pasividad']),
 });
 
 // ============================================
 // HELPERS
 // ============================================
+
+/**
+ * Valida y normaliza la cédula. Devuelve el mensaje de error si no es válida.
+ * La validación es de formato/rango: confirma que el número sea plausible,
+ * no que exista en el registro del CNE.
+ */
+const revisarCedula = (entrada: string): { cedula: string; error: string | null } => {
+  const resultado = validarCedula(entrada);
+  return { cedula: resultado.cedula, error: resultado.valida ? null : resultado.error ?? 'Cédula inválida' };
+};
+
+/**
+ * Busca expedientes ACTIVOS con la misma cédula.
+ *
+ * No se bloquean los retirados a propósito: reingresar a un socio retirado con
+ * un expediente nuevo es una operación legítima. Dos expedientes ACTIVOS para
+ * la misma persona, en cambio, son casi siempre un alta duplicada por error.
+ */
+const buscarExpedientesActivosConCedula = async (cedula: string, excluirSocioId?: number) => {
+  return prisma.socio.findMany({
+    where: {
+      cedula,
+      estado: 'activo',
+      ...(excluirSocioId ? { id: { not: excluirSocioId } } : {}),
+    },
+    select: { id: true, codigo_socio: true, nombre: true, apellido: true, fecha_inscripcion: true },
+  });
+};
+
 
 /**
  * Convertir base64 a Buffer para almacenar en DB
@@ -190,34 +221,6 @@ const calcularEdadDesde = (fechaNacimiento: Date): number => {
     edad--;
   }
   return edad;
-};
-
-const contarAsociacionesSocio = async (socioId: number) => {
-  const [beneficiarios, cuentasAhorro, prestamos, fiadores, colectas, usuarioDigital, auditorias] = await Promise.all([
-    prisma.beneficiario.count({ where: { socio_id: socioId } }),
-    prisma.cuentaAhorro.count({ where: { socio_id: socioId } }),
-    prisma.prestamo.count({ where: { socio_id: socioId } }),
-    prisma.fiador.count({ where: { socio_id: socioId } }),
-    prisma.colecta.count({ where: { socio_id: socioId } }),
-    prisma.usuarioDigital.count({ where: { socio_id: socioId } }),
-    prisma.auditLog.count({
-      where: {
-        modulo: 'socios',
-        registro_id: socioId,
-      },
-    }),
-  ]);
-
-  return {
-    beneficiarios,
-    cuentasAhorro,
-    prestamos,
-    fiadores,
-    colectas,
-    usuarioDigital,
-    auditorias,
-    total: beneficiarios + cuentasAhorro + prestamos + fiadores + colectas + usuarioDigital + auditorias,
-  };
 };
 
 // ============================================
@@ -489,6 +492,32 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
 
     const datos = validacion.data;
 
+    // Validar y normalizar la cédula antes de cualquier consulta
+    const { cedula, error: errorCedula } = revisarCedula(datos.cedula);
+    if (errorCedula) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'CEDULA_INVALIDA', message: errorCedula },
+      });
+      return;
+    }
+    datos.cedula = cedula;
+
+    // Un socio activo no puede tener dos expedientes abiertos con la misma cédula
+    const expedientesActivos = await buscarExpedientesActivosConCedula(cedula);
+    if (expedientesActivos.length > 0) {
+      const listado = expedientesActivos.map((s) => s.codigo_socio).join(', ');
+      res.status(409).json({
+        success: false,
+        error: {
+          code: 'CEDULA_DUPLICADA',
+          message: `La cédula ${cedula} ya tiene expediente activo: ${listado}`,
+          details: expedientesActivos,
+        },
+      });
+      return;
+    }
+
     // Validar código de socio único
     const codigoExistente = await prisma.socio.findUnique({
       where: { codigo_socio: datos.codigo_socio },
@@ -633,6 +662,47 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
         },
       });
       return;
+    }
+
+    // La cédula solo se valida SI CAMBIA. Hay 215 registros heredados de la
+    // migración con cédulas inválidas (placeholders TEMP######, valores fuera de
+    // rango); exigirles formato válido impediría editarles el teléfono o la feria.
+    if (datos.cedula !== undefined) {
+      // Se compara el valor CRUDO contra el guardado: si el formulario devuelve
+      // el mismo texto que cargó, no hay edición de cédula aunque el valor
+      // almacenado no supere la validación actual.
+      const cambia = datos.cedula !== socioExistente.cedula;
+
+      if (cambia) {
+        const { cedula, error: errorCedula } = revisarCedula(datos.cedula);
+
+        if (errorCedula) {
+          res.status(400).json({
+            success: false,
+            error: { code: 'CEDULA_INVALIDA', message: errorCedula },
+          });
+          return;
+        }
+
+        const expedientesActivos = await buscarExpedientesActivosConCedula(cedula, socioId);
+        if (expedientesActivos.length > 0) {
+          const listado = expedientesActivos.map((s) => s.codigo_socio).join(', ');
+          res.status(409).json({
+            success: false,
+            error: {
+              code: 'CEDULA_DUPLICADA',
+              message: `La cédula ${cedula} ya tiene expediente activo: ${listado}`,
+              details: expedientesActivos,
+            },
+          });
+          return;
+        }
+
+        datos.cedula = cedula;
+      } else {
+        // Sin cambio real: se conserva el valor existente tal cual está guardado
+        datos.cedula = socioExistente.cedula;
+      }
     }
 
     // Validar código de socio único si se está cambiando
@@ -813,99 +883,6 @@ export const actualizarCodigoSocial = async (req: Request, res: Response): Promi
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Error al actualizar código social',
-      },
-    });
-  }
-};
-
-/**
- * Eliminar un socio solo si no tiene relaciones registradas
- */
-export const eliminarSocio = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-
-    if (!id) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_ID',
-          message: 'ID inválido',
-        },
-      });
-      return;
-    }
-
-    const socioId = parseInt(id, 10);
-
-    const socio = await prisma.socio.findUnique({
-      where: { id: socioId },
-      include: {
-        _count: {
-          select: {
-            cuentas_ahorro: true,
-            prestamos: true,
-          },
-        },
-      },
-    });
-
-    if (!socio) {
-      res.status(404).json({
-        success: false,
-        error: {
-          code: 'SOCIO_NOT_FOUND',
-          message: 'Socio no encontrado',
-        },
-      });
-      return;
-    }
-
-    const asociaciones = await contarAsociacionesSocio(socioId);
-
-    if (asociaciones.total > 0) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'SOCIO_CON_ASOCIACIONES',
-          message: 'El socio no puede eliminarse porque ya tiene relaciones o movimientos en el sistema',
-          details: asociaciones,
-        },
-      });
-      return;
-    }
-
-    const socioEliminado = await prisma.socio.delete({
-      where: { id: socioId },
-    });
-
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'DELETE',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: socio as any,
-        datos_despues: socioEliminado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
-    });
-
-    logger.info(`Socio eliminado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
-
-    res.json({
-      success: true,
-      data: socioEliminado,
-    });
-  } catch (error) {
-    logger.error('Error al eliminar socio:', error);
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Error al eliminar socio',
       },
     });
   }

@@ -6,6 +6,7 @@ import { Input } from '../components/ui/Input';
 import { PrintableListado } from '../components/print/PrintableListado';
 import { Edit2, Trash2, Save, X, Plus, Wallet, Loader2 } from 'lucide-react';
 import * as ahorroService from '../services/ahorroService';
+import { formatearFechaCorta } from '../utils/formatters';
 
 interface TipoCuentaAhorro {
   id: number;
@@ -62,7 +63,7 @@ export const TiposCuentaPage = () => {
     tipo.descripcion || 'Sin descripción',
     String(tipo._count?.cuentas ?? 0),
     tipo.estado ? 'Activo' : 'Inactivo',
-    tipo.created_at ? formatearFecha(tipo.created_at) : '-',
+    tipo.created_at ? formatearFechaCorta(tipo.created_at) : '-',
   ]);
 
   const handleEditar = (tipo: TipoCuentaAhorro) => {
@@ -105,14 +106,6 @@ export const TiposCuentaPage = () => {
 
   const handleInputChange = (field: keyof TipoCuentaAhorro, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const formatearFecha = (fecha: string) => {
-    return new Date(fecha).toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
   };
 
   if (loading) {
@@ -262,7 +255,7 @@ export const TiposCuentaPage = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {tipo.created_at ? formatearFecha(tipo.created_at) : '-'}
+                    {tipo.created_at ? formatearFechaCorta(tipo.created_at) : '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     {editando === tipo.id ? (

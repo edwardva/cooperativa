@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Bell, User, LogOut, Settings, ChevronDown } from 'lucide-react'
+import { Search, Bell, User, LogOut, Settings, ChevronDown, Moon, Sun } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
+import { useTema } from '@/hooks/useTema'
 import { clsx } from 'clsx'
 
 export const Header = () => {
@@ -9,6 +10,7 @@ export const Header = () => {
   const navigate = useNavigate()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const { tema, alternarTema } = useTema()
 
   const handleLogout = async () => {
     await logout()
@@ -42,6 +44,16 @@ export const Header = () => {
 
         {/* Right Section */}
         <div className="flex items-center gap-4">
+          {/* Tema diurno / nocturno */}
+          <button
+            onClick={alternarTema}
+            className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors"
+            aria-label={tema === 'nocturno' ? 'Cambiar a tema diurno' : 'Cambiar a tema nocturno'}
+            title={tema === 'nocturno' ? 'Tema diurno' : 'Tema nocturno'}
+          >
+            {tema === 'nocturno' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
+
           {/* Notifications */}
           <button
             className="relative p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors"
@@ -57,7 +69,7 @@ export const Header = () => {
               onClick={() => setShowUserMenu(!showUserMenu)}
               className="flex items-center gap-3 px-3 py-2 hover:bg-neutral-100 rounded-lg transition-colors"
             >
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white font-semibold text-sm">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-on-accent font-semibold text-sm">
                 {user?.nombre?.charAt(0).toUpperCase() || 'U'}
               </div>
               <div className="text-left hidden md:block">

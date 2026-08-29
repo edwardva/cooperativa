@@ -16,6 +16,8 @@ import {
   FileText,
   FileDown,
   Calendar,
+  CalendarCheck,
+  Calculator,
   Printer,
   Shield
 } from 'lucide-react'
@@ -34,13 +36,15 @@ const navigationItems: NavItem[] = [
   { name: 'Ahorro', path: '/ahorro', icon: Wallet },
   { name: 'Préstamos', path: '/prestamos', icon: DollarSign },
   { name: 'Colecta', path: '/colecta', icon: ClipboardList },
+  { name: 'Reportes Colecta', path: '/colecta/reportes', icon: Calculator },
   { name: 'Funeraria', path: '/funeraria', icon: Shield },
   { name: 'Salud', path: '/salud', icon: HeartPulse },
   { name: 'Bóveda', path: '/boveda', icon: Briefcase },
+  { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck },
   { name: 'Reportes', path: '/reportes', icon: FileDown },
   { name: 'Impresión', path: '/impresion', icon: Printer },
   { name: 'Semanas Colecta', path: '/semanas-colecta', icon: Calendar },
-  { name: 'Ubicaciones', path: '/ubicaciones', icon: MapPin },
+  { name: 'Ferias', path: '/ferias', icon: MapPin },
   { name: 'Tipos de Cuenta', path: '/tipos-cuenta', icon: CreditCard },
   { name: 'Tipos de Préstamo', path: '/tipos-prestamo', icon: FileText },
   { name: 'Parámetros', path: '/parametros', icon: Settings },
@@ -121,7 +125,7 @@ export const Sidebar = ({ isCollapsed, setIsCollapsed }: SidebarProps) => {
                         {item.name}
                       </span>
                       {item.badge && (
-                        <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-error-600 text-white">
+                        <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-error-600 text-on-accent">
                           {item.badge}
                         </span>
                       )}
@@ -130,7 +134,7 @@ export const Sidebar = ({ isCollapsed, setIsCollapsed }: SidebarProps) => {
                   
                   {/* Tooltip for collapsed state */}
                   {isCollapsed && (
-                    <div className="absolute left-full ml-2 px-3 py-1.5 bg-neutral-800 text-white text-sm rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap shadow-lg z-50">
+                    <div className="absolute left-full ml-2 px-3 py-1.5 bg-neutral-800 text-neutral-50 text-sm rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap shadow-lg z-50">
                       {item.name}
                       {item.badge && (
                         <span className="ml-2 px-1.5 py-0.5 text-xs font-semibold rounded bg-error-600">
@@ -150,7 +154,7 @@ export const Sidebar = ({ isCollapsed, setIsCollapsed }: SidebarProps) => {
       <div className="border-t border-neutral-200 p-4">
         {!isCollapsed ? (
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-secondary-500 to-primary-500 font-semibold text-sm text-white shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-secondary-500 to-primary-500 font-semibold text-sm text-on-accent shadow-sm">
               AD
             </div>
             <div className="flex-1 min-w-0">
@@ -160,7 +164,7 @@ export const Sidebar = ({ isCollapsed, setIsCollapsed }: SidebarProps) => {
           </div>
         ) : (
           <div className="flex justify-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-secondary-500 to-primary-500 font-semibold text-sm text-white shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-secondary-500 to-primary-500 font-semibold text-sm text-on-accent shadow-sm">
               AD
             </div>
           </div>

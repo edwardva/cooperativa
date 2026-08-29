@@ -1,3 +1,5 @@
+@import './theme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -14,6 +16,15 @@
   body {
     @apply bg-neutral-50 text-neutral-900;
     font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  /* Esquema nativo (scrollbars, controles de fecha, autocompletado del navegador) */
+  :root {
+    color-scheme: light;
+  }
+
+  .dark {
+    color-scheme: dark;
   }
   
   /* Mejoras de tipografía */

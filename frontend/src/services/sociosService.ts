@@ -51,13 +51,14 @@ export interface SocioFormData {
   ubicacion_id: number | null
   autorizado_nombre: string
   autorizado_cedula: string
+  es_delegado: boolean
   notas: string
   foto?: string // Base64 de la foto
 }
 
 export interface RetiroSocioData {
   fecha_retiro: string
-  motivo_retiro: 'Socio' | 'Voluntario' | 'Art. 5'
+  motivo_retiro: 'Fallecimiento' | 'Renuncia' | 'Pasividad'
 }
 
 // Parentescos aceptados para traspasar la titularidad de un socio: solo familiar directo
@@ -212,14 +213,6 @@ export const crearSocio = async (data: SocioFormData): Promise<SingleResponse<So
  */
 export const actualizarSocio = async (id: number, data: Partial<SocioFormData>): Promise<SingleResponse<Socio>> => {
   const response = await apiClient.put(`/socios/${id}`, data)
-  return response.data
-}
-
-/**
- * Eliminar un socio si no tiene asociaciones previas
- */
-export const eliminarSocio = async (id: number): Promise<SingleResponse<Socio>> => {
-  const response = await apiClient.delete(`/socios/${id}`)
   return response.data
 }
 

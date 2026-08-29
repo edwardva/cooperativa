@@ -11,7 +11,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false)
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(255,184,28,0.10),_transparent_26%),linear-gradient(180deg,_#fffdfa_0%,_#fbfcfa_42%,_#f8faf7_100%)]">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(255,184,28,0.10),_transparent_26%),linear-gradient(180deg,_rgb(var(--c-fondo-1))_0%,_rgb(var(--c-fondo-2))_42%,_rgb(var(--c-fondo-3))_100%)]">
       <Sidebar isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
       
       <div className={`min-h-screen flex flex-col transition-all duration-300 ${isCollapsed ? 'ml-16' : 'ml-64'}`}>

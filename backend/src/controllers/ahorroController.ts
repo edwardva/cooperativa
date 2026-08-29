@@ -13,6 +13,7 @@ import type { Request, Response } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { ConflictError, BadRequestError } from '../middleware/errorHandler';
 
 const prisma = new PrismaClient();
 
@@ -69,22 +70,19 @@ async function obtenerTasaActual(): Promise<number> {
 }
 
 /**
- * Generar número de cuenta único
- */
-/**
- * Genera un número de cuenta único siguiendo el formato del sistema viejo
- * Formato: XX-XX-XX-XXXXXX
- * - XX: código tipo de cuenta (01, 02, 12, etc.)
- * - XX-XX: código de ubicación/feria (01-00, 08-00, etc.)
- * - XXXXXX: correlativo secuencial por tipo+feria (6 dígitos)
- * 
- * Ejemplo: 01-08-00-121753
- * - Tipo: 01 (CUENTA A LA VISTA)
- * - Feria: 08-00
- * - Correlativo: 121753
+ * Genera el número de cuenta siguiendo el formato del sistema viejo.
+ *
+ * Formato: TIPO-FERIA-EXPEDIENTE  (ej: 01-08-00-121753)
+ *   - TIPO       01  = código del tipo de cuenta (CUENTA A LA VISTA)
+ *   - FERIA      08-00 = código de la ubicación; ya trae un guion interno,
+ *                por eso el número completo tiene 4 segmentos y no 3
+ *   - EXPEDIENTE 121753 = codigo_socio del titular
+ *
+ * El último segmento NO es un correlativo: es el expediente del socio.
+ * Verificado contra los datos reales: 18.315 de 18.317 cuentas migradas
+ * terminan exactamente en el codigo_socio de su titular.
  */
 async function generarNumeroCuenta(tipoCuentaId: number, socioId: number): Promise<string> {
-  // Obtener tipo de cuenta
   const tipoCuenta = await prisma.tipoCuentaAhorro.findUnique({
     where: { id: tipoCuentaId },
   });
@@ -93,72 +91,36 @@ async function generarNumeroCuenta(tipoCuentaId: number, socioId: number): Promi
     throw new Error('Tipo de cuenta no encontrado');
   }
 
-  // Obtener socio y su ubicación
   const socio = await prisma.socio.findUnique({
     where: { id: socioId },
-    include: {
-      ubicacion: true,
-    },
+    include: { ubicacion: true },
   });
 
-  if (!socio || !socio.ubicacion) {
-    throw new Error('Socio o ubicación no encontrados');
+  if (!socio) {
+    throw new Error('Socio no encontrado');
   }
 
-  // Prefijo del número de cuenta: TIPO-UBICACION (ej: "01-08-00")
-  const prefijo = `${tipoCuenta.codigo}-${socio.ubicacion.codigo}`;
-  
-  // Buscar la última cuenta con este prefijo para obtener el último correlativo
-  const ultimaCuenta = await prisma.cuentaAhorro.findFirst({
-    where: {
-      numero_cuenta: {
-        startsWith: `${prefijo}-`,
-      },
-    },
-    orderBy: {
-      numero_cuenta: 'desc',
-    },
-    select: {
-      numero_cuenta: true,
-    },
+  if (!socio.ubicacion) {
+    throw new BadRequestError('El socio no tiene feria asignada; no es posible formar el número de cuenta');
+  }
+
+  const numeroCuenta = `${tipoCuenta.codigo}-${socio.ubicacion.codigo}-${socio.codigo_socio}`;
+
+  // Al derivarse del expediente, el número es determinista: si ya existe es
+  // porque el socio YA tiene una cuenta de este tipo en esta feria. Antes esto
+  // se resolvía incrementando un correlativo, lo que producía cuentas cuyo
+  // último segmento no correspondía a ningún expediente.
+  const existente = await prisma.cuentaAhorro.findUnique({
+    where: { numero_cuenta: numeroCuenta },
   });
-  
-  let proximoCorrelativo = 100001; // Empezar desde 100001 para nuevas cuentas
-  
-  if (ultimaCuenta) {
-    // Extraer el correlativo de la última cuenta
-    // Formato: XX-XX-XX-XXXXXX, el correlativo está después del tercer guion
-    const partes = ultimaCuenta.numero_cuenta.split('-');
-    if (partes.length === 4) {
-      const ultimoCorrelativo = parseInt(partes[3] ?? '', 10);
-      if (!isNaN(ultimoCorrelativo)) {
-        proximoCorrelativo = ultimoCorrelativo + 1;
-      }
-    }
+
+  if (existente) {
+    throw new ConflictError(
+      `El socio ${socio.codigo_socio} ya tiene una cuenta ${tipoCuenta.nombre} en esta feria (${numeroCuenta})`
+    );
   }
-  
-  // Generar número de cuenta con validación de unicidad
-  let intentos = 0;
-  const MAX_INTENTOS = 100;
-  
-  while (intentos < MAX_INTENTOS) {
-    const numeroCuenta = `${prefijo}-${String(proximoCorrelativo).padStart(6, '0')}`;
-    
-    // Verificar que no exista
-    const existe = await prisma.cuentaAhorro.findUnique({
-      where: { numero_cuenta: numeroCuenta },
-    });
-    
-    if (!existe) {
-      return numeroCuenta;
-    }
-    
-    // Si existe, incrementar y reintentar
-    proximoCorrelativo++;
-    intentos++;
-  }
-  
-  throw new Error(`No se pudo generar un número de cuenta único después de ${MAX_INTENTOS} intentos`);
+
+  return numeroCuenta;
 }
 
 // ============================================
@@ -651,6 +613,15 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
           message: 'Datos de entrada inválidos',
           details: error.errors,
         },
+      });
+      return;
+    }
+
+    // Los errores de negocio del generador de número llevan su propio mensaje
+    if (error instanceof ConflictError || error instanceof BadRequestError) {
+      res.status(error.statusCode).json({
+        success: false,
+        error: { code: error.code ?? 'BAD_REQUEST', message: error.message },
       });
       return;
     }

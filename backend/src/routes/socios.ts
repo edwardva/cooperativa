@@ -7,7 +7,6 @@ import {
   crearSocio,
   actualizarSocio,
   actualizarCodigoSocial,
-  eliminarSocio,
   retirarSocio,
   traspasarSocio,
   obtenerBeneficiarios,
@@ -115,17 +114,6 @@ router.patch(
   '/:id/codigo-social',
   authorize('socios', 'update'),
   actualizarCodigoSocial
-);
-
-/**
- * DELETE /api/socios/:id
- * Eliminar un socio (soft delete, cambio de estado a 'retirado')
- * Permisos: socios:delete
- */
-router.delete(
-  '/:id',
-  authorize('socios', 'delete'),
-  eliminarSocio
 );
 
 /**

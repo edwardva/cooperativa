@@ -9,6 +9,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
+import { consultarTasaBcv, sincronizarTasa } from '../services/tasaCambioService';
+import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -309,5 +311,76 @@ export const eliminarParametro = async (
     });
   } catch (error) {
     next(error);
+  }
+};
+
+// ============================================
+// TASA DE CAMBIO BCV
+// ============================================
+
+/**
+ * GET /api/parametros/tasa
+ *
+ * Tasa vigente en el sistema más lo que reportan las fuentes ahora mismo, para
+ * que se vea de un vistazo si está desactualizada.
+ */
+export const obtenerEstadoTasa = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const [parametro, historico, enVivo] = await Promise.all([
+      prisma.parametroSistema.findUnique({ where: { clave: 'TASA_CAMBIO_USD_BS' } }),
+      prisma.historicoTasaCambio.findMany({
+        orderBy: { created_at: 'desc' },
+        take: 10,
+        select: { tasa: true, fecha_vigencia: true, created_at: true },
+      }),
+      consultarTasaBcv(),
+    ]);
+
+    const vigente = parametro ? Number(parametro.valor) : null;
+    const diferencia =
+      vigente && enVivo ? Math.round(Math.abs((enVivo.tasa - vigente) / vigente) * 1000) / 10 : null;
+
+    res.json({
+      success: true,
+      data: {
+        vigente,
+        actualizada_el: parametro?.updated_at ?? null,
+        en_vivo: enVivo,
+        // Si la fuente trae otro valor, conviene sincronizar
+        desactualizada: Boolean(enVivo && vigente && enVivo.tasa !== vigente),
+        diferencia_porcentaje: diferencia,
+        historico,
+      },
+    });
+  } catch (error) {
+    logger.error('Error al obtener el estado de la tasa:', error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Error al obtener el estado de la tasa' },
+    });
+  }
+};
+
+/**
+ * POST /api/parametros/tasa/sincronizar
+ *
+ * Fuerza la sincronización. Con `forzar: true` se salta la salvaguarda de
+ * variación máxima, para cuando el BCV realmente pegó un salto grande y alguien
+ * lo confirma a mano.
+ */
+export const sincronizarTasaBcv = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const forzar = req.body?.forzar === true;
+    const resultado = await sincronizarTasa(req.user?.userId, forzar);
+
+    // Que no se haya aplicado no es un error: puede ser que no cambió o que la
+    // salvaguarda la frenó. El motivo viene en la respuesta.
+    res.json({ success: true, data: resultado });
+  } catch (error) {
+    logger.error('Error al sincronizar la tasa:', error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Error al sincronizar la tasa' },
+    });
   }
 };

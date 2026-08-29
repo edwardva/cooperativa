@@ -3,18 +3,29 @@
   "version": "1.0.0",
   "description": "Scripts de migración para Cooperativa el Triunfo",
   "scripts": {
+    "migrate:ubicaciones": "tsx 0-import-ubicaciones.ts",
     "migrate:socios": "tsx 2-import-socios.ts",
     "migrate:beneficiarios": "tsx 5-import-beneficiarios.ts",
+    "extraer:socios": "tsx 7-extraer-socios-ferias.ts",
+    "asociar:ferias": "tsx 6-asociar-socios-ferias.ts",
+    "import:completo": "tsx 8-import-todos-socios-completo.ts",
+    "import:todos": "tsx 9-import-todos-con-invalidos.ts",
     "validate:socios": "tsx 3-validate-socios.ts",
+    "validate:ubicaciones": "tsx 0-import-ubicaciones.ts",
     "migrate:rollback": "tsx 4-rollback-socios.ts",
-    "migrate:all": "npm run migrate:socios && npm run validate:socios && npm run migrate:beneficiarios",
+    "migrate:all": "npm run migrate:ubicaciones && npm run migrate:socios && npm run validate:socios && npm run migrate:beneficiarios",
     "migration:report": "tsx generate-report.ts"
   },
   "devDependencies": {
-    "@prisma/client": "^6.2.0",
+    "@prisma/client": "^5.22.0",
     "@types/node": "^22.10.2",
     "csv-parse": "^5.6.0",
+    "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "csv-parser": "^3.2.1",
+    "dotenv": "^17.4.2"
   }
 }
