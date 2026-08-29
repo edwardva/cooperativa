@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "socios" ALTER COLUMN "telefono" SET DATA TYPE VARCHAR(100);
