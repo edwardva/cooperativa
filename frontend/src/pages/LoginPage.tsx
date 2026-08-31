@@ -55,14 +55,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,184,28,0.18),_transparent_28%),radial-gradient(circle_at_right,_rgba(58,122,44,0.14),_transparent_24%),linear-gradient(135deg,_#fffdfa_0%,_#f8fbf6_45%,_#fff7ed_100%)] flex items-center justify-center p-4">
+    <div className="min-h-screen relative overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,184,28,0.18),_transparent_28%),radial-gradient(circle_at_right,_rgba(58,122,44,0.14),_transparent_24%),linear-gradient(135deg,_rgb(var(--c-fondo-1))_0%,_rgb(var(--c-fondo-2))_45%,_rgb(var(--c-primary-50))_100%)] flex items-center justify-center p-4">
       <div className="absolute inset-0 opacity-60 pointer-events-none">
         <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-primary-200/35 blur-3xl" />
         <div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-secondary-200/30 blur-3xl" />
       </div>
 
       <div className="relative w-full max-w-5xl grid overflow-hidden rounded-[2rem] border border-white/70 bg-white/80 shadow-2xl backdrop-blur-xl lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="hidden flex-col justify-between border-r border-neutral-200/70 bg-[linear-gradient(180deg,_rgba(255,247,237,0.95),_rgba(255,255,255,0.92))] p-10 lg:flex">
+        <section className="hidden flex-col justify-between border-r border-neutral-200/70 bg-[linear-gradient(180deg,_rgb(var(--c-primary-50)/0.95),_rgb(var(--c-white)/0.92))] p-10 lg:flex">
           <div className="space-y-8">
             <div className="inline-flex items-center gap-3 rounded-full border border-primary-200 bg-white px-4 py-2 text-sm text-primary-700 shadow-sm">
               <span className="h-2.5 w-2.5 rounded-full bg-secondary-500" />
@@ -182,7 +182,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full rounded-2xl bg-[linear-gradient(135deg,_#ff6b1c_0%,_#ffb81c_100%)] py-3.5 font-semibold text-white shadow-lg shadow-primary-200 transition-all hover:-translate-y-0.5 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-primary-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+              className="w-full rounded-2xl bg-[linear-gradient(135deg,_#ff6b1c_0%,_#ffb81c_100%)] py-3.5 font-semibold text-on-accent shadow-lg shadow-primary-200 transition-all hover:-translate-y-0.5 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-primary-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             >
               {isLoading ? (
                 <span className="flex items-center justify-center gap-2">

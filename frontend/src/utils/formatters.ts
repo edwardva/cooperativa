@@ -104,3 +104,18 @@ export function normalizarFechaParaInput(fechaISO: string | null | undefined): s
     return ''
   }
 }
+
+/**
+ * Fecha en formato corto legible: "22 ago 2026".
+ *
+ * Vivia duplicada como `const` DENTRO de FeriasPage, TiposCuentaPage y
+ * ParametrosPage, y en las tres se usaba antes de su declaracion al armar las
+ * filas de impresion: eso cae en la zona muerta temporal y rompe la pantalla al
+ * abrirla. Como `function` a nivel de modulo esta disponible desde el inicio.
+ */
+export function formatearFechaCorta(fecha: string | null | undefined): string {
+  if (!fecha) return '-'
+  const d = new Date(fecha)
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
+}

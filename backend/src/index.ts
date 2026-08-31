@@ -18,6 +18,10 @@ import reportesRouter from './routes/reportes';
 import semanasColectaRouter from './routes/semanasColecta';
 import impresionRouter from './routes/impresion';
 import sociosRouter from './routes/socios';
+import asambleasRouter from './routes/asambleas';
+import colectaRouter from './routes/colecta';
+import prestamosRouter from './routes/prestamos';
+import { iniciarSincronizacionAutomatica } from './services/tasaCambioService';
 import ahorroRouter from './routes/ahorro';
 import funerariaRouter from './routes/funeraria';
 import saludRouter from './routes/salud';
@@ -114,6 +118,9 @@ app.use('/api/socios', sociosRouter);
 app.use('/api/ahorro', ahorroRouter);
 app.use('/api/funeraria', funerariaRouter);
 app.use('/api/salud', saludRouter);
+app.use('/api/asambleas', asambleasRouter);
+app.use('/api/colecta', colectaRouter);
+app.use('/api/prestamos', prestamosRouter);
 
 // ============================================
 // 404 HANDLER
@@ -144,6 +151,11 @@ app.listen(PORT, () => {
   logger.info(`🌐 CORS habilitado para: ${config.corsOrigin}`);
 
   iniciarJobSemanalSalud();
+  // Tasa BCV al día sin intervención. Se puede desactivar con
+  // SINCRONIZAR_TASA=false si se prefiere cargarla a mano.
+  if (process.env.SINCRONIZAR_TASA !== 'false') {
+    iniciarSincronizacionAutomatica(Number(process.env.TASA_INTERVALO_HORAS ?? 6));
+  }
 });
 
 // Manejo de errores no capturados

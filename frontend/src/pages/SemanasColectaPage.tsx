@@ -1,317 +1,370 @@
 // ============================================
 // COOPERATIVA EL TRIUNFO - FRONTEND PAGE
-// Semanas de Colecta (Gestión Tasa Semanal)
+// Semanas de Colecta (tasa semanal USD/Bs)
 // ============================================
+//
+// La pantalla mostraba datos de ejemplo escritos en el archivo y el boton
+// "Nueva Semana" no tenia handler. Ahora consume el API real
+// (`/api/semanas-colecta`) y permite crear, editar y desactivar.
 
-import { useState, useMemo } from 'react';
-import { Calendar, DollarSign, TrendingUp, Search, Plus, Edit, Trash2, CheckCircle2, XCircle, Target } from 'lucide-react';
-import { Card } from '../components/ui/Card';
-import { Input } from '../components/ui/Input';
-import { Button } from '../components/ui/Button';
-import { PrintableListado } from '../components/print/PrintableListado';
-import { SortableHeader } from '../components/ui/SortableHeader';
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  Calendar,
+  DollarSign,
+  TrendingUp,
+  Search,
+  Plus,
+  Edit2,
+  Trash2,
+  CheckCircle2,
+  Loader2,
+  AlertTriangle,
+  Printer,
+  X,
+} from 'lucide-react'
+import { Card } from '../components/ui/Card'
+import { Button } from '../components/ui/Button'
+import { Badge } from '../components/ui/Badge'
+import { PrintableListado } from '../components/print/PrintableListado'
+import { SortableHeader } from '../components/ui/SortableHeader'
+import * as semanasService from '../services/semanasColectaService'
+import type { SemanaColecta, SemanaColectaFormData } from '../services/semanasColectaService'
+import { numeroDeSemana, rangoDeSemana } from '../services/semanasColectaService'
+import { getErrorMessage } from '../services/api'
+import { usePermissions } from '../store/authStore'
 
-// ============================================
-// TIPOS
-// ============================================
+const labelClass = 'space-y-1.5 text-sm font-medium text-neutral-700'
 
-interface SemanaColecta {
-  id: number;
-  semana: number;
-  ano: number;
-  tasa_usd_bs: number;
-  meta_ahorro: number;
-  meta_funeraria: number;
-  meta_salud: number;
-  fecha_inicio: string;
-  fecha_fin: string;
-  estado: boolean;
-  _count?: {
-    colectas: number;
-  };
+const controlClass =
+  'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all placeholder:text-neutral-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
+
+const tituloSeccionClass = 'text-xs font-semibold uppercase tracking-wide text-neutral-500'
+
+const money = (valor: number | string | null, decimales = 2): string =>
+  Number(valor ?? 0).toLocaleString('es-VE', {
+    minimumFractionDigits: decimales,
+    maximumFractionDigits: decimales,
+  })
+
+const formatearFecha = (fecha: string): string =>
+  new Date(`${fecha.split('T')[0]}T12:00:00`).toLocaleDateString('es-VE', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+
+const formularioVacio = (): SemanaColectaFormData => {
+  const hoy = new Date()
+  const semana = numeroDeSemana(hoy)
+  const ano = hoy.getFullYear()
+  const rango = rangoDeSemana(semana, ano)
+  return {
+    semana,
+    ano,
+    tasa_usd_bs: 0,
+    meta_ahorro: 0,
+    meta_funeraria: 0,
+    meta_salud: 0,
+    fecha_inicio: rango.inicio,
+    fecha_fin: rango.fin,
+    estado: true,
+  }
 }
 
-// ============================================
-// COMPONENTE PRINCIPAL
-// ============================================
-
 export const SemanasColectaPage = () => {
-  const [busqueda, setBusqueda] = useState('');
-  const [editando, setEditando] = useState<number | null>(null);
-  const [formData, setFormData] = useState<Partial<SemanaColecta>>({});
+  const { hasPermission } = usePermissions()
+  const puedeEscribir = hasPermission('semanas_colecta', 'create')
+  const puedeEliminar = hasPermission('semanas_colecta', 'delete')
 
-  // Estados de ordenamiento
-  const [sortField, setSortField] = useState<string>('id');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [semanas, setSemanas] = useState<SemanaColecta[]>([])
+  const [cargando, setCargando] = useState(true)
+  const [error, setError] = useState('')
+  const [busqueda, setBusqueda] = useState('')
 
-  // Función para manejar el ordenamiento
+  const [sortField, setSortField] = useState<string>('ano')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+
+  const [modalAbierto, setModalAbierto] = useState(false)
+  const [editando, setEditando] = useState<SemanaColecta | null>(null)
+  const [formulario, setFormulario] = useState<SemanaColectaFormData>(formularioVacio)
+  const [guardando, setGuardando] = useState(false)
+  const [errorFormulario, setErrorFormulario] = useState('')
+
   const handleSort = (field: string) => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortOrder('asc');
+    if (sortField === field) setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    else {
+      setSortField(field)
+      setSortOrder('asc')
     }
-  };
+  }
 
-  // Datos mock (TODO: reemplazar con API calls)
-  const semanas: SemanaColecta[] = [
-    {
-      id: 1,
-      semana: 28,
-      ano: 2026,
-      tasa_usd_bs: 700.22,
-      meta_ahorro: 25000.00,
-      meta_funeraria: 8000.00,
-      meta_salud: 6000.00,
-      fecha_inicio: '2026-07-06',
-      fecha_fin: '2026-07-12',
-      estado: true,
-      _count: { colectas: 156 }
-    },
-    {
-      id: 2,
-      semana: 27,
-      ano: 2026,
-      tasa_usd_bs: 698.50,
-      meta_ahorro: 24500.00,
-      meta_funeraria: 7800.00,
-      meta_salud: 5900.00,
-      fecha_inicio: '2026-06-29',
-      fecha_fin: '2026-07-05',
-      estado: true,
-      _count: { colectas: 189 }
-    },
-    {
-      id: 3,
-      semana: 26,
-      ano: 2026,
-      tasa_usd_bs: 695.80,
-      meta_ahorro: 24000.00,
-      meta_funeraria: 7500.00,
-      meta_salud: 5700.00,
-      fecha_inicio: '2026-06-22',
-      fecha_fin: '2026-06-28',
-      estado: true,
-      _count: { colectas: 201 }
-    },
-    {
-      id: 4,
-      semana: 25,
-      ano: 2026,
-      tasa_usd_bs: 693.15,
-      meta_ahorro: 23500.00,
-      meta_funeraria: 7200.00,
-      meta_salud: 5500.00,
-      fecha_inicio: '2026-06-15',
-      fecha_fin: '2026-06-21',
-      estado: false,
-      _count: { colectas: 178 }
+  const cargar = useCallback(async () => {
+    setCargando(true)
+    setError('')
+    try {
+      const respuesta = await semanasService.obtenerSemanas()
+      if (respuesta.success) setSemanas(respuesta.data)
+      else setError(respuesta.error?.message ?? 'Error al cargar las semanas')
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Error al conectar con el servidor')
+    } finally {
+      setCargando(false)
     }
-  ];
+  }, [])
+
+  useEffect(() => {
+    void cargar()
+  }, [cargar])
 
   // ============================================
-  // FUNCIONES
+  // ALTA Y EDICION
   // ============================================
+  const abrirNueva = () => {
+    setEditando(null)
+    setFormulario(formularioVacio())
+    setErrorFormulario('')
+    setModalAbierto(true)
+  }
 
-  const formatearFecha = (fecha: string): string => {
-    return new Date(fecha).toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric'
-    });
-  };
+  const abrirEditar = (semana: SemanaColecta) => {
+    setEditando(semana)
+    setFormulario({
+      semana: semana.semana,
+      ano: semana.ano,
+      tasa_usd_bs: Number(semana.tasa_usd_bs),
+      meta_ahorro: Number(semana.meta_ahorro ?? 0),
+      meta_funeraria: Number(semana.meta_funeraria ?? 0),
+      meta_salud: Number(semana.meta_salud ?? 0),
+      fecha_inicio: semana.fecha_inicio.slice(0, 10),
+      fecha_fin: semana.fecha_fin.slice(0, 10),
+      estado: semana.estado,
+    })
+    setErrorFormulario('')
+    setModalAbierto(true)
+  }
 
-  const formatearMoneda = (monto: number): string => {
-    return new Intl.NumberFormat('es-VE', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(monto);
-  };
+  /** Al cambiar semana o ano se recalculan las fechas del periodo. */
+  const cambiarPeriodo = (semana: number, ano: number) => {
+    const rango = rangoDeSemana(semana, ano)
+    setFormulario((prev) => ({ ...prev, semana, ano, fecha_inicio: rango.inicio, fecha_fin: rango.fin }))
+  }
 
-  const handleEditar = (semana: SemanaColecta) => {
-    setEditando(semana.id);
-    setFormData(semana);
-  };
-
-  const handleGuardar = () => {
-    // TODO: Implementar API call para actualizar
-    console.log('Guardando cambios:', formData);
-    setEditando(null);
-    setFormData({});
-  };
-
-  const handleCancelar = () => {
-    setEditando(null);
-    setFormData({});
-  };
-
-  const handleEliminar = (id: number) => {
-    if (confirm('¿Está seguro que desea desactivar esta semana de colecta?')) {
-      // TODO: Implementar API call para soft delete
-      console.log('Eliminando semana:', id);
+  const guardar = async () => {
+    if (formulario.tasa_usd_bs <= 0) {
+      setErrorFormulario('La tasa debe ser mayor a cero')
+      return
     }
-  };
+    if (formulario.semana < 1 || formulario.semana > 53) {
+      setErrorFormulario('La semana debe estar entre 1 y 53')
+      return
+    }
 
-  // Filtrar semanas por búsqueda
-  // Ordenar semanas según el campo seleccionado
+    setGuardando(true)
+    setErrorFormulario('')
+    try {
+      const respuesta = editando
+        ? await semanasService.actualizarSemana(editando.id, formulario)
+        : await semanasService.crearSemana(formulario)
+
+      if (!respuesta.success) throw new Error(respuesta.error?.message ?? 'No fue posible guardar')
+
+      setModalAbierto(false)
+      await cargar()
+    } catch (err) {
+      setErrorFormulario(getErrorMessage(err) || 'Error al guardar la semana')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  const eliminar = async (semana: SemanaColecta) => {
+    const confirmado = window.confirm(
+      `¿Desactivar la semana ${semana.semana}/${semana.ano}? Solo se permite si no tiene colectas registradas.`
+    )
+    if (!confirmado) return
+
+    try {
+      const respuesta = await semanasService.eliminarSemana(semana.id)
+      if (!respuesta.success) throw new Error(respuesta.error?.message ?? 'No fue posible eliminar')
+      await cargar()
+    } catch (err) {
+      window.alert(getErrorMessage(err) || 'Error al eliminar la semana')
+    }
+  }
+
+  // ============================================
+  // DERIVADOS
+  // ============================================
   const semanasOrdenadas = useMemo(() => {
-    const semanasCopia = [...semanas];
-    
-    semanasCopia.sort((a, b) => {
-      let compareA: any = (a as any)[sortField];
-      let compareB: any = (b as any)[sortField];
-
-      // Manejar valores nulos
-      if (compareA === null || compareA === undefined) compareA = '';
-      if (compareB === null || compareB === undefined) compareB = '';
-
-      // Comparación
-      if (typeof compareA === 'string') {
-        compareA = compareA.toLowerCase();
-        compareB = compareB.toLowerCase();
+    const copia = [...semanas]
+    copia.sort((a, b) => {
+      let A: any = (a as any)[sortField]
+      let B: any = (b as any)[sortField]
+      if (A === null || A === undefined) A = ''
+      if (B === null || B === undefined) B = ''
+      if (typeof A === 'string') {
+        A = A.toLowerCase()
+        B = String(B).toLowerCase()
       }
+      // Al ordenar por año, la semana desempata: si no, el listado se ve salteado
+      if (A === B && sortField === 'ano') {
+        return sortOrder === 'asc' ? a.semana - b.semana : b.semana - a.semana
+      }
+      if (A < B) return sortOrder === 'asc' ? -1 : 1
+      if (A > B) return sortOrder === 'asc' ? 1 : -1
+      return 0
+    })
+    return copia
+  }, [semanas, sortField, sortOrder])
 
-      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
-      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
-    });
+  const semanasFiltradas = useMemo(() => {
+    const q = busqueda.trim().toLowerCase()
+    if (!q) return semanasOrdenadas
+    return semanasOrdenadas.filter(
+      (s) =>
+        String(s.semana).includes(q) ||
+        String(s.ano).includes(q) ||
+        String(s.tasa_usd_bs).includes(q)
+    )
+  }, [semanasOrdenadas, busqueda])
 
-    return semanasCopia;
-  }, [semanas, sortField, sortOrder]);
+  const activas = semanas.filter((s) => s.estado)
+  const tasaActual = activas.length > 0 ? Number(activas[0]!.tasa_usd_bs) : 0
+  const totalColectas = semanas.reduce((acc, s) => acc + (s._count?.colectas ?? 0), 0)
 
-  // Filtrar semanas ordenadas
-  const semanasFiltradas = semanasOrdenadas.filter((semana) => {
-    const searchLower = busqueda.toLowerCase();
-    return (
-      semana.semana.toString().includes(searchLower) ||
-      semana.ano.toString().includes(searchLower) ||
-      semana.tasa_usd_bs.toString().includes(searchLower)
-    );
-  });
+  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }]
 
-  // Calcular estadísticas
-  const totalSemanas = semanas.length;
-  const semanasActivas = semanas.filter(s => s.estado).length;
-  const tasaActual = semanas.find(s => s.estado)?.tasa_usd_bs || 0;
-  const totalColectas = semanas.reduce((sum, s) => sum + (s._count?.colectas || 0), 0);
+  const filasImpresion = semanasFiltradas.map((s) => [
+    `${s.semana}/${s.ano}`,
+    `${formatearFecha(s.fecha_inicio)} - ${formatearFecha(s.fecha_fin)}`,
+    money(s.tasa_usd_bs, 4),
+    money(s.meta_ahorro),
+    money(s.meta_funeraria),
+    money(s.meta_salud),
+    String(s._count?.colectas ?? 0),
+    s.estado ? 'Activa' : 'Inactiva',
+  ])
 
-  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }];
-
-  const filasImpresion = semanasFiltradas.map((semana) => [
-    `${semana.semana}/${semana.ano}`,
-    `${formatearFecha(semana.fecha_inicio)} - ${formatearFecha(semana.fecha_fin)}`,
-    `Bs ${formatearMoneda(semana.tasa_usd_bs)}`,
-    `Bs ${formatearMoneda(semana.meta_ahorro)}`,
-    `Bs ${formatearMoneda(semana.meta_funeraria)}`,
-    `Bs ${formatearMoneda(semana.meta_salud)}`,
-    String(semana._count?.colectas ?? 0),
-    semana.estado ? 'Activa' : 'Inactiva',
-  ]);
-
+  // ============================================
+  // RENDER
+  // ============================================
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      {/* ENCABEZADO */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-            Semanas de Colecta
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            Gestión de tasa semanal USD/Bs y metas de colecta
+          <h1 className="text-3xl font-semibold text-neutral-900">Semanas de Colecta</h1>
+          <p className="mt-1 text-sm text-neutral-600">
+            Tasa semanal USD/Bs y metas por servicio. La colecta toma la tasa de la semana activa.
           </p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
-            <Calendar size={20} />
+        <div className="flex flex-wrap gap-3">
+          <Button variant="outline" onClick={() => window.print()}>
+            <Printer className="h-4 w-4" />
             Imprimir listado
           </Button>
-          <Button className="flex items-center gap-2">
-            <Plus size={20} />
-            Nueva Semana
-          </Button>
+          {puedeEscribir && (
+            <Button onClick={abrirNueva}>
+              <Plus className="h-4 w-4" />
+              Nueva semana
+            </Button>
+          )}
         </div>
       </div>
 
-      <PrintableListado
-        titulo="Semanas de Colecta"
-        subtitulo="Listado generado con los filtros actuales"
-        filtros={filtrosImpresion}
-        columnas={['Semana/Año', 'Período', 'Tasa USD/Bs', 'Meta ahorro', 'Meta funeraria', 'Meta salud', 'Colectas', 'Estado']}
-        filas={filasImpresion}
-      />
+      {/* Sin semana activa no se puede cobrar: se avisa arriba de todo */}
+      {!cargando && activas.length === 0 && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+          <p>
+            No hay ninguna semana activa. <strong>El módulo de Colecta no puede cobrar</strong> hasta
+            que se registre una semana con su tasa.
+          </p>
+        </div>
+      )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
+      {/* ESTADISTICAS */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card className="p-5">
+          <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Total Semanas</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
-                {totalSemanas}
-              </p>
+              <p className={tituloSeccionClass}>Total semanas</p>
+              <p className="mt-2 text-3xl font-bold text-neutral-900">{semanas.length}</p>
+              <p className="mt-1 text-sm text-neutral-500">Registradas</p>
             </div>
-            <Calendar className="text-blue-600" size={32} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary-100">
+              <Calendar className="h-5 w-5 text-primary-600" />
+            </div>
           </div>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
+        <Card className="p-5">
+          <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Semanas Activas</p>
-              <p className="text-2xl font-bold text-green-600 mt-1">
-                {semanasActivas}
-              </p>
+              <p className={tituloSeccionClass}>Semanas activas</p>
+              <p className="mt-2 text-3xl font-bold text-emerald-600">{activas.length}</p>
+              <p className="mt-1 text-sm text-emerald-700">Habilitadas para cobrar</p>
             </div>
-            <CheckCircle2 className="text-green-600" size={32} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+            </div>
           </div>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
+        <Card className="p-5">
+          <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Tasa Actual (USD/Bs)</p>
-              <p className="text-2xl font-bold text-purple-600 mt-1">
-                {formatearMoneda(tasaActual)}
-              </p>
+              <p className={tituloSeccionClass}>Tasa vigente</p>
+              <p className="mt-2 text-3xl font-bold text-neutral-900">{money(tasaActual, 2)}</p>
+              <p className="mt-1 text-sm text-neutral-500">Bs por USD</p>
             </div>
-            <DollarSign className="text-purple-600" size={32} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-accent-100">
+              <DollarSign className="h-5 w-5 text-accent-600" />
+            </div>
           </div>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
+        <Card className="p-5">
+          <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Total Colectas</p>
-              <p className="text-2xl font-bold text-orange-600 mt-1">
-                {totalColectas}
+              <p className={tituloSeccionClass}>Colectas</p>
+              <p className="mt-2 text-3xl font-bold text-neutral-900">
+                {totalColectas.toLocaleString('es-VE')}
               </p>
+              <p className="mt-1 text-sm text-neutral-500">En todas las semanas</p>
             </div>
-            <TrendingUp className="text-orange-600" size={32} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100">
+              <TrendingUp className="h-5 w-5 text-indigo-600" />
+            </div>
           </div>
         </Card>
       </div>
 
-      {/* Search */}
+      {/* BUSQUEDA */}
       <Card className="p-4">
-        <div className="flex items-center gap-2">
-          <Search className="text-gray-400" size={20} />
-          <Input
-            type="text"
-            placeholder="Buscar por semana, año o tasa..."
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          <input
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
-            className="flex-1"
+            placeholder="Buscar por semana, año o tasa..."
+            className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
           />
         </div>
       </Card>
 
-      {/* Tabla de Semanas */}
-      <Card className="overflow-hidden">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* TABLA */}
+      <Card padding="none" className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-              <tr>
+          <table className="min-w-full divide-y divide-neutral-200">
+            <thead className="bg-neutral-50">
+              <tr className="text-xs font-medium uppercase tracking-wider text-neutral-500">
                 <SortableHeader
                   label="Semana / Año"
                   field="semana"
@@ -329,264 +382,267 @@ export const SemanasColectaPage = () => {
                 <SortableHeader
                   label="Tasa USD/Bs"
                   field="tasa_usd_bs"
-                  currentSortField={sortField}
-                  currentSortOrder={sortOrder}
-                  onSort={handleSort}
                   align="right"
-                />
-                <SortableHeader
-                  label="Meta Ahorro"
-                  field="meta_ahorro"
                   currentSortField={sortField}
                   currentSortOrder={sortOrder}
                   onSort={handleSort}
-                  align="right"
                 />
-                <SortableHeader
-                  label="Meta Funeraria"
-                  field="meta_funeraria"
-                  currentSortField={sortField}
-                  currentSortOrder={sortOrder}
-                  onSort={handleSort}
-                  align="right"
-                />
-                <SortableHeader
-                  label="Meta Salud"
-                  field="meta_salud"
-                  currentSortField={sortField}
-                  currentSortOrder={sortOrder}
-                  onSort={handleSort}
-                  align="right"
-                />
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Colectas
-                </th>
-                <SortableHeader
-                  label="Estado"
-                  field="estado"
-                  currentSortField={sortField}
-                  currentSortOrder={sortOrder}
-                  onSort={handleSort}
-                  align="center"
-                />
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Acciones
-                </th>
+                <th className="px-4 py-3 text-right">Meta ahorro</th>
+                <th className="px-4 py-3 text-right">Meta funeraria</th>
+                <th className="px-4 py-3 text-right">Meta salud</th>
+                <th className="px-4 py-3 text-center">Colectas</th>
+                <th className="px-4 py-3 text-center">Estado</th>
+                <th className="px-2 py-3" />
               </tr>
             </thead>
-            <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
-              {semanasFiltradas.map((semana) => (
-                <tr
-                  key={semana.id}
-                  className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  {/* Semana / Año */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
-                      <Calendar size={16} className="text-gray-400" />
-                      <span className="font-semibold text-gray-900 dark:text-gray-100">
-                        S{semana.semana} / {semana.ano}
-                      </span>
+            <tbody className="divide-y divide-neutral-100 bg-white">
+              {cargando ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-12 text-center">
+                    <div className="flex items-center justify-center gap-2 text-neutral-500">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span>Cargando semanas...</span>
                     </div>
                   </td>
-
-                  {/* Período */}
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                    {formatearFecha(semana.fecha_inicio)} - {formatearFecha(semana.fecha_fin)}
-                  </td>
-
-                  {/* Tasa USD/Bs */}
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
-                    {editando === semana.id ? (
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.tasa_usd_bs || ''}
-                        onChange={(e) =>
-                          setFormData({ ...formData, tasa_usd_bs: parseFloat(e.target.value) })
-                        }
-                        className="w-32 text-right"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-end gap-1">
-                        <DollarSign size={14} className="text-purple-600" />
-                        <span className="font-semibold text-purple-700 dark:text-purple-400">
-                          {formatearMoneda(semana.tasa_usd_bs)}
-                        </span>
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Meta Ahorro */}
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
-                    {editando === semana.id ? (
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.meta_ahorro || ''}
-                        onChange={(e) =>
-                          setFormData({ ...formData, meta_ahorro: parseFloat(e.target.value) })
-                        }
-                        className="w-32 text-right"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-end gap-1">
-                        <Target size={14} className="text-blue-600" />
-                        <span className="text-sm text-gray-900 dark:text-gray-100">
-                          {formatearMoneda(semana.meta_ahorro)}
-                        </span>
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Meta Funeraria */}
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
-                    {editando === semana.id ? (
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.meta_funeraria || ''}
-                        onChange={(e) =>
-                          setFormData({ ...formData, meta_funeraria: parseFloat(e.target.value) })
-                        }
-                        className="w-32 text-right"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-end gap-1">
-                        <Target size={14} className="text-green-600" />
-                        <span className="text-sm text-gray-900 dark:text-gray-100">
-                          {formatearMoneda(semana.meta_funeraria)}
-                        </span>
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Meta Salud */}
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
-                    {editando === semana.id ? (
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.meta_salud || ''}
-                        onChange={(e) =>
-                          setFormData({ ...formData, meta_salud: parseFloat(e.target.value) })
-                        }
-                        className="w-32 text-right"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-end gap-1">
-                        <Target size={14} className="text-orange-600" />
-                        <span className="text-sm text-gray-900 dark:text-gray-100">
-                          {formatearMoneda(semana.meta_salud)}
-                        </span>
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Colectas */}
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                      {semana._count?.colectas || 0}
-                    </span>
-                  </td>
-
-                  {/* Estado */}
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    {semana.estado ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                        <CheckCircle2 size={12} />
-                        Activa
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300">
-                        <XCircle size={12} />
-                        Inactiva
-                      </span>
-                    )}
-                  </td>
-
-                  {/* Acciones */}
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                    {editando === semana.id ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleGuardar}
-                          className="text-green-600 hover:bg-green-50"
-                        >
-                          <CheckCircle2 size={16} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleCancelar}
-                          className="text-red-600 hover:bg-red-50"
-                        >
-                          <XCircle size={16} />
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditar(semana)}
-                          className="text-blue-600 hover:bg-blue-50"
-                        >
-                          <Edit size={16} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEliminar(semana.id)}
-                          className="text-red-600 hover:bg-red-50"
-                        >
-                          <Trash2 size={16} />
-                        </Button>
-                      </div>
-                    )}
+                </tr>
+              ) : semanasFiltradas.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-12 text-center text-neutral-500">
+                    {semanas.length === 0
+                      ? 'No hay semanas registradas todavía'
+                      : 'Ninguna semana coincide con la búsqueda'}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                semanasFiltradas.map((semana) => (
+                  <tr key={semana.id} className="transition-colors hover:bg-primary-50/40">
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span className="font-mono text-sm font-semibold text-neutral-900">
+                        {semana.semana}/{semana.ano}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-sm text-neutral-600">
+                      {formatearFecha(semana.fecha_inicio)} — {formatearFecha(semana.fecha_fin)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-semibold text-neutral-900">
+                      {money(semana.tasa_usd_bs, 4)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-neutral-600">
+                      ${money(semana.meta_ahorro)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-neutral-600">
+                      ${money(semana.meta_funeraria)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-neutral-600">
+                      ${money(semana.meta_salud)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-center text-sm font-medium text-neutral-900">
+                      {semana._count?.colectas ?? 0}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-center">
+                      {semana.estado ? (
+                        <Badge variant="success">Activa</Badge>
+                      ) : (
+                        <Badge variant="neutral">Inactiva</Badge>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-3 text-right">
+                      <div className="flex justify-end gap-1">
+                        {puedeEscribir && (
+                          <button
+                            onClick={() => abrirEditar(semana)}
+                            className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-primary-600"
+                            title="Editar"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                        )}
+                        {puedeEliminar && (
+                          <button
+                            onClick={() => void eliminar(semana)}
+                            className="rounded-lg p-2 text-neutral-500 transition hover:bg-rose-50 hover:text-rose-600"
+                            title="Desactivar"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </Card>
 
-      {/* Footer Stats */}
-      <Card className="p-4 bg-gray-50 dark:bg-gray-800">
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-6">
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Total: </span>
-              <span className="font-semibold text-gray-900 dark:text-gray-100">
-                {totalSemanas} semanas
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Activas: </span>
-              <span className="font-semibold text-green-600">
-                {semanasActivas}
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Inactivas: </span>
-              <span className="font-semibold text-gray-600">
-                {totalSemanas - semanasActivas}
-              </span>
-            </div>
-          </div>
-          <div>
-            <span className="text-gray-600 dark:text-gray-400">Total Colectas: </span>
-            <span className="font-semibold text-blue-600">
-              {totalColectas}
-            </span>
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-};
+      <PrintableListado
+        titulo="Semanas de Colecta"
+        subtitulo="Tasa semanal USD/Bs y metas por servicio"
+        filtros={filtrosImpresion}
+        resumenes={[
+          { label: 'Semanas', value: String(semanasFiltradas.length) },
+          { label: 'Activas', value: String(activas.length) },
+          { label: 'Tasa vigente', value: money(tasaActual, 4) },
+        ]}
+        columnas={[
+          'Semana/Año',
+          'Período',
+          'Tasa USD/Bs',
+          'Meta ahorro',
+          'Meta funeraria',
+          'Meta salud',
+          'Colectas',
+          'Estado',
+        ]}
+        filas={filasImpresion}
+      />
 
-export default SemanasColectaPage;
+      {/* MODAL: ALTA / EDICION */}
+      {modalAbierto && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <Card
+            padding="none"
+            className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden border-neutral-200"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-200 px-6 py-4">
+              <div>
+                <h2 className="text-xl font-semibold text-neutral-900">
+                  {editando ? `Editar semana ${editando.semana}/${editando.ano}` : 'Nueva semana'}
+                </h2>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Las fechas del período se calculan solas a partir de la semana y el año.
+                </p>
+              </div>
+              <button
+                onClick={() => setModalAbierto(false)}
+                className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <label className={labelClass}>
+                  <span>Semana *</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={53}
+                    value={formulario.semana}
+                    onChange={(e) => cambiarPeriodo(Number(e.target.value) || 1, formulario.ano)}
+                    className={controlClass}
+                  />
+                </label>
+                <label className={labelClass}>
+                  <span>Año *</span>
+                  <input
+                    type="number"
+                    min={2020}
+                    max={2100}
+                    value={formulario.ano}
+                    onChange={(e) => cambiarPeriodo(formulario.semana, Number(e.target.value) || 2026)}
+                    className={controlClass}
+                  />
+                </label>
+                <label className={labelClass}>
+                  <span>Tasa USD/Bs *</span>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min={0}
+                    value={formulario.tasa_usd_bs}
+                    onChange={(e) =>
+                      setFormulario((p) => ({ ...p, tasa_usd_bs: Number(e.target.value) || 0 }))
+                    }
+                    className={`${controlClass} font-semibold`}
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className={labelClass}>
+                  <span>Desde</span>
+                  <input
+                    type="date"
+                    value={formulario.fecha_inicio}
+                    onChange={(e) => setFormulario((p) => ({ ...p, fecha_inicio: e.target.value }))}
+                    className={controlClass}
+                  />
+                </label>
+                <label className={labelClass}>
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    value={formulario.fecha_fin}
+                    onChange={(e) => setFormulario((p) => ({ ...p, fecha_fin: e.target.value }))}
+                    className={controlClass}
+                  />
+                </label>
+              </div>
+
+              <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
+                <p className={`${tituloSeccionClass} mb-3`}>Metas de colecta (USD)</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {([
+                    ['meta_ahorro', 'Ahorro'],
+                    ['meta_funeraria', 'Funeraria'],
+                    ['meta_salud', 'Salud'],
+                  ] as const).map(([campo, etiqueta]) => (
+                    <label key={campo} className={labelClass}>
+                      <span>{etiqueta}</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={formulario[campo] ?? 0}
+                        onChange={(e) =>
+                          setFormulario((p) => ({ ...p, [campo]: Number(e.target.value) || 0 }))
+                        }
+                        className={controlClass}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3 transition hover:border-primary-300">
+                <input
+                  type="checkbox"
+                  checked={formulario.estado ?? true}
+                  onChange={(e) => setFormulario((p) => ({ ...p, estado: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="space-y-0.5">
+                  <span className="block text-sm font-medium text-neutral-800">Semana activa</span>
+                  <span className="block text-xs text-neutral-500">
+                    La colecta toma la tasa de la semana activa más reciente.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="border-t border-neutral-200 px-6 py-4">
+              {errorFormulario && (
+                <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {errorFormulario}
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setModalAbierto(false)} disabled={guardando}>
+                  Cancelar
+                </Button>
+                <Button onClick={() => void guardar()} disabled={guardando}>
+                  {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {guardando ? 'Guardando...' : editando ? 'Actualizar' : 'Crear semana'}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -21,6 +21,7 @@ async function main() {
     reportes: ['read', 'export'],
     parametros: ['read', 'update'],
     usuarios: ['create', 'read', 'update', 'delete'],
+    asambleas: ['create', 'read', 'update', 'delete'],
     impresion: ['create', 'read'],
     ubicaciones: ['create', 'read', 'update', 'delete'],
   };
@@ -36,6 +37,7 @@ async function main() {
         reportes: ['read', 'export'],
         parametros: ['read', 'update'],
         usuarios: ['create', 'read', 'update', 'delete'],
+        asambleas: ['create', 'read', 'update', 'delete'],
         ubicaciones: ['create', 'read', 'update', 'delete'],
       },
     },
@@ -50,6 +52,7 @@ async function main() {
         reportes: ['read', 'export'],
         parametros: ['read', 'update'],
         usuarios: ['create', 'read', 'update', 'delete'],
+        asambleas: ['create', 'read', 'update', 'delete'],
         ubicaciones: ['create', 'read', 'update', 'delete'],
       },
     },
@@ -73,6 +76,7 @@ async function main() {
         colecta: ['create', 'read'],
         reportes: ['read'],
         ubicaciones: ['read'],
+        asambleas: ['create', 'read'],
       },
     },
     create: {
@@ -83,6 +87,7 @@ async function main() {
         colecta: ['create', 'read'],
         reportes: ['read'],
         ubicaciones: ['read'],
+        asambleas: ['create', 'read'],
       },
     },
   });
@@ -106,6 +111,7 @@ async function main() {
         prestamos: ['create', 'read', 'update'],
         reportes: ['read', 'export'],
         ubicaciones: ['read'],
+        asambleas: ['create', 'read'],
       },
     },
     create: {
@@ -117,6 +123,7 @@ async function main() {
         prestamos: ['create', 'read', 'update'],
         reportes: ['read', 'export'],
         ubicaciones: ['read'],
+        asambleas: ['create', 'read'],
       },
     },
   });

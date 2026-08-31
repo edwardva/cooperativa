@@ -186,7 +186,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <section className="overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(135deg,_rgba(255,255,255,0.95),_rgba(255,247,237,0.9))] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.06)] md:p-8">
+      <section className="overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(135deg,_rgb(var(--c-white)/0.95),_rgb(var(--c-primary-50)/0.9))] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.06)] md:p-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl space-y-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-white px-4 py-2 text-sm text-primary-700 shadow-sm">

@@ -1602,7 +1602,7 @@ export const AhorroPage = () => {
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <div className="bg-blue-500 rounded-full p-2">
-                      <Wallet className="w-5 h-5 text-white" />
+                      <Wallet className="w-5 h-5 text-on-accent" />
                     </div>
                     <div>
                       <p className="font-semibold text-blue-900">
@@ -1645,7 +1645,7 @@ export const AhorroPage = () => {
                       >
                         <div className="flex items-center gap-3">
                           <div className="flex-shrink-0">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-on-accent font-bold text-sm">
                               {cuenta.tipo_cuenta.codigo}
                             </div>
                           </div>

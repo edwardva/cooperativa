@@ -13,7 +13,6 @@ import {
   Phone,
   Plus,
   Search,
-  Trash2,
   UserX,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
@@ -22,6 +21,8 @@ import { PrintableListado } from '../components/print/PrintableListado'
 import { SortableHeader } from '../components/ui/SortableHeader'
 import * as sociosService from '../services/sociosService'
 import { formatearFecha, normalizarFechaParaInput } from '../utils/formatters'
+import { validarCedula } from '../utils/cedula'
+import { getErrorMessage } from '../services/api'
 
 interface Ubicacion {
   id: number
@@ -72,13 +73,35 @@ interface SocioFormData {
   ubicacion_id: number | null
   autorizado_nombre: string
   autorizado_cedula: string
+  es_delegado: boolean
   notas: string
   foto?: string // Base64 de la foto
 }
 
+type MotivoRetiro = 'Fallecimiento' | 'Renuncia' | 'Pasividad'
+
+const MOTIVOS_RETIRO: { value: MotivoRetiro; label: string; descripcion: string }[] = [
+  {
+    value: 'Fallecimiento',
+    label: 'Fallecimiento',
+    descripcion: 'El socio ha fallecido.',
+  },
+  {
+    value: 'Renuncia',
+    label: 'Renuncia',
+    descripcion: 'El socio renuncia voluntariamente a su condicion de asociado.',
+  },
+  {
+    value: 'Pasividad',
+    label: 'Pasividad mayor a 6 meses',
+    descripcion:
+      'Pasividad mayor a 6 meses: dejar de asistir sin causa justificada a dos reuniones sectoriales consecutivas.',
+  },
+]
+
 interface RetiroSocioFormData {
   fecha_retiro: string
-  motivo_retiro: 'Socio' | 'Voluntario' | 'Art. 5'
+  motivo_retiro: MotivoRetiro | ''
 }
 
 interface Estadisticas {
@@ -88,6 +111,18 @@ interface Estadisticas {
 }
 
 const getFechaHoy = (): string => new Date().toISOString().slice(0, 10)
+
+const labelClass = 'space-y-1.5 text-sm font-medium text-neutral-700'
+
+const controlClass =
+  'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all placeholder:text-neutral-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
+
+const selectClass = `${controlClass} appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10`
+
+const seccionClass = 'space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4'
+
+const tituloSeccionClass = 'text-sm font-semibold uppercase tracking-wide text-neutral-500'
+
 
 const emptyForm = (): SocioFormData => ({
   codigo_socio: '',
@@ -103,6 +138,7 @@ const emptyForm = (): SocioFormData => ({
   ubicacion_id: null,
   autorizado_nombre: '',
   autorizado_cedula: '',
+  es_delegado: false,
   notas: '',
 })
 
@@ -123,7 +159,7 @@ export const SociosPage = () => {
   const [formData, setFormData] = useState<SocioFormData>(emptyForm)
   const [formRetiro, setFormRetiro] = useState<RetiroSocioFormData>({
     fecha_retiro: getFechaHoy(),
-    motivo_retiro: 'Socio',
+    motivo_retiro: '',
   })
   const [errorFormulario, setErrorFormulario] = useState('')
   const [errorRetiro, setErrorRetiro] = useState('')
@@ -356,6 +392,7 @@ export const SociosPage = () => {
       ubicacion_id: socio.ubicacion_id,
       autorizado_nombre: socio.autorizado_nombre ?? '',
       autorizado_cedula: socio.autorizado_cedula ?? '',
+      es_delegado: socio.es_delegado ?? false,
       notas: socio.notas ?? '',
       foto: socio.foto ?? undefined,
     })
@@ -375,7 +412,7 @@ export const SociosPage = () => {
     setSocioParaRetiro(socio)
     setFormRetiro({
       fecha_retiro: getFechaHoy(),
-      motivo_retiro: 'Socio',
+      motivo_retiro: '',
     })
     setErrorRetiro('')
     setModalRetiroAbierto(true)
@@ -429,8 +466,10 @@ export const SociosPage = () => {
       return false
     }
 
-    if (!/^\d+$/.test(formData.cedula)) {
-      setErrorFormulario('La cedula debe contener solo numeros.')
+    // Mismo validador que usa el backend: acepta "V-12.345.678" y normaliza
+    const revision = validarCedula(formData.cedula)
+    if (!revision.valida) {
+      setErrorFormulario(revision.error ?? 'Cedula invalida.')
       return false
     }
 
@@ -459,17 +498,21 @@ export const SociosPage = () => {
     }
 
     try {
+      // Se envia normalizada para que "V-12.345.678" y "12345678" no convivan
+      const datos = { ...formData, cedula: validarCedula(formData.cedula).cedula }
+
       if (modoEdicion && socioSeleccionado) {
-        await sociosService.actualizarSocio(socioSeleccionado.id, formData)
+        await sociosService.actualizarSocio(socioSeleccionado.id, datos)
       } else {
-        await sociosService.crearSocio(formData)
+        await sociosService.crearSocio(datos)
       }
       
       setModalAbierto(false)
       await cargarSocios()
     } catch (error) {
       console.error('Error guardando socio:', error)
-      setErrorFormulario('Error al guardar el socio. Por favor, intente nuevamente.')
+      // El backend explica el motivo (cedula duplicada, invalida, expediente en uso)
+      setErrorFormulario(getErrorMessage(error) || 'Error al guardar el socio. Por favor, intente nuevamente.')
     }
   }
 
@@ -478,11 +521,19 @@ export const SociosPage = () => {
       return
     }
 
+    if (!formRetiro.motivo_retiro) {
+      setErrorRetiro('Seleccione el motivo del retiro')
+      return
+    }
+
     setProcesandoRetiro(true)
     setErrorRetiro('')
 
     try {
-      const response = await sociosService.retirarSocio(socioParaRetiro.id, formRetiro)
+      const response = await sociosService.retirarSocio(socioParaRetiro.id, {
+        fecha_retiro: formRetiro.fecha_retiro,
+        motivo_retiro: formRetiro.motivo_retiro,
+      })
 
       if (!response.success) {
         throw new Error('No fue posible retirar el socio')
@@ -499,37 +550,28 @@ export const SociosPage = () => {
     }
   }
 
-  const eliminarRegistro = async (socio: Socio) => {
-    const confirmado = window.confirm(
-      `Eliminar definitivamente al socio ${socio.apellido}, ${socio.nombre}? Esta acción solo se permite si no tiene relaciones en el sistema.`
-    )
-
-    if (!confirmado) {
-      return
-    }
-
-    try {
-      const response = await sociosService.eliminarSocio(socio.id)
-
-      if (!response.success) {
-        throw new Error('No fue posible eliminar el socio')
-      }
-
-      await cargarSocios()
-    } catch (err) {
-      const mensaje = err instanceof Error ? err.message : 'Error al eliminar el socio'
-      window.alert(mensaje)
-    }
-  }
-
   const totalRelacionesSocio = (socio: Socio): number => {
     return (socio._count?.beneficiarios ?? 0) + (socio._count?.cuentas_ahorro ?? 0) + (socio._count?.prestamos ?? 0)
   }
 
+  const descripcionMotivoRetiro =
+    MOTIVOS_RETIRO.find((motivo) => motivo.value === formRetiro.motivo_retiro)?.descripcion ?? ''
+
+  const nombreFeria = (ubicacion: Ubicacion): string =>
+    ubicacion.direccion || ubicacion.nombre || ubicacion.codigo
+
   const filtrosImpresion = [
     { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
     { label: 'Estado', value: filtroEstado || 'Todos los estados' },
-    { label: 'Feria', value: filtroUbicacion || 'Todas las ferias' },
+    {
+      label: 'Feria',
+      value: filtroUbicacion
+        ? (() => {
+            const feria = ubicaciones.find((u) => String(u.id) === filtroUbicacion)
+            return feria ? nombreFeria(feria) : 'Todas las ferias'
+          })()
+        : 'Todas las ferias',
+    },
     { label: 'Registros por página', value: String(registrosPorPagina) },
   ]
 
@@ -642,7 +684,7 @@ export const SociosPage = () => {
                   <option value="">Todas las ferias</option>
                   {ubicaciones.map((ubicacion) => (
                     <option key={ubicacion.id} value={ubicacion.id}>
-                      {ubicacion.codigo} - {ubicacion.nombre}
+                      {nombreFeria(ubicacion)}
                     </option>
                   ))}
                 </select>
@@ -792,23 +834,18 @@ export const SociosPage = () => {
                                       <Download className="h-4 w-4 text-emerald-600" />
                                       <span>Imprimir ficha</span>
                                     </button>
-                                    <div className="my-1 border-t border-neutral-200" />
                                     {socio.estado !== 'retirado' && (
-                                      <button
-                                        onClick={() => abrirModalRetiro(socio)}
-                                        className="flex w-full items-center gap-3 px-4 py-2 text-sm text-red-600 transition hover:bg-red-50"
-                                      >
-                                        <UserX className="h-4 w-4" />
-                                        <span>Retirar socio</span>
-                                      </button>
+                                      <>
+                                        <div className="my-1 border-t border-neutral-200" />
+                                        <button
+                                          onClick={() => abrirModalRetiro(socio)}
+                                          className="flex w-full items-center gap-3 px-4 py-2 text-sm text-red-600 transition hover:bg-red-50"
+                                        >
+                                          <UserX className="h-4 w-4" />
+                                          <span>Retirar socio</span>
+                                        </button>
+                                      </>
                                     )}
-                                    <button
-                                      onClick={() => void eliminarRegistro(socio)}
-                                      className="flex w-full items-center gap-3 px-4 py-2 text-sm text-rose-700 transition hover:bg-rose-50"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                      <span>Eliminar socio</span>
-                                    </button>
                                   </div>
                                 </div>
                               </>
@@ -898,9 +935,12 @@ export const SociosPage = () => {
       </section>
 
       {modalAbierto && (
-        <div className="fixed top-0 left-0 right-0 bottom-0 m-0 z-[100] flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm overflow-y-auto">
-          <Card className="w-full max-w-5xl border-neutral-200 my-8">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="fixed top-0 left-0 right-0 bottom-0 m-0 z-[100] flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm">
+          <Card
+            padding="none"
+            className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden border-neutral-200"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 bg-white px-6 py-4">
               <div>
                 <h2 className="text-2xl font-semibold text-neutral-900">
                   {modoEdicion ? `Editar socio ${socioSeleccionado?.codigo_socio ?? ''}` : 'Nuevo socio'}
@@ -917,56 +957,57 @@ export const SociosPage = () => {
               </button>
             </div>
 
-            <div className="mt-5 grid grid-cols-1 gap-5">
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              <div className="grid grid-cols-1 gap-5">
               {/* Fila 1: Datos principales + Foto */}
               <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
                 {/* Datos principales - Ocupa 2 columnas */}
-                <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4 lg:col-span-2">
-                  <p className="text-sm font-semibold text-neutral-800">Datos principales</p>
+                <div className={`${seccionClass} lg:col-span-2`}>
+                  <p className={tituloSeccionClass}>Datos principales</p>
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Expediente *</span>
                     <input
                       value={formData.codigo_socio}
                       onChange={(e) => actualizarCampo('codigo_socio', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Cedula *</span>
                     <input
                       value={formData.cedula}
                       onChange={(e) => actualizarCampo('cedula', e.target.value.replace(/\D/g, ''))}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Nombres *</span>
                     <input
                       value={formData.nombre}
                       onChange={(e) => actualizarCampo('nombre', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Apellidos *</span>
                     <input
                       value={formData.apellido}
                       onChange={(e) => actualizarCampo('apellido', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Sexo</span>
                     <select
                       value={formData.sexo}
                       onChange={(e) => actualizarCampo('sexo', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10"
+                      className={selectClass}
                     >
                       <option value="" className="text-neutral-500">Seleccionar...</option>
                       <option value="M" className="py-2">Masculino</option>
@@ -974,60 +1015,59 @@ export const SociosPage = () => {
                     </select>
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Telefono *</span>
                     <input
                       value={formData.telefono}
                       onChange={(e) => actualizarCampo('telefono', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Correo</span>
                     <input
                       type="email"
                       value={formData.email}
                       onChange={(e) => actualizarCampo('email', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Fecha ingreso</span>
                     <input
                       type="date"
                       value={formData.fecha_inscripcion}
                       onChange={(e) => actualizarCampo('fecha_inscripcion', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Fecha nacimiento</span>
                     <input
                       type="date"
                       value={formData.fecha_nacimiento}
                       onChange={(e) => actualizarCampo('fecha_nacimiento', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
-                </div>
 
-                  <label className="space-y-1 text-sm text-neutral-700 sm:col-span-2">
+                  <label className={`${labelClass} sm:col-span-2`}>
                     <span>Direccion</span>
                     <input
                       value={formData.direccion}
                       onChange={(e) => actualizarCampo('direccion', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
+                  </div>
                 </div>
-              </div>
 
               {/* Sección de foto - Ocupa 1 columna */}
-              <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                <p className="text-sm font-semibold text-neutral-800">Fotografía del socio</p>
+              <div className={seccionClass}>
+                <p className={tituloSeccionClass}>Fotografía del socio</p>
                 
                 <div className="flex flex-col items-center gap-4">
                   {fotoPreview ? (
@@ -1040,7 +1080,7 @@ export const SociosPage = () => {
                       <button
                         type="button"
                         onClick={eliminarFoto}
-                        className="absolute -right-2 -top-2 rounded-full bg-red-500 p-1 text-white hover:bg-red-600 transition"
+                        className="absolute -right-2 -top-2 rounded-full bg-red-500 p-1 text-on-accent hover:bg-red-600 transition"
                       >
                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1072,73 +1112,92 @@ export const SociosPage = () => {
                   </p>
                 </div>
               </div>
-            </div>
+              </div>
+              </div>
 
             {/* Fila 2: Control interno - Full width */}
-            <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                <p className="text-sm font-semibold text-neutral-800">Control interno y autorizacion</p>
+            <div className={seccionClass}>
+                <p className={tituloSeccionClass}>Control interno y autorizacion</p>
 
-                <label className="space-y-1 text-sm text-neutral-700">
+                <label className={labelClass}>
                   <span>Feria *</span>
                   <select
                     value={formData.ubicacion_id ?? ''}
                     onChange={(e) =>
                       actualizarCampo('ubicacion_id', e.target.value ? Number(e.target.value) : null)
                     }
-                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10"
+                    className={selectClass}
                   >
                     <option value="" className="text-neutral-500">Seleccione una feria</option>
                     {ubicaciones.map((ubicacion) => (
                       <option key={ubicacion.id} value={ubicacion.id} className="py-2">
-                        {ubicacion.codigo} - {ubicacion.direccion || 'Sin dirección'}
+                        {nombreFeria(ubicacion)}
                       </option>
                     ))}
                   </select>
                 </label>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Autorizado por</span>
                     <input
                       value={formData.autorizado_nombre}
                       onChange={(e) => actualizarCampo('autorizado_nombre', e.target.value)}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
 
-                  <label className="space-y-1 text-sm text-neutral-700">
+                  <label className={labelClass}>
                     <span>Cedula autorizado</span>
                     <input
                       value={formData.autorizado_cedula}
                       onChange={(e) => actualizarCampo('autorizado_cedula', e.target.value.replace(/\D/g, ''))}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                      className={controlClass}
                     />
                   </label>
                 </div>
 
-                <label className="space-y-1 text-sm text-neutral-700">
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3 transition hover:border-primary-300">
+                  <input
+                    type="checkbox"
+                    checked={formData.es_delegado}
+                    onChange={(e) => actualizarCampo('es_delegado', e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block text-sm font-medium text-neutral-800">Es delegado</span>
+                    <span className="block text-xs text-neutral-500">
+                      Representa a su feria ante la cooperativa. Se muestra en el listado de socios.
+                    </span>
+                  </span>
+                </label>
+
+                <label className={labelClass}>
                   <span>Historial / notas</span>
                   <textarea
                     value={formData.notas}
                     onChange={(e) => actualizarCampo('notas', e.target.value)}
-                    rows={7}
-                    className="w-full resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                    rows={4}
+                    className={`${controlClass} resize-y`}
                     placeholder="Suspensiones, observaciones, acuerdos internos..."
                   />
                 </label>
               </div>
+            </div>
 
-            {errorFormulario && (
-              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {errorFormulario}
+            <div className="border-t border-neutral-200 bg-white px-6 py-4">
+              {errorFormulario && (
+                <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {errorFormulario}
+                </div>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="ghost" onClick={() => setModalAbierto(false)}>
+                  Cancelar
+                </Button>
+                <Button onClick={guardarSocio}>{modoEdicion ? 'Actualizar socio' : 'Guardar socio'}</Button>
               </div>
-            )}
-
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <Button variant="ghost" onClick={() => setModalAbierto(false)}>
-                Cancelar
-              </Button>
-              <Button onClick={guardarSocio}>{modoEdicion ? 'Actualizar socio' : 'Guardar socio'}</Button>
             </div>
           </Card>
         </div>
@@ -1163,17 +1222,17 @@ export const SociosPage = () => {
             </div>
 
             <div className="mt-5 space-y-4">
-              <label className="space-y-1 text-sm text-neutral-700">
+              <label className={labelClass}>
                 <span>Fecha del retiro</span>
                 <input
                   type="date"
                   value={formRetiro.fecha_retiro}
                   onChange={(e) => setFormRetiro((prev) => ({ ...prev, fecha_retiro: e.target.value }))}
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                  className={controlClass}
                 />
               </label>
 
-              <label className="space-y-1 text-sm text-neutral-700">
+              <label className={labelClass}>
                 <span>Motivo</span>
                 <select
                   value={formRetiro.motivo_retiro}
@@ -1183,13 +1242,22 @@ export const SociosPage = () => {
                       motivo_retiro: e.target.value as RetiroSocioFormData['motivo_retiro'],
                     }))
                   }
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10"
+                  className={selectClass}
                 >
-                  <option value="Socio">Socio</option>
-                  <option value="Voluntario">Voluntario</option>
-                  <option value="Art. 5">Art. 5</option>
+                  <option value="">Seleccione un motivo...</option>
+                  {MOTIVOS_RETIRO.map((motivo) => (
+                    <option key={motivo.value} value={motivo.value}>
+                      {motivo.label}
+                    </option>
+                  ))}
                 </select>
               </label>
+
+              {descripcionMotivoRetiro && (
+                <p className="rounded-lg bg-neutral-50 px-3 py-2 text-sm text-neutral-600">
+                  {descripcionMotivoRetiro}
+                </p>
+              )}
 
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 El retiro cambia el estado del socio a retirado y deja el motivo registrado en el historial.
@@ -1246,8 +1314,8 @@ export const SociosPage = () => {
             )}
 
             <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                <p className="text-sm font-semibold text-neutral-800">Identificación</p>
+              <div className={seccionClass}>
+                <p className={tituloSeccionClass}>Identificación</p>
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Expediente</dt>
@@ -1278,8 +1346,8 @@ export const SociosPage = () => {
                 </dl>
               </div>
 
-              <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                <p className="text-sm font-semibold text-neutral-800">Contacto y ubicación</p>
+              <div className={seccionClass}>
+                <p className={tituloSeccionClass}>Contacto y ubicación</p>
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Teléfono</dt>
@@ -1312,8 +1380,8 @@ export const SociosPage = () => {
                 </dl>
               </div>
 
-              <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                <p className="text-sm font-semibold text-neutral-800">Autorización y notas</p>
+              <div className={seccionClass}>
+                <p className={tituloSeccionClass}>Autorización y notas</p>
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Autorizado por</dt>
@@ -1330,8 +1398,8 @@ export const SociosPage = () => {
                 </dl>
               </div>
 
-              <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                <p className="text-sm font-semibold text-neutral-800">Relaciones registradas</p>
+              <div className={seccionClass}>
+                <p className={tituloSeccionClass}>Relaciones registradas</p>
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Beneficiarios</dt>

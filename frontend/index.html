@@ -14,6 +14,19 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+
+    <!-- Aplica el tema antes del primer pintado para evitar el destello claro -->
+    <script>
+      (function () {
+        try {
+          var guardado = localStorage.getItem('cooperativa:tema');
+          var nocturno =
+            guardado === 'nocturno' ||
+            (!guardado && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (nocturno) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

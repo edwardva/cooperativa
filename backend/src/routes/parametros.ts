@@ -13,6 +13,8 @@ import {
   crearParametro,
   actualizarParametro,
   eliminarParametro,
+  obtenerEstadoTasa,
+  sincronizarTasaBcv,
 } from '../controllers/parametrosController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
@@ -41,6 +43,18 @@ router.get('/clave/:clave', authorize('parametros', 'read'), obtenerParametroPor
  * Obtener parámetro por ID
  * Permiso: parametros:read
  */
+/**
+ * GET /api/parametros/tasa
+ * Tasa vigente y la que reportan las fuentes en vivo
+ */
+router.get('/tasa', authorize('parametros', 'read'), obtenerEstadoTasa);
+
+/**
+ * POST /api/parametros/tasa/sincronizar
+ * Trae la tasa del BCV y la aplica
+ */
+router.post('/tasa/sincronizar', authorize('parametros', 'update'), sincronizarTasaBcv);
+
 router.get('/:id', authorize('parametros', 'read'), obtenerParametroPorId);
 
 /**

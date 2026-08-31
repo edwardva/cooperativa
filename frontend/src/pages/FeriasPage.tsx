@@ -8,6 +8,7 @@ import { SortableHeader } from '../components/ui/SortableHeader';
 import { Edit2, Trash2, Save, X, Plus, MapPin } from 'lucide-react';
 import * as feriasService from '../services/feriasService';
 import type { Ubicacion } from '../services/feriasService';
+import { formatearFechaCorta } from '../utils/formatters';
 
 export const FeriasPage = () => {
   const [busqueda, setBusqueda] = useState('');
@@ -94,7 +95,7 @@ export const FeriasPage = () => {
     feria.telefono || '-',
     String(feria._count?.socios ?? 0),
     feria.estado ? 'Activa' : 'Inactiva',
-    formatearFecha(feria.created_at),
+    formatearFechaCorta(feria.created_at),
   ]);
 
   const handleEditar = (feria: Ubicacion) => {
@@ -159,14 +160,6 @@ export const FeriasPage = () => {
 
   const handleInputChange = (field: keyof Ubicacion, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const formatearFecha = (fecha: string) => {
-    return new Date(fecha).toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
   };
 
   return (
@@ -337,7 +330,7 @@ export const FeriasPage = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatearFecha(feria.created_at)}
+                    {formatearFechaCorta(feria.created_at)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     {editando === feria.id ? (

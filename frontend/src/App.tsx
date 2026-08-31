@@ -16,6 +16,10 @@ import { SociosPage } from './pages/SociosPage'
 import { AhorroPage } from './pages/AhorroPage'
 import FunerariaPage from './pages/FunerariaPage'
 import SaludPage from './pages/SaludPage'
+import AsambleasPage from './pages/AsambleasPage'
+import ColectaPage from './pages/ColectaPage'
+import PrestamosPage from './pages/PrestamosPage'
+import ColectaReportesPage from './pages/ColectaReportesPage'
 
 function App() {
   const initialize = useAuthStore((state) => state.initialize)
@@ -57,8 +61,12 @@ function App() {
           }
         />
         
+        {/* La pantalla se llamaba Ubicaciones; se renombro a Ferias y se
+            conserva la ruta anterior para no romper enlaces guardados */}
+        <Route path="/ubicaciones" element={<Navigate to="/ferias" replace />} />
+
         <Route
-          path="/ubicaciones"
+          path="/ferias"
           element={
             <ProtectedRoute>
               <MainLayout>
@@ -85,6 +93,39 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <TiposPrestamoPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/colecta"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <ColectaPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/colecta/reportes"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <ColectaReportesPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/asambleas"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <AsambleasPage />
               </MainLayout>
             </ProtectedRoute>
           }
@@ -168,7 +209,16 @@ function App() {
           }
         />
         
-        {/* <Route path="/prestamos" element={<ProtectedRoute><PrestamosPage /></ProtectedRoute>} /> */}
+        <Route
+          path="/prestamos"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <PrestamosPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
         
         {/* 404 - Redirigir a dashboard */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
