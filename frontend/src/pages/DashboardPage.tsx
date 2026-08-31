@@ -78,7 +78,7 @@ export default function DashboardPage() {
   }
 
   // Calcular cambios (dummy por ahora - en producción se debe guardar histórico)
-  const calcularCambio = (tipo: string): { change: string; trend: 'up' | 'down' } => {
+  const calcularCambio = (_tipo: string): { change: string; trend: 'up' | 'down' } => {
     // TODO: Implementar cálculo real con histórico
     return { change: '+0', trend: 'up' }
   }

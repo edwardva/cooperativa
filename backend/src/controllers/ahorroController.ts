@@ -130,7 +130,7 @@ async function generarNumeroCuenta(tipoCuentaId: number, socioId: number): Promi
     // Formato: XX-XX-XX-XXXXXX, el correlativo está después del tercer guion
     const partes = ultimaCuenta.numero_cuenta.split('-');
     if (partes.length === 4) {
-      const ultimoCorrelativo = parseInt(partes[3], 10);
+      const ultimoCorrelativo = parseInt(partes[3] ?? '', 10);
       if (!isNaN(ultimoCorrelativo)) {
         proximoCorrelativo = ultimoCorrelativo + 1;
       }

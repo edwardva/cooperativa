@@ -230,7 +230,7 @@ export const obtenerActividadReciente = async (_req: Request, res: Response): Pr
         socio_nombre: mov.cuenta.socio.nombre,
         socio_apellido: mov.cuenta.socio.apellido,
         monto: Number(mov.monto_usd || mov.monto_bs || 0),
-        moneda: mov.monto_usd > 0 ? 'USD' : 'Bs',
+        moneda: Number(mov.monto_usd ?? 0) > 0 ? 'USD' : 'Bs',
         fecha: mov.fecha_movimiento,
         descripcion: `${mov.tipo_movimiento === 'deposito' ? 'Depósito' : 'Retiro'} en ahorro`,
       });
