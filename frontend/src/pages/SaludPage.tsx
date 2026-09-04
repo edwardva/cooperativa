@@ -120,18 +120,8 @@ export default function SaludPage() {
 
 
   // Ordenamiento
-  const [sortField, setSortField] = useState<string>('id');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-
-  // Función para manejar el ordenamiento
-  const handleSort = (field: string) => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortOrder('asc');
-    }
-  };
+  const [sortField] = useState<string>('id');
+  const [sortOrder] = useState<'asc' | 'desc'>('asc');
 
   // Modales
   //const [modalAbierto, setModalAbierto] = useState<'crear' | 'detalle' | 'cambiar-estado' | null>(

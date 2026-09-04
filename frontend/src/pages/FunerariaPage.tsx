@@ -80,7 +80,7 @@ export default function FunerariaPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [filtroTipo, setFiltroTipo] = useState<string>('todos')
+  const [filtroTipo] = useState<string>('todos')
 
 // Filtros y paginación
 const [busqueda, setBusqueda] = useState('')
