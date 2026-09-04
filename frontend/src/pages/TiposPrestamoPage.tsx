@@ -170,7 +170,7 @@ export const TiposPrestamoPage = () => {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Tipos de Préstamo</h1>
           <p className="text-sm text-gray-500 mt-1">
@@ -426,7 +426,7 @@ export const TiposPrestamoPage = () => {
 
       {/* Footer Stats */}
       <Card className="p-4">
-        <div className="grid grid-cols-5 gap-4 text-sm text-gray-600">
+        <div className="grid grid-cols-2 gap-4 text-sm text-gray-600 sm:grid-cols-3 lg:grid-cols-5">
           <div>
             Total: <span className="font-medium text-gray-900">{tiposPrestamo.length}</span> tipos
           </div>

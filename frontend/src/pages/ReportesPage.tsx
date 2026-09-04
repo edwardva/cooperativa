@@ -117,7 +117,7 @@ export const ReportesPage = () => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Formato de Salida
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <button
                   onClick={() => setFormato('pdf')}
                   className={`p-4 border-2 rounded-lg flex items-center justify-center gap-2 transition-all ${
@@ -150,7 +150,7 @@ export const ReportesPage = () => {
 
             {/* Filtros por tipo de reporte */}
             {tipoSeleccionado === 'socios' && (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Ubicación
@@ -176,7 +176,7 @@ export const ReportesPage = () => {
             )}
 
             {tipoSeleccionado === 'prestamos' && (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Tipo de Préstamo
@@ -227,7 +227,7 @@ export const ReportesPage = () => {
       {/* Botón de Generar */}
       {tipoSeleccionado && (
         <Card className="p-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
             <div>
               <p className="text-sm text-gray-600">
                 Se generará un archivo{' '}

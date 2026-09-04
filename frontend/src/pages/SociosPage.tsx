@@ -860,8 +860,8 @@ export const SociosPage = () => {
             
             {/* Controles de paginación */}
             {!loading && sociosFiltrados.length > 0 && (
-              <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <div className="flex flex-wrap items-center gap-3">
                   <div className="text-sm text-gray-700">
                     Mostrando {(paginaActual - 1) * registrosPorPagina + 1} a{' '}
                     {Math.min(paginaActual * registrosPorPagina, totalRegistros)} de {totalRegistros} socios
@@ -881,7 +881,7 @@ export const SociosPage = () => {
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     onClick={() => setPaginaActual(paginaActual - 1)}
                     disabled={paginaActual === 1}
@@ -889,10 +889,10 @@ export const SociosPage = () => {
                     className="flex items-center gap-1"
                   >
                     <ChevronLeft className="w-4 h-4" />
-                    Anterior
+                    <span className="hidden sm:inline">Anterior</span>
                   </Button>
 
-                  <div className="flex gap-1">
+                  <div className="flex flex-wrap gap-1">
                     {Array.from({ length: Math.min(5, totalPaginas) }, (_, i) => {
                       let pageNum: number
                       if (totalPaginas <= 5) {
@@ -924,7 +924,7 @@ export const SociosPage = () => {
                     variant="secondary"
                     className="flex items-center gap-1"
                   >
-                    Siguiente
+                    <span className="hidden sm:inline">Siguiente</span>
                     <ChevronRight className="w-4 h-4" />
                   </Button>
                 </div>
