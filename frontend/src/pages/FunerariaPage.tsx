@@ -2363,7 +2363,7 @@ export default function FunerariaPage() {
             value={beneficiarioForm.cedula}
             onChange={(e) => setBeneficiarioForm((f) => ({ ...f, cedula: e.target.value }))}
           />
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               label="Nombre *"
               value={beneficiarioForm.nombre}

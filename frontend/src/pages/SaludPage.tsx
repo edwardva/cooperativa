@@ -241,7 +241,7 @@ export default function SaludPage() {
   return (
     <div className="p-6 space-y-6">
       {/* HEADER */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Salud</h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -684,7 +684,7 @@ export default function SaludPage() {
 
       {/* MODALES */}
       {modalAbierto === 'crear' && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <Card className="w-full max-w-md p-6">
             <h3 className="text-lg font-semibold mb-4">Crear Nuevo Acuerdo</h3>
             <p className="text-gray-600 mb-4">Modal de creación en desarrollo...</p>
