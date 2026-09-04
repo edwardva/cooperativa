@@ -15,6 +15,7 @@ async function main() {
     socios: ['create', 'read', 'update', 'delete'],
     ahorro: ['create', 'read', 'update', 'delete'],
     funeraria: ['create', 'read', 'update', 'delete'],
+    salud: ['create', 'read', 'update', 'delete'],
     prestamos: ['create', 'read', 'update', 'delete', 'approve'],
     colecta: ['create', 'read', 'update'],
     reportes: ['read', 'export'],
@@ -22,6 +23,7 @@ async function main() {
     usuarios: ['create', 'read', 'update', 'delete'],
     asambleas: ['create', 'read', 'update', 'delete'],
     impresion: ['create', 'read'],
+    ubicaciones: ['create', 'read', 'update', 'delete'],
   };
 
   const rolAdmin = await prisma.rol.upsert({
@@ -59,9 +61,11 @@ async function main() {
   const permisosCajero = {
     socios: ['read'],
     funeraria: ['create', 'read', 'update'],
+    salud: ['create', 'read', 'update'],
     colecta: ['create', 'read'],
     reportes: ['read'],
     impresion: ['create', 'read'],
+    ubicaciones: ['read'],
   };
 
   const rolCajero = await prisma.rol.upsert({
@@ -92,8 +96,10 @@ async function main() {
     socios: ['create', 'read', 'update'],
     ahorro: ['read'],
     funeraria: ['read'],
+    salud: ['read'],
     prestamos: ['create', 'read', 'update'],
     reportes: ['read', 'export'],
+    ubicaciones: ['read'],
   };
 
   const rolAnalista = await prisma.rol.upsert({

@@ -57,7 +57,7 @@ export interface CarnetSocio {
   qr_data?: string; // Para futuro: datos del QR
 }
 
-export interface FichaAcuerdoFuneraria {
+export interface FichaAcuerdoBeneficios {
   numero_acuerdo: string;
   numero_contrato?: string;
   fecha_inicio: Date;
@@ -79,6 +79,10 @@ export interface FichaAcuerdoFuneraria {
     estado?: string;
   }[];
 }
+
+// Alias histórico: la ficha de Funeraria fue la primera en usar este shape.
+export type FichaAcuerdoFuneraria = FichaAcuerdoBeneficios;
+export type FichaAcuerdoSalud = FichaAcuerdoBeneficios;
 
 // ============================================
 // CONSTANTES DE FORMATO
@@ -313,9 +317,10 @@ export function generarCarnetSocio(data: CarnetSocio): string {
 }
 
 /**
- * Genera ficha imprimible de un acuerdo de funeraria (socio + beneficiarios cubiertos)
+ * Genera ficha imprimible de un acuerdo (socio/titular + beneficiarios
+ * cubiertos), compartida entre Funeraria y Salud.
  */
-export function generarFichaAcuerdoFuneraria(data: FichaAcuerdoFuneraria): string {
+export function generarFichaAcuerdoBeneficios(data: FichaAcuerdoBeneficios, tituloServicio: 'FUNERARIA' | 'SALUD'): string {
   const lineas: string[] = [];
 
   lineas.push('');
@@ -323,7 +328,7 @@ export function generarFichaAcuerdoFuneraria(data: FichaAcuerdoFuneraria): strin
   lineas.push(centrarTexto('RIF: J-00000000-0'));
   lineas.push('');
   lineas.push(SEPARADOR);
-  lineas.push(centrarTexto('FICHA DE ACUERDO - FUNERARIA'));
+  lineas.push(centrarTexto(`FICHA DE ACUERDO - ${tituloServicio}`));
   lineas.push(SEPARADOR);
   lineas.push('');
 
@@ -335,7 +340,7 @@ export function generarFichaAcuerdoFuneraria(data: FichaAcuerdoFuneraria): strin
   lineas.push('');
   lineas.push(SEPARADOR_LIGERO);
 
-  lineas.push('DATOS DEL ASOCIADO');
+  lineas.push('DATOS DEL TITULAR');
   lineas.push(`Expediente: ${data.socio.codigo}`);
   lineas.push(`Cédula:     ${data.socio.cedula}`);
   lineas.push(`Nombre:     ${data.socio.nombre}`);
@@ -376,6 +381,16 @@ export function generarFichaAcuerdoFuneraria(data: FichaAcuerdoFuneraria): strin
   return lineas.join('\n');
 }
 
+/** Ficha de acuerdo de funeraria (socio + beneficiarios cubiertos). */
+export function generarFichaAcuerdoFuneraria(data: FichaAcuerdoFuneraria): string {
+  return generarFichaAcuerdoBeneficios(data, 'FUNERARIA');
+}
+
+/** Ficha de acuerdo de salud (titular + beneficiarios del mismo número de acuerdo). */
+export function generarFichaAcuerdoSalud(data: FichaAcuerdoSalud): string {
+  return generarFichaAcuerdoBeneficios(data, 'SALUD');
+}
+
 // ============================================
 // FUNCIONES DE GUARDADO
 // ============================================
@@ -412,5 +427,6 @@ export default {
   generarNotaOperacion,
   generarCarnetSocio,
   generarFichaAcuerdoFuneraria,
+  generarFichaAcuerdoSalud,
   registrarImpresion
 };

@@ -10,11 +10,13 @@ import {
   generarNotaOperacion,
   generarCarnetSocio,
   generarFichaAcuerdoFuneraria,
+  generarFichaAcuerdoSalud,
   registrarImpresion,
   type TicketColecta,
   type NotaOperacion,
   type CarnetSocio,
-  type FichaAcuerdoFuneraria
+  type FichaAcuerdoFuneraria,
+  type FichaAcuerdoSalud
 } from '../services/impresionService';
 
 // ============================================
@@ -89,6 +91,9 @@ const imprimirFichaAcuerdoFunerariaSchema = z.object({
     estado: z.string().optional()
   }))
 });
+
+// Mismo shape que la ficha de funeraria: titular + beneficiarios del mismo número de acuerdo.
+const imprimirFichaAcuerdoSaludSchema = imprimirFichaAcuerdoFunerariaSchema;
 
 // ============================================
 // FUNCIONES DEL CONTROLADOR
@@ -299,6 +304,56 @@ export const imprimirFichaAcuerdoFuneraria = async (
 };
 
 /**
+ * Imprimir ficha de acuerdo de salud (titular + beneficiarios del grupo)
+ * POST /api/impresion/ficha-acuerdo-salud
+ */
+export const imprimirFichaAcuerdoSalud = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const validacion = imprimirFichaAcuerdoSaludSchema.safeParse(req.body);
+
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Datos de entrada inválidos',
+          details: validacion.error.errors
+        }
+      });
+      return;
+    }
+
+    const data = validacion.data as FichaAcuerdoSalud;
+    const contenido = generarFichaAcuerdoSalud(data);
+
+    if (req.user?.userId) {
+      await registrarImpresion(
+        'ficha_acuerdo_salud',
+        parseInt(data.numero_acuerdo.replace(/\D/g, '') || '0'),
+        req.user.userId,
+        contenido
+      );
+    }
+
+    res.json({
+      success: true,
+      data: {
+        tipo: 'ficha_acuerdo_salud',
+        formato: 'texto_80mm',
+        contenido,
+        longitud: contenido.length
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Obtener formatos disponibles de impresión
  * GET /api/impresion/formatos
  */
@@ -338,6 +393,14 @@ export const obtenerFormatosDisponibles = async (
         id: 'ficha_acuerdo_funeraria',
         nombre: 'Ficha de Acuerdo Funeraria',
         descripcion: 'Datos del socio y beneficiarios cubiertos por el acuerdo',
+        ancho_mm: 80,
+        formato: 'texto',
+        orientacion: 'vertical'
+      },
+      {
+        id: 'ficha_acuerdo_salud',
+        nombre: 'Ficha de Acuerdo Salud',
+        descripcion: 'Datos del titular y beneficiarios del acuerdo de salud',
         ancho_mm: 80,
         formato: 'texto',
         orientacion: 'vertical'
@@ -441,6 +504,22 @@ export const generarVistaPrevia = async (
           return;
         }
         contenido = generarFichaAcuerdoFuneraria(fichaValidacion.data as FichaAcuerdoFuneraria);
+        break;
+
+      case 'ficha_acuerdo_salud':
+        const fichaSaludValidacion = imprimirFichaAcuerdoSaludSchema.safeParse(data);
+        if (!fichaSaludValidacion.success) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Datos inválidos para ficha de acuerdo de salud',
+              details: fichaSaludValidacion.error.errors
+            }
+          });
+          return;
+        }
+        contenido = generarFichaAcuerdoSalud(fichaSaludValidacion.data as FichaAcuerdoSalud);
         break;
 
       default:

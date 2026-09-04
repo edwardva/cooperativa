@@ -7,7 +7,7 @@
  * suspendidos e importación rápida hacia Salud.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import {
   PlusCircle,
@@ -80,17 +80,19 @@ export default function FunerariaPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Filtros y paginación
-  const [busqueda, setBusqueda] = useState('')
-  const [tab, setTab] = useState<Tab>('activo')
-  const [paginaActual, setPaginaActual] = useState(1)
-  const [totalPaginas, setTotalPaginas] = useState(1)
-  const [totalRegistros, setTotalRegistros] = useState(0)
-  const [itemsPorPagina, setItemsPorPagina] = useState(5)
+  const [filtroTipo, setFiltroTipo] = useState<string>('todos')
 
-  // Ordenamiento de la tabla
-  const [sortField, setSortField] = useState<string>('socio.codigo_socio')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+// Filtros y paginación
+const [busqueda, setBusqueda] = useState('')
+const [tab, setTab] = useState<Tab>('activo')
+const [paginaActual, setPaginaActual] = useState(1)
+const [totalPaginas, setTotalPaginas] = useState(1)
+const [totalRegistros, setTotalRegistros] = useState(0)
+const [itemsPorPagina, setItemsPorPagina] = useState(5)
+
+// Ordenamiento de la tabla
+const [sortField, setSortField] = useState<string>('socio.codigo_socio')
+const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -768,11 +770,7 @@ export default function FunerariaPage() {
       if (!respuesta.success || !respuesta.data) {
         throw new Error('Socio no encontrado')
       }
-      const socioEncontrado = respuesta.data[0]
-      if (!socioEncontrado) {
-        throw new Error('Socio no encontrado')
-      }
-      setWizardSocio(socioEncontrado)
+      setWizardSocio(respuesta.data[0] ?? null)
       setWizardPaso(2)
     } catch (err) {
       setWizardError(getErrorMessage(err) || 'Socio no encontrado')
@@ -1140,7 +1138,8 @@ export default function FunerariaPage() {
 
   const filtrosImpresion = [
     { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
-    { label: 'Estado', value: tabs.find((t) => t.id === tab)?.label ?? 'Todos' },
+    { label: 'Estado', value: tab === 'todos' ? 'Todos' : tab },
+    { label: 'Tipo', value: filtroTipo === 'todos' ? 'Todos' : filtroTipo },
     { label: 'Página', value: `${paginaActual} de ${totalPaginas}` },
   ];
 

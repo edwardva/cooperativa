@@ -25,6 +25,7 @@ import { iniciarSincronizacionAutomatica } from './services/tasaCambioService';
 import ahorroRouter from './routes/ahorro';
 import funerariaRouter from './routes/funeraria';
 import saludRouter from './routes/salud';
+import { iniciarJobSemanalSalud } from './jobs/saludSuspension';
 
 const app: Application = express();
 
@@ -149,6 +150,7 @@ app.listen(PORT, () => {
   logger.info(`📝 Ambiente: ${config.nodeEnv}`);
   logger.info(`🌐 CORS habilitado para: ${config.corsOrigin}`);
 
+  iniciarJobSemanalSalud();
   // Tasa BCV al día sin intervención. Se puede desactivar con
   // SINCRONIZAR_TASA=false si se prefiere cargarla a mano.
   if (process.env.SINCRONIZAR_TASA !== 'false') {

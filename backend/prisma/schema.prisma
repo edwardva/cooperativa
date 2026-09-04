@@ -162,6 +162,8 @@ model Ubicacion {
   created_at DateTime @default(now())
 
   // Relaciones
+  socios      Socio[]
+  movimientos_salud MovimientoSalud[]
   socios    Socio[]
   asambleas Asamblea[]
 
@@ -316,6 +318,26 @@ model TipoAcuerdoSalud {
 }
 
 model AcuerdoSalud {
+  id                   Int                 @id @default(autoincrement())
+  beneficiario_id      Int
+  tipo_acuerdo_id      Int
+  numero_acuerdo       String?             @db.VarChar(20) // Compartido por hasta 9 personas (titular + 8 beneficiarios)
+  numero_contrato      String?             @db.VarChar(20)
+  estado               EstadoServicio      @default(activo)
+  semanas_sin_pago     Int                 @default(0)
+  fecha_suspension     DateTime?           @db.Date
+  fecha_retiro         DateTime?           @db.Date
+  motivo_retiro        String?             @db.Text // 'Socio' | 'Voluntario' | 'Art. 5'
+  fecha_inicio         DateTime            @default(now()) @db.Date
+  created_at           DateTime            @default(now())
+  updated_at           DateTime            @updatedAt
+
+  // Relaciones
+  beneficiario         Beneficiario        @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
+  tipo_acuerdo         TipoAcuerdoSalud    @relation(fields: [tipo_acuerdo_id], references: [id])
+  movimientos          MovimientoSalud[]
+
+  @@unique([numero_acuerdo, beneficiario_id])
   id               Int            @id @default(autoincrement())
   beneficiario_id  Int
   tipo_acuerdo_id  Int
@@ -333,10 +355,27 @@ model AcuerdoSalud {
 
   @@index([beneficiario_id])
   @@index([estado])
+  @@index([numero_acuerdo])
   @@map("acuerdos_salud")
 }
 
 model MovimientoSalud {
+  id                Int            @id @default(autoincrement())
+  acuerdo_id        Int
+  tipo_movimiento   String         @db.VarChar(20) // pago, suspension, reactivacion
+  monto_usd         Decimal        @db.Decimal(10, 2)
+  monto_bs          Decimal        @db.Decimal(10, 2)
+  tasa_cambio       Decimal        @db.Decimal(10, 4)
+  semanas_pagadas   Int?
+  numero_recibo     String?        @db.VarChar(30)
+  ubicacion_id      Int?
+  concepto          String?        @db.Text
+  fecha_movimiento  DateTime       @default(now())
+  created_at        DateTime       @default(now())
+
+  // Relaciones
+  acuerdo           AcuerdoSalud   @relation(fields: [acuerdo_id], references: [id])
+  ubicacion         Ubicacion?     @relation(fields: [ubicacion_id], references: [id])
   id               Int      @id @default(autoincrement())
   acuerdo_id       Int
   tipo_movimiento  String   @db.VarChar(20) // pago, suspension, reactivacion
@@ -353,6 +392,7 @@ model MovimientoSalud {
 
   @@index([acuerdo_id])
   @@index([fecha_movimiento])
+  @@index([numero_recibo])
   @@map("movimientos_salud")
 }
 

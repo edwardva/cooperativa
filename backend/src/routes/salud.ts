@@ -2,75 +2,91 @@
  * ============================================
  * ROUTES: SALUD
  * ============================================
- * Rutas para gestión de acuerdos de salud
+ * Rutas para gestión de acuerdos de salud (grupos familiares de hasta 9
+ * personas compartiendo un mismo número de acuerdo).
  */
 
 import { Router } from 'express';
 import {
   listarTiposAcuerdo,
-  listarAcuerdos,
   obtenerEstadisticas,
+  listarAcuerdos,
   obtenerAcuerdosPorSocio,
+  obtenerGrupoPorNumeroAcuerdo,
+  listarSuspendidosParaImpresion,
   obtenerAcuerdo,
+  crearGrupoAcuerdo,
+  agregarBeneficiarioAGrupo,
   crearAcuerdo,
+  actualizarGrupoAcuerdo,
+  eliminarGrupoAcuerdo,
+  eliminarAcuerdo,
   cambiarEstado,
+  retirarBeneficiario,
+  registrarPago,
+  importarGrupoAFuneraria,
   verificarSuspensionesAutomaticas,
 } from '../controllers/saludController';
 import { authenticate } from '../middleware/authenticate';
+import { authorize } from '../middleware/authorize';
 
 const router = Router();
 
+// Todas las rutas requieren autenticación
+router.use(authenticate);
+
 // ============================================
-// RUTAS DE ACUERDOS DE SALUD
+// CATÁLOGO Y ESTADÍSTICAS
 // ============================================
+router.get('/tipos-acuerdo', authorize('salud', 'read'), listarTiposAcuerdo);
+router.get('/estadisticas', authorize('salud', 'read'), obtenerEstadisticas);
+
+// ============================================
+// LISTADO / CONSULTA
+// (rutas estáticas antes de "/acuerdos/:id" para que Express no las capture)
+// ============================================
+router.get('/acuerdos', authorize('salud', 'read'), listarAcuerdos);
+router.get('/acuerdos/socio/:socioId', authorize('salud', 'read'), obtenerAcuerdosPorSocio);
+router.get('/acuerdos/suspendidos/listado', authorize('salud', 'read'), listarSuspendidosParaImpresion);
+router.get('/acuerdos/grupo/:numeroAcuerdo', authorize('salud', 'read'), obtenerGrupoPorNumeroAcuerdo);
+router.get('/acuerdos/:id', authorize('salud', 'read'), obtenerAcuerdo);
+
+// ============================================
+// ALTA / MODIFICACIÓN / BAJA DE GRUPO
+// ============================================
+router.post('/grupos', authorize('salud', 'create'), crearGrupoAcuerdo);
+router.post('/grupos/:numeroAcuerdo/beneficiarios', authorize('salud', 'create'), agregarBeneficiarioAGrupo);
+router.put('/grupos/:numeroAcuerdo', authorize('salud', 'update'), actualizarGrupoAcuerdo);
+router.delete('/grupos/:numeroAcuerdo', authorize('salud', 'delete'), eliminarGrupoAcuerdo);
+router.delete('/acuerdos/:id', authorize('salud', 'delete'), eliminarAcuerdo);
 
 /**
- * GET /api/salud/tipos-acuerdo
- * Listar tipos de acuerdo activos (catálogo)
+ * Alta de un único acuerdo para un beneficiario existente, sin número de
+ * acuerdo — se conserva solo para el flujo "Importar a Salud" de Funeraria.
  */
-router.get('/tipos-acuerdo', authenticate, listarTiposAcuerdo);
+router.post('/acuerdos', authorize('salud', 'create'), crearAcuerdo);
 
-/**
- * GET /api/salud/estadisticas
- * Obtener estadísticas generales
- */
-router.get('/estadisticas', authenticate, obtenerEstadisticas);
+// ============================================
+// SUSPENSIÓN / REACTIVACIÓN / RETIRO
+// ============================================
+router.patch('/acuerdos/:id/estado', authorize('salud', 'update'), cambiarEstado);
+router.patch('/acuerdos/:id/retirar', authorize('salud', 'update'), retirarBeneficiario);
 
-/**
- * GET /api/salud/acuerdos
- * Listar todos los acuerdos con filtros
- */
-router.get('/acuerdos', authenticate, listarAcuerdos);
+// ============================================
+// PAGOS
+// ============================================
+router.post('/grupos/:numeroAcuerdo/pagos', authorize('salud', 'update'), registrarPago);
 
-/**
- * GET /api/salud/acuerdos/socio/:socioId
- * Obtener acuerdos de un socio específico
- */
-router.get('/acuerdos/socio/:socioId', authenticate, obtenerAcuerdosPorSocio);
-
-/**
- * GET /api/salud/acuerdos/:id
- * Obtener detalle de un acuerdo
- */
-router.get('/acuerdos/:id', authenticate, obtenerAcuerdo);
-
-/**
- * POST /api/salud/acuerdos
- * Crear nuevo acuerdo de salud
- */
-router.post('/acuerdos', authenticate, crearAcuerdo);
-
-/**
- * PATCH /api/salud/acuerdos/:id/estado
- * Cambiar estado de un acuerdo (suspender/reactivar/retirar)
- */
-router.patch('/acuerdos/:id/estado', authenticate, cambiarEstado);
+// ============================================
+// TRASPASO A FUNERARIA
+// ============================================
+router.post('/grupos/:numeroAcuerdo/importar-funeraria', authorize('salud', 'update'), importarGrupoAFuneraria);
 
 /**
  * POST /api/salud/verificar-suspensiones
- * Job para verificar y suspender automáticamente acuerdos con 11+ semanas
- * Uso: Ejecutar nocturnamente via cron/scheduler
+ * Job para suspender automáticamente grupos con 11+ semanas sin pago.
+ * También se ejecuta semanalmente vía backend/src/jobs/saludSuspension.ts
  */
-router.post('/verificar-suspensiones', authenticate, verificarSuspensionesAutomaticas);
+router.post('/verificar-suspensiones', authorize('salud', 'update'), verificarSuspensionesAutomaticas);
 
 export default router;

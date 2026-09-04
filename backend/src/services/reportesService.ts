@@ -3,16 +3,28 @@
  * SERVICE: MOTOR DE REPORTES
  * ============================================
  * Servicio para generación de reportes en PDF y Excel
- * 
- * NOTA: Implementación actual usa ExcelJS para reportes.
- * PDF con pdfmake requiere configuración adicional en entorno Node.js.
- * Se recomienda usar puppeteer para PDF en futuras iteraciones.
  */
 
 import ExcelJS from 'exceljs';
 import { PrismaClient } from '@prisma/client';
+import * as pdfMake from 'pdfmake';
+import type { TDocumentDefinitions, TableCell, Content } from 'pdfmake/interfaces';
 
 const prisma = new PrismaClient();
+
+// pdfkit (usado internamente por pdfmake) soporta de forma nativa las 14
+// fuentes estándar de PDF sin necesidad de archivos .ttf embebidos.
+pdfMake.setFonts({
+  Helvetica: {
+    normal: 'Helvetica',
+    bold: 'Helvetica-Bold',
+    italics: 'Helvetica-Oblique',
+    bolditalics: 'Helvetica-BoldOblique',
+  },
+});
+// Nota: los reportes de este módulo no cargan imágenes remotas ni locales,
+// por lo que no se define una política de acceso a URLs/archivos (pdfmake
+// solo emite una advertencia informativa por consola al respecto).
 
 /**
  * Opciones para generación de reportes
@@ -31,18 +43,63 @@ interface ReporteOpciones {
  */
 
 /**
- * Genera un PDF con tabla de datos
- * TODO: Implementar con puppeteer o librería alternativa estable
+ * Genera un PDF con tabla de datos usando pdfmake.
  */
 export const generarPDFTabla = async (
   opciones: ReporteOpciones,
   columnas: string[],
   datos: any[][]
 ): Promise<Buffer> => {
-  // Temporalmente, generar Excel en lugar de PDF
-  // TODO: Implementar generación real de PDF
-  console.warn('Generación PDF pendiente de implementación. Generando Excel como alternativa temporal.');
-  return await generarExcelTabla(opciones, columnas, datos);
+  const filaEncabezado: TableCell[] = columnas.map((columna) => ({
+    text: columna,
+    bold: true,
+    color: 'white',
+    fillColor: '#1a56db',
+    margin: [2, 3, 2, 3],
+  }));
+
+  const filasDatos: TableCell[][] = datos.map((fila, filaIdx) =>
+    fila.map((celda): TableCell => ({
+      text: celda === null || celda === undefined ? '' : String(celda),
+      fillColor: filaIdx % 2 === 0 ? '#f3f4f6' : undefined,
+      margin: [2, 2, 2, 2],
+    }))
+  );
+
+  const docDefinition: TDocumentDefinitions = {
+    pageOrientation: columnas.length > 6 ? 'landscape' : 'portrait',
+    pageMargins: [30, 30, 30, 30],
+    defaultStyle: { font: 'Helvetica', fontSize: 9 },
+    content: [
+      { text: 'COOPERATIVA EL TRIUNFO, R.L.', fontSize: 15, bold: true, color: '#1a56db', alignment: 'center' },
+      { text: opciones.titulo, fontSize: 12, bold: true, alignment: 'center', margin: [0, 2, 0, 4] },
+      ...(opciones.subtitulo
+        ? [{ text: opciones.subtitulo, fontSize: 10, italics: true, color: '#666666', alignment: 'center', margin: [0, 0, 0, 4] }]
+        : []),
+      {
+        text: `Fecha de generación: ${(opciones.fecha || new Date()).toLocaleDateString('es-VE')}`,
+        fontSize: 8,
+        color: '#999999',
+        alignment: 'right',
+        margin: [0, 0, 0, 10],
+      },
+      {
+        table: {
+          headerRows: 1,
+          widths: columnas.map(() => '*'),
+          body: [filaEncabezado, ...filasDatos],
+        },
+        layout: {
+          hLineColor: () => '#cccccc',
+          vLineColor: () => '#cccccc',
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+        },
+      },
+    ] as Content[],
+  };
+
+  return pdfMake.createPdf(docDefinition).getBuffer();
 };
 
 /**
@@ -226,6 +283,106 @@ export const generarReporteFunerariaSuspendidos = async (formato: 'pdf' | 'excel
 
   const opciones: ReporteOpciones = {
     titulo: 'Reporte de Acuerdos de Funeraria Suspendidos',
+    subtitulo: `Total suspendidos: ${acuerdos.length}`,
+    fecha: new Date(),
+  };
+
+  if (formato === 'pdf') {
+    return await generarPDFTabla(opciones, columnas, datos);
+  } else {
+    return await generarExcelTabla(opciones, columnas, datos);
+  }
+};
+
+/**
+ * Reporte de TODOS los Acuerdos de Salud (no solo suspendidos), fila por
+ * persona cubierta por cada acuerdo.
+ */
+export const generarReporteSaludAcuerdos = async (formato: 'pdf' | 'excel') => {
+  const acuerdos = await prisma.acuerdoSalud.findMany({
+    include: {
+      beneficiario: { include: { socio: true } },
+      tipo_acuerdo: true,
+    },
+    orderBy: [{ estado: 'asc' }, { fecha_inicio: 'desc' }],
+  });
+
+  const columnas = [
+    'Expediente',
+    'N° Acuerdo',
+    'N° Contrato',
+    'Apellidos y Nombres',
+    'Cédula',
+    'Parentesco',
+    'Tipo de Acuerdo',
+    'Semanas de Atraso',
+    'Estado',
+  ];
+
+  const datos = acuerdos.map((acuerdo) => [
+    acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
+    acuerdo.numero_acuerdo || 'N/D',
+    acuerdo.numero_contrato || 'N/D',
+    `${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`,
+    acuerdo.beneficiario.cedula,
+    acuerdo.beneficiario.parentesco,
+    acuerdo.tipo_acuerdo.nombre,
+    acuerdo.semanas_sin_pago,
+    acuerdo.estado.toUpperCase(),
+  ]);
+
+  const opciones: ReporteOpciones = {
+    titulo: 'Reporte de Acuerdos de Salud',
+    subtitulo: `Total de registros: ${acuerdos.length}`,
+    fecha: new Date(),
+  };
+
+  if (formato === 'pdf') {
+    return await generarPDFTabla(opciones, columnas, datos);
+  } else {
+    return await generarExcelTabla(opciones, columnas, datos);
+  }
+};
+
+/**
+ * Reporte de Acuerdos de Salud Suspendidos
+ * (consulta real a la base de datos, fila por persona del grupo suspendido)
+ */
+export const generarReporteSaludSuspendidos = async (formato: 'pdf' | 'excel') => {
+  const acuerdos = await prisma.acuerdoSalud.findMany({
+    where: { estado: 'suspendido' },
+    include: {
+      beneficiario: {
+        include: { socio: true },
+      },
+    },
+    orderBy: { semanas_sin_pago: 'desc' },
+  });
+
+  const columnas = [
+    'Expediente',
+    'N° Acuerdo',
+    'N° Contrato',
+    'Apellidos y Nombres',
+    'Cédula',
+    'Teléfono',
+    'Semanas de Atraso',
+    'Estado',
+  ];
+
+  const datos = acuerdos.map((acuerdo) => [
+    acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
+    acuerdo.numero_acuerdo || 'N/D',
+    acuerdo.numero_contrato || 'N/D',
+    `${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`,
+    acuerdo.beneficiario.cedula,
+    acuerdo.beneficiario.socio?.telefono || acuerdo.beneficiario.telefono || 'N/D',
+    acuerdo.semanas_sin_pago,
+    acuerdo.estado.toUpperCase(),
+  ]);
+
+  const opciones: ReporteOpciones = {
+    titulo: 'Reporte de Acuerdos de Salud Suspendidos',
     subtitulo: `Total suspendidos: ${acuerdos.length}`,
     fecha: new Date(),
   };

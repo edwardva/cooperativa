@@ -9,6 +9,7 @@ import {
   imprimirNotaOperacion,
   imprimirCarnetSocio,
   imprimirFichaAcuerdoFuneraria,
+  imprimirFichaAcuerdoSalud,
   obtenerFormatosDisponibles,
   generarVistaPrevia
 } from '../controllers/impresionController';
@@ -82,6 +83,16 @@ router.post(
   '/ficha-acuerdo-funeraria',
   authorize('impresion', 'create'),
   imprimirFichaAcuerdoFuneraria
+);
+
+/**
+ * POST /api/impresion/ficha-acuerdo-salud
+ * Imprimir ficha de acuerdo de salud (titular + beneficiarios del grupo)
+ */
+router.post(
+  '/ficha-acuerdo-salud',
+  authorize('impresion', 'create'),
+  imprimirFichaAcuerdoSalud
 );
 
 export default router;
