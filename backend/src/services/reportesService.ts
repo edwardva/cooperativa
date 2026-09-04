@@ -7,7 +7,9 @@
 
 import ExcelJS from 'exceljs';
 import { PrismaClient } from '@prisma/client';
-import * as pdfMake from 'pdfmake';
+// Import estilo CJS a proposito: `import * as` compila a __importStar(), que
+// solo copia propiedades propias enumerables y pierde setFonts/createPdf.
+import pdfMake = require('pdfmake');
 import type { TDocumentDefinitions, TableCell, Content } from 'pdfmake/interfaces';
 
 const prisma = new PrismaClient();
