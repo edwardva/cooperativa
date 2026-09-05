@@ -238,14 +238,22 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
     ]);
     const actual = semanaActual();
 
-    // Cédula si son solo dígitos (se normaliza igual que en el alta de socios);
-    // en caso contrario se busca por expediente
+    // El cliente busca "por número de socio o expediente", y ambos son
+    // numéricos: un término de sólo dígitos puede ser cualquiera de los dos.
+    // Por eso se buscan LAS DOS COSAS en vez de decidir por el formato, que
+    // dejaba fuera a los expedientes numéricos.
     const soloDigitos = /^[\dVvEe.\s-]+$/.test(termino);
     const cedulaNormalizada = soloDigitos ? normalizarCedula(termino).cedula : '';
 
-    const where: Prisma.SocioWhereInput = cedulaNormalizada
-      ? { cedula: cedulaNormalizada }
-      : { codigo_socio: termino };
+    const alternativas: Prisma.SocioWhereInput[] = [{ codigo_socio: termino }];
+    if (cedulaNormalizada) {
+      alternativas.push({ cedula: cedulaNormalizada });
+      // El expediente puede estar guardado con ceros a la izquierda o sin ellos
+      alternativas.push({ codigo_socio: cedulaNormalizada });
+      alternativas.push({ codigo_socio: termino.replace(/^0+/, '') });
+    }
+
+    const where: Prisma.SocioWhereInput = { OR: alternativas };
 
     const socios = await prisma.socio.findMany({
       where,
@@ -291,7 +299,19 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
     });
 
     if (socios.length === 0) {
-      res.json({ success: true, data: { encontrados: [], tasa, asambleas: [] } });
+      // Misma forma que la respuesta con resultados: si no, la pantalla se
+      // queda sin tarifas ni semana en curso tras una búsqueda fallida.
+      res.json({
+        success: true,
+        data: {
+          encontrados: [],
+          tasa,
+          asambleas: [],
+          tarifas,
+          semana_actual: actual,
+          semana_actual_texto: formatearPeriodo(actual),
+        },
+      });
       return;
     }
 
@@ -884,6 +904,8 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
             // Hasta cuándo dejó cubierto el acuerdo ESTE movimiento
             ano_cobertura: coberturaDespues?.ano ?? null,
             semana_cobertura: coberturaDespues?.semana ?? null,
+            // De qué cobro vino: es lo que permite deshacerlo con precisión
+            colecta_id: colecta.id,
             concepto: detalle.concepto ?? (detalle.es_reintegro ? 'Reintegro' : 'Colecta'),
           };
 
@@ -1381,17 +1403,51 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
             const acuerdo = await tx.acuerdoFuneraria.findUnique({ where: { id: detalle.referencia_id } });
             if (!acuerdo) continue;
             await tx.movimientoFuneraria.create({ data: datosReverso });
+
+            // El pago original se marca: sin esto seguiría contando como
+            // vigente y el "último pago" del socio tomaría un cobro deshecho.
+            await tx.movimientoFuneraria.updateMany({
+              where: { colecta_id: colecta.id, acuerdo_id: acuerdo.id, tipo_movimiento: 'pago' },
+              data: { reversado: true },
+            });
+
+            // La fecha del último pago también retrocede: la del último pago
+            // que siga vigente, o ninguna si este era el primero.
+            const previo = await tx.movimientoFuneraria.findFirst({
+              where: { acuerdo_id: acuerdo.id, tipo_movimiento: 'pago', reversado: false },
+              orderBy: { fecha_movimiento: 'desc' },
+              select: { fecha_movimiento: true },
+            });
+
             await tx.acuerdoFuneraria.update({
               where: { id: acuerdo.id },
-              data: datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas },
+              data: {
+                ...(datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas }),
+                ...(semanas > 0 ? { fecha_ultimo_pago: previo?.fecha_movimiento ?? null } : {}),
+              },
             });
           } else {
             const acuerdo = await tx.acuerdoSalud.findUnique({ where: { id: detalle.referencia_id } });
             if (!acuerdo) continue;
             await tx.movimientoSalud.create({ data: datosReverso });
+
+            await tx.movimientoSalud.updateMany({
+              where: { colecta_id: colecta.id, acuerdo_id: acuerdo.id, tipo_movimiento: 'pago' },
+              data: { reversado: true },
+            });
+
+            const previo = await tx.movimientoSalud.findFirst({
+              where: { acuerdo_id: acuerdo.id, tipo_movimiento: 'pago', reversado: false },
+              orderBy: { fecha_movimiento: 'desc' },
+              select: { fecha_movimiento: true },
+            });
+
             await tx.acuerdoSalud.update({
               where: { id: acuerdo.id },
-              data: datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas },
+              data: {
+                ...(datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas }),
+                ...(semanas > 0 ? { fecha_ultimo_pago: previo?.fecha_movimiento ?? null } : {}),
+              },
             });
           }
         }

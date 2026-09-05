@@ -43,13 +43,17 @@ import type {
   Cobrable,
   DetalleColectaEnvio,
   Colecta,
+  PaqueteSemanal,
   PrevioCierre,
   ResumenDia,
   SocioColecta,
+  TarifasColecta,
 } from '../services/colectaService'
 import { getErrorMessage } from '../services/api'
 import { usePermissions } from '../store/authStore'
 import { MovimientosDelDia } from '../components/colecta/MovimientosDelDia'
+import { SituacionSocio } from '../components/colecta/SituacionSocio'
+import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all placeholder:text-neutral-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
@@ -104,6 +108,12 @@ export default function ColectaPage() {
   // --- Reintegros: cargo por reactivar un acuerdo suspendido ---
   const [reintegros, setReintegros] = useState<Record<string, string>>({})
 
+  // --- Paquete semanal: lo calcula el backend con las tarifas de parametros ---
+  const [paquete, setPaquete] = useState<PaqueteSemanal | null>(null)
+  const [calculandoPaquete, setCalculandoPaquete] = useState(false)
+  const [tarifas, setTarifas] = useState<TarifasColecta | null>(null)
+  const [semanaActualTexto, setSemanaActualTexto] = useState('')
+
   // --- Carrito de cobro ---
   const [lineas, setLineas] = useState<Record<string, LineaCobro>>({})
   const [observaciones, setObservaciones] = useState('')
@@ -155,6 +165,9 @@ export default function ColectaPage() {
 
       setTasa(respuesta.data.tasa)
       setAsambleas(respuesta.data.asambleas ?? [])
+      // Tarifas de solo lectura y semana en curso: se muestran, no se editan
+      setTarifas(respuesta.data.tarifas ?? null)
+      setSemanaActualTexto(respuesta.data.semana_actual_texto ?? '')
       const hallados = respuesta.data.encontrados
 
       if (hallados.length === 0) {
@@ -172,33 +185,22 @@ export default function ColectaPage() {
     }
   }
 
-  /** Al elegir socio se precargan los montos sugeridos de lo que esta atrasado. */
+  /**
+   * Al elegir socio, las semanas arrancan en lo que hace falta para ponerlo al
+   * dia. El importe NO se arma aqui: lo calcula el backend con las tarifas de
+   * parametros, para que la pantalla y el cobro nunca discrepen.
+   */
   const seleccionarSocio = (elegido: SocioColecta) => {
     setSocio(elegido)
     setCandidatos([])
     setAsambleaId('')
     setAdicionalAhorro('0')
     setReintegros({})
+    // El carrito manual queda solo para lo voluntario: abonos a prestamo
+    setLineas({})
+    setPaquete(elegido.paquete_sugerido ?? null)
 
-    // Las semanas a cobrar arrancan en el mayor atraso del socio: ponerse al
-    // dia es el caso normal, y el cajero solo corrige si el socio paga otra cosa
-    const semanasIniciales = Math.max(elegido.mayor_atraso || 1, 1)
-    setSemanas(semanasIniciales)
-
-    // Se premarcan los acuerdos con atraso; el monto lo calcula recalcularLineas
-    const inicial: Record<string, LineaCobro> = {}
-    for (const cobrable of elegido.cobrables) {
-      if (cobrable.tipo === 'funeraria' || cobrable.tipo === 'salud') {
-        if ((cobrable.semanas_sin_pago ?? 0) <= 0) continue
-        inicial[claveCobrable(cobrable)] = {
-          monto_usd: String(
-            Math.round((cobrable.monto_semanal_usd ?? 0) * semanasIniciales * 100) / 100
-          ),
-          semanas: semanasIniciales,
-        }
-      }
-    }
-    setLineas(inicial)
+    setSemanas(Math.max(elegido.semanas_para_ponerse_al_dia || 1, 1))
 
     // El foco salta a "Semanas a cobrar": es lo unico que el cajero suele
     // corregir antes de cobrar, y evita tener que buscar el campo con el mouse
@@ -209,33 +211,51 @@ export default function ColectaPage() {
   }
 
   /**
-   * Al cambiar las semanas a cobrar se recalculan TODOS los renglones de
-   * funeraria y salud. Es el comportamiento del sistema viejo: un solo campo
-   * `sem` multiplica los tres servicios en vez de repetirlo por acuerdo.
+   * El desglose lo calcula el BACKEND cada vez que cambian las semanas o el
+   * ahorro adicional.
+   *
+   * Antes la pantalla multiplicaba la cuota por las semanas por su cuenta. Eso
+   * abre la puerta a que muestre un importe y cobre otro; ahora el numero que
+   * ve el cajero sale del mismo calculo que ejecuta el cobro.
    */
   useEffect(() => {
-    if (!socio) return
-    setLineas((prev) => {
-      const copia = { ...prev }
-      for (const cobrable of socio.cobrables) {
-        const clave = claveCobrable(cobrable)
-        // El préstamo no se multiplica por semanas: se abona un monto libre
-        if (!copia[clave] || cobrable.tipo === 'ahorro' || cobrable.tipo === 'prestamo') continue
-        const cuota = cobrable.monto_semanal_usd ?? 0
-        copia[clave] = {
+    if (!socio) {
+      setPaquete(null)
+      return
+    }
+
+    let vigente = true
+    // Pequena espera: el cajero teclea las semanas y no hace falta una
+    // consulta por cada digito
+    const temporizador = window.setTimeout(async () => {
+      setCalculandoPaquete(true)
+      try {
+        const respuesta = await colectaService.calcularPaquete({
+          socio_id: socio.id,
           semanas,
-          monto_usd: cuota > 0 ? String(Math.round(cuota * semanas * 100) / 100) : copia[clave]!.monto_usd,
-        }
+          ahorro_adicional_usd: parseFloat(adicionalAhorro) || 0,
+        })
+        if (vigente && respuesta.success) setPaquete(respuesta.data)
+      } catch {
+        // Si falla el calculo se conserva el ultimo desglose valido; el cobro
+        // vuelve a calcularlo en el servidor de todos modos
+      } finally {
+        if (vigente) setCalculandoPaquete(false)
       }
-      return copia
-    })
-  }, [semanas, socio])
+    }, 250)
+
+    return () => {
+      vigente = false
+      window.clearTimeout(temporizador)
+    }
+  }, [socio, semanas, adicionalAhorro])
 
   const limpiar = () => {
     setTermino('')
     setSocio(null)
     setCandidatos([])
     setLineas({})
+    setPaquete(null)
     setObservaciones('')
     setError('')
     setRecibo(null)
@@ -267,52 +287,54 @@ export default function ColectaPage() {
     setLineas((prev) => ({ ...prev, [clave]: { ...(prev[clave] ?? { semanas: 1 }), monto_usd: valor } }))
   }
 
-  /** En funeraria y salud se cobra por semanas: el monto se deriva de la cuota. */
-  const cambiarSemanas = (cobrable: Cobrable, semanas: number) => {
-    const clave = claveCobrable(cobrable)
-    const cuota = cobrable.monto_semanal_usd ?? 0
-    setLineas((prev) => ({
-      ...prev,
-      [clave]: {
-        semanas,
-        monto_usd: cuota > 0 ? String(Math.round(cuota * semanas * 100) / 100) : (prev[clave]?.monto_usd ?? ''),
-      },
-    }))
-  }
-
   const adicional = parseFloat(adicionalAhorro) || 0
 
-  // total = suma de renglones + adicional de ahorro (el `bs_adi` del original)
   const totalReintegros = useMemo(
     () => Object.values(reintegros).reduce((acc, v) => acc + (parseFloat(v) || 0), 0),
     [reintegros]
   )
 
+  /** Abonos a prestamo: lo unico que sigue siendo un carrito manual */
+  const totalVoluntario = useMemo(
+    () => Object.values(lineas).reduce((acc, l) => acc + (parseFloat(l.monto_usd) || 0), 0),
+    [lineas]
+  )
+
+  // El paquete ya incluye el ahorro adicional: se le pasa al calcularlo, asi
+  // que sumarlo aqui otra vez lo duplicaria.
+  const totalPaquete = paquete?.totales.total_usd ?? 0
+
   const totalUsd = useMemo(
-    () =>
-      Object.values(lineas).reduce((acc, l) => acc + (parseFloat(l.monto_usd) || 0), 0) +
-      adicional +
-      totalReintegros,
-    [lineas, adicional, totalReintegros]
+    () => totalPaquete + totalVoluntario + totalReintegros,
+    [totalPaquete, totalVoluntario, totalReintegros]
   )
   const totalBs = useMemo(() => (tasa ? totalUsd * tasa : 0), [totalUsd, tasa])
-  const cantidadLineas = Object.keys(lineas).length
+  const cantidadLineas = (paquete?.renglones.length ?? 0) + Object.keys(lineas).length
 
   const cobrar = async () => {
     if (!socio || cantidadLineas === 0) return
 
-    const detalles: DetalleColectaEnvio[] = socio.cobrables
-      .filter((c) => lineas[claveCobrable(c)])
-      .map((c) => {
-        const linea = lineas[claveCobrable(c)]!
-        return {
-          servicio: c.tipo as 'ahorro' | 'funeraria' | 'salud' | 'prestamo',
-          referencia_id: c.referencia_id,
-          monto_usd: parseFloat(linea.monto_usd) || 0,
-          ...(c.tipo !== 'ahorro' && c.tipo !== 'prestamo' ? { semanas: linea.semanas } : {}),
-        }
-      })
-      .filter((d) => d.monto_usd > 0)
+    // El paquete semanal viaja completo: ahorro obligatorio (con el adicional
+    // ya sumado) y TODOS los servicios contratados. El backend rechaza un
+    // paquete parcial, asi que armarlo aqui a mano no tendria sentido.
+    const detalles: DetalleColectaEnvio[] = (paquete?.renglones ?? [])
+      .filter((r) => r.monto_usd > 0)
+      .map((r) => ({
+        servicio: r.servicio,
+        referencia_id: r.referencia_id,
+        monto_usd: r.monto_usd,
+        ...(r.servicio !== 'ahorro' ? { semanas: r.semanas } : {}),
+      }))
+
+    // Abonos a prestamo: operacion voluntaria, aparte del paquete semanal
+    for (const cobrable of socio.cobrables) {
+      if (cobrable.tipo !== 'prestamo') continue
+      const linea = lineas[claveCobrable(cobrable)]
+      const monto = parseFloat(linea?.monto_usd ?? '') || 0
+      if (monto > 0) {
+        detalles.push({ servicio: 'prestamo', referencia_id: cobrable.referencia_id, monto_usd: monto })
+      }
+    }
 
     // Los reintegros viajan como renglones propios: no cubren semanas y
     // reactivan el acuerdo suspendido
@@ -326,20 +348,6 @@ export default function ColectaPage() {
           es_reintegro: true,
           concepto: 'Reintegro por reactivacion',
         })
-      }
-    }
-
-    // El adicional de ahorro se suma al renglon de la primera cuenta marcada;
-    // si no hay ninguna marcada pero si hay cuentas, se cobra sobre la primera
-    if (adicional > 0) {
-      const renglonAhorro = detalles.find((d) => d.servicio === 'ahorro')
-      if (renglonAhorro) {
-        renglonAhorro.monto_usd = Math.round((renglonAhorro.monto_usd + adicional) * 100) / 100
-      } else {
-        const cuenta = socio.cobrables.find((c) => c.tipo === 'ahorro')
-        if (cuenta) {
-          detalles.push({ servicio: 'ahorro', referencia_id: cuenta.referencia_id, monto_usd: adicional })
-        }
       }
     }
 
@@ -358,6 +366,10 @@ export default function ColectaPage() {
         ano_cobro: anoCobro,
         referencia: referencia || null,
         asamblea_id: asambleaId === '' ? null : Number(asambleaId),
+        // Oficina del socio y canal presencial: alimentan el cuadre por
+        // oficina y el consolidado (req. 9)
+        ubicacion_id: socio.ubicacion?.id ?? null,
+        canal: 'presencial',
         detalles,
         observaciones: observaciones || null,
       })
@@ -366,6 +378,7 @@ export default function ColectaPage() {
       setRecibo(respuesta.data)
       setSocio(null)
       setLineas({})
+      setPaquete(null)
       setReferencia('')
       setAdicionalAhorro('0')
       setAsambleaId('')
@@ -432,13 +445,30 @@ export default function ColectaPage() {
     }
   }
 
-  const cobrablesPorTipo = useMemo(() => {
-    if (!socio) return []
-    const orden: Cobrable['tipo'][] = ['ahorro', 'funeraria', 'salud', 'prestamo']
-    return orden
-      .map((tipo) => ({ tipo, items: socio.cobrables.filter((c) => c.tipo === tipo) }))
-      .filter((g) => g.items.length > 0)
-  }, [socio])
+  /**
+   * Prestamos del socio. Es lo unico que queda como carrito manual: abonar es
+   * una operacion VOLUNTARIA, separada de la obligacion de pagar juntos los
+   * conceptos semanales de la colecta.
+   */
+  const prestamos = useMemo(
+    () => (socio?.cobrables ?? []).filter((c) => c.tipo === 'prestamo'),
+    [socio]
+  )
+
+  /** Cuentas de ahorro, con su saldo y sus ultimos movimientos */
+  const cuentasAhorro = useMemo(
+    () => (socio?.cobrables ?? []).filter((c) => c.tipo === 'ahorro'),
+    [socio]
+  )
+
+  /** Acuerdos suspendidos: son los unicos que admiten un reintegro */
+  const suspendidos = useMemo(
+    () =>
+      (socio?.cobrables ?? []).filter(
+        (c) => (c.tipo === 'funeraria' || c.tipo === 'salud') && c.estado === 'suspendido'
+      ),
+    [socio]
+  )
 
   // ============================================
   // RENDER
@@ -647,9 +677,31 @@ export default function ColectaPage() {
                       {socio.alertas.acuerdos_suspendidos} acuerdo(s) suspendido(s)
                     </Badge>
                   )}
+                  {socio.alertas.servicios_a_revisar > 0 && (
+                    <Badge variant="warning">
+                      {socio.alertas.servicios_a_revisar} servicio(s) a revisar
+                    </Badge>
+                  )}
+                  {/* Fianzas: parte de su ahorro esta comprometida (req. 5) */}
+                  {socio.alertas.ahorro_bloqueado_usd > 0 && (
+                    <Badge variant="warning">
+                      ${money(socio.alertas.ahorro_bloqueado_usd)} bloqueado por fianza
+                    </Badge>
+                  )}
                 </div>
               </div>
             </Card>
+
+            {/*
+              Situacion por servicio: hasta cuando esta pagado cada uno, cuando
+              pago por ultima vez y cuanto debe. Un resumen por servicio, no una
+              fila por semana adeudada (req. 1).
+            */}
+            <SituacionSocio
+              servicios={socio.servicios ?? []}
+              semanaActualTexto={semanaActualTexto}
+              tasa={tasa}
+            />
 
             {/* PERIODO Y SEMANAS: el driver de todo el cobro */}
             <Card className="p-5">
@@ -706,9 +758,27 @@ export default function ColectaPage() {
               </div>
 
               <p className="mt-2 text-xs text-neutral-500">
-                Las semanas multiplican por igual funeraria y salud. Arranca en el mayor atraso del
-                socio ({socio.mayor_atraso} semana{socio.mayor_atraso === 1 ? '' : 's'}).
+                Las semanas multiplican por igual el ahorro y cada servicio contratado. Arranca en lo
+                que hace falta para ponerlo al dia ({socio.semanas_para_ponerse_al_dia} semana
+                {socio.semanas_para_ponerse_al_dia === 1 ? '' : 's'}).
+                {tarifas && (
+                  <>
+                    {' '}Las semanas pendientes se suman a las adelantadas; la politica admite{' '}
+                    {tarifas.max_semanas_adelanto} de adelanto.
+                  </>
+                )}
               </p>
+
+              {/* Tarifas vigentes, de SOLO LECTURA: se cambian en Parametros */}
+              {tarifas && (
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+                  <span className="font-medium text-neutral-500">Tarifas semanales</span>
+                  <span className="tabular-nums">Ahorro ${money(tarifas.ahorro_usd)}</span>
+                  <span className="tabular-nums">Funeraria ${money(tarifas.funeraria_usd)}</span>
+                  <span className="tabular-nums">Salud ${money(tarifas.salud_usd)}</span>
+                  <span className="text-neutral-400">Se configuran en Parametros</span>
+                </div>
+              )}
 
               {/* Asistencia a asamblea: la caja es donde se ve al socio */}
               {asambleas.length > 0 && (
@@ -734,45 +804,108 @@ export default function ColectaPage() {
               )}
             </Card>
 
-            {cobrablesPorTipo.length === 0 && (
-              <Card className="p-8 text-center text-sm text-neutral-500">
-                Este socio no tiene cuentas ni acuerdos activos para cobrar.
+            {/*
+              DESGLOSE DEL COBRO SEMANAL
+
+              Ya no hay casillas por servicio. El cliente fue explicito: los
+              servicios contratados se pagan juntos con el ahorro obligatorio,
+              y no se puede elegir pagar solo uno. Lo unico que decide el cajero
+              es la cantidad de semanas; el importe lo calcula el backend.
+            */}
+            <PaqueteSemanalCard paquete={paquete} cargando={calculandoPaquete} semanas={semanas} />
+
+            {/* AHORRO: saldo, ahorro adicional y ultimos movimientos */}
+            {cuentasAhorro.length > 0 && (
+              <Card padding="none" className="overflow-hidden">
+                <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
+                  <Wallet className="h-4 w-4 text-primary-600" />
+                  <h3 className="text-sm font-semibold text-neutral-800">Ahorro</h3>
+                  <span className="text-xs text-neutral-500">({cuentasAhorro.length})</span>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-3">
+                  <label className="text-xs font-medium text-neutral-600">
+                    <span className="mb-1 block">Ahorro adicional (USD)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={adicionalAhorro}
+                      onChange={(e) => setAdicionalAhorro(e.target.value)}
+                      className="w-36 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                    />
+                  </label>
+                  <p className="pb-2 text-xs text-neutral-500">
+                    Se suma al ahorro obligatorio de estas {semanas} semana(s). Sin tope de monto.
+                  </p>
+                </div>
+
+                <div className="divide-y divide-neutral-100">
+                  {cuentasAhorro.map((cuenta) => (
+                    <div key={claveCobrable(cuenta)} className="px-5 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">{cuenta.titulo}</p>
+                          <p className="text-xs text-neutral-500">{cuenta.detalle}</p>
+                        </div>
+                        <div className="text-right tabular-nums">
+                          <p className="text-sm font-semibold text-neutral-900">
+                            ${money(cuenta.saldo_usd ?? 0)}
+                          </p>
+                          <p className="text-xs text-neutral-500">{money(cuenta.saldo_bs ?? 0)} Bs</p>
+                          {(cuenta.bloqueado_usd ?? 0) > 0 && (
+                            <p className="mt-1 text-xs text-amber-700">
+                              Disponible ${money(cuenta.disponible_usd ?? 0)} · $
+                              {money(cuenta.bloqueado_usd ?? 0)} en fianza
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Movimientos recientes en la misma pantalla (req. 4) */}
+                      {(cuenta.movimientos_recientes?.length ?? 0) > 0 && (
+                        <div className="mt-3 space-y-1 border-t border-neutral-100 pt-2">
+                          {cuenta.movimientos_recientes!.map((m) => (
+                            <div
+                              key={m.id}
+                              className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                            >
+                              <span className="text-neutral-600">
+                                {new Date(m.fecha).toLocaleDateString('es-VE')} · {m.tipo}
+                                {m.canal === 'digital' && (
+                                  <span className="ml-1 text-primary-600">(cajero digital)</span>
+                                )}
+                                {m.concepto ? ` · ${m.concepto}` : ''}
+                              </span>
+                              <span className="tabular-nums font-medium text-neutral-800">
+                                ${money(m.monto_usd)} · {money(m.monto_bs)} Bs
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </Card>
             )}
 
-            {cobrablesPorTipo.map((grupo) => (
-              <Card key={grupo.tipo} padding="none" className="overflow-hidden">
+            {/* PRESTAMOS: abonar es voluntario y va aparte del paquete */}
+            {prestamos.length > 0 && (
+              <Card padding="none" className="overflow-hidden">
                 <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
-                  {iconoServicio(grupo.tipo)}
-                  <h3 className="text-sm font-semibold text-neutral-800">{etiquetaServicio(grupo.tipo)}</h3>
-                  <span className="text-xs text-neutral-500">({grupo.items.length})</span>
+                  <DollarSign className="h-4 w-4 text-emerald-600" />
+                  <h3 className="text-sm font-semibold text-neutral-800">Prestamos</h3>
+                  <span className="text-xs text-neutral-500">
+                    ({prestamos.length}) · abono voluntario
+                  </span>
                 </div>
 
-                {grupo.tipo === 'ahorro' && (
-                  <div className="flex flex-wrap items-end gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-3">
-                    <label className="text-xs font-medium text-neutral-600">
-                      <span className="mb-1 block">Ahorro adicional (USD)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min={0}
-                        value={adicionalAhorro}
-                        onChange={(e) => setAdicionalAhorro(e.target.value)}
-                        className="w-32 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
-                      />
-                    </label>
-                    <p className="pb-2 text-xs text-neutral-500">
-                      Monto extra sobre la cuota semanal (el campo "Adic" del sistema anterior).
-                    </p>
-                  </div>
-                )}
-
                 <div className="divide-y divide-neutral-100">
-                  {grupo.items.map((cobrable) => {
-                    const clave = claveCobrable(cobrable)
+                  {prestamos.map((prestamo) => {
+                    const clave = claveCobrable(prestamo)
                     const linea = lineas[clave]
                     const marcado = Boolean(linea)
-                    const atrasado = (cobrable.semanas_sin_pago ?? 0) > 0
 
                     return (
                       <div
@@ -783,88 +916,130 @@ export default function ColectaPage() {
                           <input
                             type="checkbox"
                             checked={marcado}
-                            onChange={() => alternarLinea(cobrable)}
+                            onChange={() => alternarLinea(prestamo)}
                             className="mt-1 h-5 w-5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
                           />
 
-                          <div className="min-w-[180px] flex-1">
-                            <p className="text-sm font-medium text-neutral-900">{cobrable.titulo}</p>
-                            <p className="text-xs text-neutral-500">{cobrable.detalle}</p>
-                            <div className="mt-1 flex flex-wrap items-center gap-2">
-                              {cobrable.saldo_usd !== null && (
-                                <span className="text-xs text-neutral-600">
-                                  Saldo: ${money(cobrable.saldo_usd)}
-                                </span>
-                              )}
-                              {atrasado && (
-                                <Badge variant={cobrable.semanas_sin_pago! >= 5 ? 'error' : 'warning'}>
-                                  {cobrable.semanas_sin_pago} semana(s) sin pago
-                                </Badge>
-                              )}
-                              {cobrable.estado === 'suspendido' && <Badge variant="error">Suspendido</Badge>}
-                            </div>
+                          <div className="min-w-[200px] flex-1">
+                            <p className="text-sm font-medium text-neutral-900">
+                              {prestamo.categoria ?? prestamo.titulo}
+                            </p>
+                            {/* Categoria, pagare, moneda y fechas separados en
+                                su propia rejilla: el cliente reporto cifras
+                                amontonadas y cortadas (req. 5) */}
+                            <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+                              <div>
+                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                                  Pagare
+                                </dt>
+                                <dd className="text-xs font-medium text-neutral-800">
+                                  {prestamo.numero_pagare ?? '—'}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                                  Saldo ({prestamo.moneda ?? 'USD'})
+                                </dt>
+                                <dd className="text-xs font-semibold tabular-nums text-neutral-900">
+                                  ${money(prestamo.saldo_usd ?? 0)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                                  Ultimo abono
+                                </dt>
+                                <dd className="text-xs font-medium text-neutral-800">
+                                  {prestamo.fecha_ultimo_abono
+                                    ? new Date(prestamo.fecha_ultimo_abono).toLocaleDateString('es-VE')
+                                    : 'Sin abonos'}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                                  Otorgado
+                                </dt>
+                                <dd className="text-xs text-neutral-600">
+                                  {prestamo.fecha_desembolso
+                                    ? new Date(prestamo.fecha_desembolso).toLocaleDateString('es-VE')
+                                    : '—'}
+                                </dd>
+                              </div>
+                            </dl>
+                            {(prestamo.saldo_mora_usd ?? 0) > 0 && (
+                              <p className="mt-1.5 text-xs text-error-600">
+                                Mora: ${money(prestamo.saldo_mora_usd ?? 0)}
+                              </p>
+                            )}
                           </div>
 
                           {marcado && (
                             <div className="flex flex-wrap items-end gap-3">
-                              {cobrable.tipo !== 'ahorro' && cobrable.tipo !== 'prestamo' && (
-                                <label className="text-xs font-medium text-neutral-600">
-                                  <span className="mb-1 block">Semanas</span>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    value={linea!.semanas}
-                                    onChange={(e) => cambiarSemanas(cobrable, Number(e.target.value) || 1)}
-                                    className="w-20 rounded-lg border border-neutral-200 bg-white px-2 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
-                                  />
-                                </label>
-                              )}
                               <label className="text-xs font-medium text-neutral-600">
-                                <span className="mb-1 block">Monto USD</span>
+                                <span className="mb-1 block">Abono USD</span>
                                 <input
                                   type="number"
                                   step="0.01"
                                   min={0}
                                   value={linea!.monto_usd}
-                                  onChange={(e) => cambiarMonto(cobrable, e.target.value)}
-                                  className="w-28 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                                  onChange={(e) => cambiarMonto(prestamo, e.target.value)}
+                                  className="w-32 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                                 />
                               </label>
-                              <div className="pb-2 text-xs text-neutral-500">
+                              <div className="pb-2 text-xs tabular-nums text-neutral-500">
                                 = {money((parseFloat(linea!.monto_usd) || 0) * (tasa ?? 0))} Bs
                               </div>
                             </div>
                           )}
                         </div>
-
-                        {/* Reintegro: solo tiene sentido en acuerdos suspendidos */}
-                        {cobrable.estado === 'suspendido' && (
-                          <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                            <label className="text-xs font-medium text-amber-900">
-                              <span className="mb-1 block">Reintegro (USD)</span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min={0}
-                                value={reintegros[clave] ?? ''}
-                                onChange={(e) =>
-                                  setReintegros((prev) => ({ ...prev, [clave]: e.target.value }))
-                                }
-                                placeholder="0.00"
-                                className="w-28 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                              />
-                            </label>
-                            <p className="pb-2 text-xs text-amber-800">
-                              Cargo por reactivar el acuerdo. No cubre semanas de atraso.
-                            </p>
-                          </div>
-                        )}
                       </div>
                     )
                   })}
                 </div>
               </Card>
-            ))}
+            )}
+
+            {/* REINTEGROS: solo tienen sentido en acuerdos suspendidos */}
+            {suspendidos.length > 0 && (
+              <Card padding="none" className="overflow-hidden">
+                <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-5 py-3">
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                  <h3 className="text-sm font-semibold text-amber-900">Acuerdos suspendidos</h3>
+                </div>
+
+                <div className="divide-y divide-neutral-100">
+                  {suspendidos.map((cobrable) => {
+                    const clave = claveCobrable(cobrable)
+                    return (
+                      <div key={clave} className="flex flex-wrap items-end gap-3 px-5 py-4">
+                        <div className="min-w-[200px] flex-1">
+                          <p className="text-sm font-medium text-neutral-900">
+                            {etiquetaServicio(cobrable.tipo)} · {cobrable.titulo}
+                          </p>
+                          <p className="text-xs text-neutral-500">{cobrable.detalle}</p>
+                        </div>
+                        <label className="text-xs font-medium text-amber-900">
+                          <span className="mb-1 block">Reintegro (USD)</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            value={reintegros[clave] ?? ''}
+                            onChange={(e) =>
+                              setReintegros((prev) => ({ ...prev, [clave]: e.target.value }))
+                            }
+                            placeholder="0.00"
+                            className="w-32 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                          />
+                        </label>
+                        <p className="pb-2 text-xs text-amber-800">
+                          Cargo por reactivar. No cubre semanas de atraso.
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </Card>
+            )}
           </div>
 
           {/* Columna derecha: el total, siempre a la vista */}
@@ -883,49 +1058,72 @@ export default function ColectaPage() {
                 {cantidadLineas} concepto(s) · {semanas} semana(s) · tasa {money(tasa ?? 0, 4)}
               </p>
 
-              {/* Desglose por servicio, como la matriz de totales del sistema viejo */}
+              {/*
+                Desglose por concepto. Los subtotales de ahorro, funeraria y
+                salud salen del paquete que calculo el backend, asi que la
+                pantalla no puede mostrar un numero y cobrar otro.
+              */}
               <div className="mt-4 space-y-2 border-t border-neutral-200 pt-4">
-                {(['ahorro', 'funeraria', 'salud', 'prestamo'] as const).map((tipo) => {
-                  const items = socio.cobrables.filter(
-                    (c) => c.tipo === tipo && lineas[claveCobrable(c)]
-                  )
-                  const extra = tipo === 'ahorro' ? adicional : 0
-                  // Los reintegros del servicio tambien suman a su subtotal
-                  const reintegroServicio = socio.cobrables
-                    .filter((c) => c.tipo === tipo)
-                    .reduce((acc, c) => acc + (parseFloat(reintegros[claveCobrable(c)] ?? '') || 0), 0)
-                  const subtotal =
-                    items.reduce(
-                      (acc, c) => acc + (parseFloat(lineas[claveCobrable(c)]!.monto_usd) || 0),
-                      0
-                    ) +
-                    extra +
-                    reintegroServicio
-                  if (items.length === 0 && extra === 0 && reintegroServicio === 0) return null
-
-                  return (
-                    <div key={tipo} className="rounded-lg bg-neutral-50 px-3 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-1.5 text-sm font-medium text-neutral-800">
-                          {iconoServicio(tipo)}
-                          {etiquetaServicio(tipo)}
-                        </span>
-                        <span className="text-sm font-semibold text-neutral-900">
-                          ${money(subtotal)}
-                        </span>
+                {paquete &&
+                  (
+                    [
+                      ['ahorro', paquete.totales.ahorro_usd, paquete.totales.ahorro_bs],
+                      ['funeraria', paquete.totales.funeraria_usd, paquete.totales.funeraria_bs],
+                      ['salud', paquete.totales.salud_usd, paquete.totales.salud_bs],
+                    ] as const
+                  ).map(([tipo, usd, bs]) => {
+                    if (usd === 0) return null
+                    return (
+                      <div key={tipo} className="rounded-lg bg-neutral-50 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-1.5 text-sm font-medium text-neutral-800">
+                            {iconoServicio(tipo)}
+                            {etiquetaServicio(tipo)}
+                          </span>
+                          <span className="text-sm font-semibold tabular-nums text-neutral-900">
+                            ${money(usd)}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs tabular-nums text-neutral-500">
+                          {money(bs)} Bs · {semanas} semana(s)
+                          {tipo === 'ahorro' && adicional > 0
+                            ? ` · incluye $${money(adicional)} adicional`
+                            : ''}
+                        </p>
                       </div>
-                      <p className="mt-0.5 text-xs text-neutral-500">
-                        {tipo === 'ahorro'
-                          ? `${items.length} cuenta(s)${extra > 0 ? ` + $${money(extra)} adicional` : ''}`
-                          : `${items.length} acuerdo(s) × ${semanas} semana(s)${
-                              reintegroServicio > 0 ? ` + $${money(reintegroServicio)} reintegro` : ''
-                            }`}
-                      </p>
+                    )
+                  })}
+
+                {/* Abonos a prestamo: voluntarios, fuera del paquete semanal */}
+                {totalVoluntario > 0 && (
+                  <div className="rounded-lg bg-neutral-50 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-sm font-medium text-neutral-800">
+                        {iconoServicio('prestamo')}
+                        {etiquetaServicio('prestamo')}
+                      </span>
+                      <span className="text-sm font-semibold tabular-nums text-neutral-900">
+                        ${money(totalVoluntario)}
+                      </span>
                     </div>
-                  )
-                })}
-                {cantidadLineas === 0 && adicional === 0 && totalReintegros === 0 && (
-                  <p className="text-sm text-neutral-400">Marque los servicios a cobrar</p>
+                    <p className="mt-0.5 text-xs text-neutral-500">Abono voluntario</p>
+                  </div>
+                )}
+
+                {totalReintegros > 0 && (
+                  <div className="rounded-lg bg-amber-50 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-amber-900">Reintegros</span>
+                      <span className="text-sm font-semibold tabular-nums text-amber-900">
+                        ${money(totalReintegros)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-amber-700">Reactivacion de acuerdos suspendidos</p>
+                  </div>
+                )}
+
+                {totalUsd === 0 && (
+                  <p className="text-sm text-neutral-400">Indique las semanas a cobrar</p>
                 )}
               </div>
 

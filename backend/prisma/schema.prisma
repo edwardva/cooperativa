@@ -311,6 +311,11 @@ model MovimientoFuneraria {
   // sale en los reportes y en el archivo para la funeraria externa.
   ano_cobertura    Int?
   semana_cobertura Int?
+  // De que colecta vino, y si ya fue reversado. Sin esto no hay forma de saber
+  // que un pago quedo sin efecto: el reverso crea un movimiento espejo, pero
+  // el pago original seguia figurando como vigente.
+  colecta_id       Int?
+  reversado        Boolean  @default(false)
   concepto         String?  @db.Text
   fecha_movimiento DateTime @default(now())
   created_at       DateTime @default(now())
@@ -320,6 +325,7 @@ model MovimientoFuneraria {
 
   @@index([acuerdo_id])
   @@index([fecha_movimiento])
+  @@index([colecta_id])
   @@map("movimientos_funeraria")
 }
 
@@ -385,6 +391,9 @@ model MovimientoSalud {
   // Hasta que (ano, semana) dejo cubierto el acuerdo ESTE movimiento
   ano_cobertura    Int?
   semana_cobertura Int?
+  // De que colecta vino, y si ya fue reversado (ver nota en MovimientoFuneraria)
+  colecta_id       Int?
+  reversado        Boolean  @default(false)
   numero_recibo    String?  @db.VarChar(30)
   ubicacion_id     Int?
   concepto         String?  @db.Text
@@ -398,6 +407,7 @@ model MovimientoSalud {
   @@index([acuerdo_id])
   @@index([fecha_movimiento])
   @@index([numero_recibo])
+  @@index([colecta_id])
   @@map("movimientos_salud")
 }
 

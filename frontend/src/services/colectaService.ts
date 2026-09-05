@@ -10,6 +10,24 @@ import apiClient from './api'
 
 export type ServicioColecta = 'ahorro' | 'funeraria' | 'salud' | 'prestamo'
 
+/** El par (anio, semana) con el que se mide la cobertura de un servicio */
+export interface Periodo {
+  ano: number
+  semana: number
+}
+
+export interface MovimientoAhorroReciente {
+  id: number
+  tipo: string
+  monto_usd: number
+  monto_bs: number
+  moneda: string
+  canal: string
+  concepto: string | null
+  referencia: string | null
+  fecha: string
+}
+
 export interface Cobrable {
   tipo: ServicioColecta
   referencia_id: number
@@ -21,6 +39,94 @@ export interface Cobrable {
   monto_sugerido_usd: number | null
   monto_semanal_usd?: number
   estado: string
+  /** Hasta que (anio, semana) esta pagado el servicio */
+  pagado_hasta?: Periodo | null
+  pagado_hasta_texto?: string
+  /** Cuando se cobro, que es OTRO dato distinto de hasta cuando cubre */
+  fecha_ultimo_pago?: string | null
+  semanas_adelantadas?: number
+  /** Solo en cuentas de ahorro */
+  codigo_tipo?: string
+  bloqueado_usd?: number
+  disponible_usd?: number
+  movimientos_recientes?: MovimientoAhorroReciente[]
+  /** Solo en prestamos */
+  categoria?: string
+  numero_pagare?: string
+  moneda?: string
+  fecha_desembolso?: string
+  fecha_ultimo_abono?: string | null
+  saldo_capital_usd?: number
+  saldo_interes_usd?: number
+  saldo_mora_usd?: number
+}
+
+/** Resumen POR SERVICIO para la cabecera: una fila por servicio, no por semana */
+export interface ResumenServicio {
+  servicio: 'funeraria' | 'salud'
+  referencia_id: number
+  titulo: string
+  detalle: string
+  numero_acuerdo: string | null
+  tarifa_semanal_usd: number
+  fecha_ultimo_pago: string | null
+  pagado_hasta: Periodo | null
+  pagado_hasta_texto: string
+  semanas_pendientes: number
+  semanas_adelantadas: number
+  estado: string
+  estado_calculado: 'vigente' | 'atrasado' | 'suspendido'
+  /** El estado guardado no coincide con lo que dice la cobertura */
+  requiere_revision: boolean
+  monto_al_dia_usd: number
+}
+
+/** Tarifas de SOLO LECTURA: la pantalla las muestra, no las edita */
+export interface TarifasColecta {
+  ahorro_usd: number
+  funeraria_usd: number
+  salud_usd: number
+  max_semanas_adelanto: number
+  bloquear_adelanto_excedido: boolean
+  semanas_suspension_funeraria: number
+  semanas_suspension_salud: number
+}
+
+export interface RenglonPaquete {
+  servicio: 'ahorro' | 'funeraria' | 'salud'
+  referencia_id: number
+  titulo: string
+  semanas: number
+  tarifa_unitaria_usd: number
+  monto_usd: number
+  monto_bs: number
+  cobertura_antes: Periodo | null
+  cobertura_despues: Periodo | null
+}
+
+/** Desglose del cobro semanal: ahorro + servicios contratados */
+export interface PaqueteSemanal {
+  semanas: number
+  tasa: number
+  renglones: RenglonPaquete[]
+  totales: {
+    ahorro_usd: number
+    funeraria_usd: number
+    salud_usd: number
+    total_usd: number
+    ahorro_bs: number
+    funeraria_bs: number
+    salud_bs: number
+    total_bs: number
+  }
+  /** Avisos que el cajero debe ver pero que no impiden cobrar */
+  advertencias: string[]
+  tarifas?: TarifasColecta
+  semana_actual?: Periodo
+  semana_actual_texto?: string
+  semanas_pendientes?: number
+  semanas_adelantadas?: number
+  acuerdos_suspendidos?: number
 }
 
 export interface AsambleaOpcion {
@@ -39,7 +145,17 @@ export interface SocioColecta {
   estado: string
   telefono: string | null
   ubicacion: { id: number; codigo: string; direccion: string | null } | null
+  es_trabajador?: boolean
   cobrables: Cobrable[]
+
+  /** Vistas ya resueltas por el backend para la pantalla principal */
+  cuentas_ahorro: Cobrable[]
+  cuenta_ahorro_obligatorio_id: number | null
+  servicios: ResumenServicio[]
+  prestamos: Cobrable[]
+  semanas_para_ponerse_al_dia: number
+  paquete_sugerido: PaqueteSemanal
+
   /** Multiplicadores del subtotal: nu_fun y nu_sal del sistema viejo */
   cantidad_funeraria: number
   cantidad_salud: number
@@ -48,13 +164,21 @@ export interface SocioColecta {
   /** Mayor atraso entre sus acuerdos: sugiere cuantas semanas cobrar */
   mayor_atraso: number
   asambleas_asistidas: number[]
-  alertas: { socio_retirado: boolean; acuerdos_suspendidos: number }
+  alertas: {
+    socio_retirado: boolean
+    acuerdos_suspendidos: number
+    servicios_a_revisar: number
+    ahorro_bloqueado_usd: number
+  }
 }
 
 export interface ResultadoBusqueda {
   encontrados: SocioColecta[]
   tasa: number
   asambleas: AsambleaOpcion[]
+  tarifas: TarifasColecta
+  semana_actual: Periodo
+  semana_actual_texto: string
 }
 
 export interface DetalleColectaEnvio {
@@ -196,10 +320,28 @@ export const registrarColecta = async (datos: {
   ano_cobro?: number
   referencia?: string | null
   asamblea_id?: number | null
+  ubicacion_id?: number | null
+  canal?: 'presencial' | 'digital'
   detalles: DetalleColectaEnvio[]
   observaciones?: string | null
 }): Promise<Respuesta<Colecta>> => {
   const response = await apiClient.post('/colecta', datos)
+  return response.data
+}
+
+/**
+ * Importe del paquete semanal.
+ *
+ * El cajero escribe cuantas semanas paga el socio y esto devuelve el desglose
+ * de ahorro, funeraria y salud con el total en USD y en bolivares. Las tarifas
+ * vienen de parametros: la pantalla las muestra, no las edita.
+ */
+export const calcularPaquete = async (params: {
+  socio_id: number
+  semanas: number
+  ahorro_adicional_usd?: number
+}): Promise<Respuesta<PaqueteSemanal>> => {
+  const response = await apiClient.get('/colecta/calcular', { params })
   return response.data
 }
 
