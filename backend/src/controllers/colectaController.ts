@@ -1488,8 +1488,25 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
 // REPORTES DE IMPRESIÓN
 // ============================================
 
-/** Rango [desde, hasta] del día o del período pedido, en hora local. */
+/**
+ * Rango [desde, hasta] del período pedido, en hora local.
+ *
+ * Acepta `mes=YYYY-MM` además de `desde`/`hasta`. El cliente pidió el ingreso
+ * mensual por concepto — el de salud en particular — sin tener que sumar a mano
+ * los reportes diarios.
+ */
 function rangoFechas(req: Request): { desde: Date; hasta: Date } {
+  const mes = req.query.mes ? String(req.query.mes) : '';
+  if (mes) {
+    if (!/^\d{4}-\d{2}$/.test(mes)) throw new BadRequestError('El mes debe tener el formato AAAA-MM');
+    const [ano, numeroMes] = mes.split('-').map(Number) as [number, number];
+    const desde = new Date(ano, numeroMes - 1, 1, 0, 0, 0, 0);
+    // Día 0 del mes siguiente es el último del mes pedido, sin tabla de días
+    const hasta = new Date(ano, numeroMes, 0, 23, 59, 59, 999);
+    if (isNaN(desde.getTime())) throw new BadRequestError('Mes inválido');
+    return { desde, hasta };
+  }
+
   const hoy = new Date().toISOString().slice(0, 10);
   const desde = new Date(`${String(req.query.desde ?? hoy)}T00:00:00`);
   const hasta = new Date(`${String(req.query.hasta ?? req.query.desde ?? hoy)}T23:59:59.999`);
@@ -1513,49 +1530,112 @@ export const reportePorServicio = async (req: Request, res: Response): Promise<v
     const { desde, hasta } = rangoFechas(req);
     const servicio = req.query.servicio ? String(req.query.servicio) : undefined;
     const soloMias = String(req.query.solo_mias ?? 'false') === 'true';
+    const ubicacionId = req.query.ubicacion_id ? Number(req.query.ubicacion_id) : undefined;
+    const canal = req.query.canal ? String(req.query.canal) : undefined;
 
     const colectas = await prisma.colecta.findMany({
       where: {
         fecha_colecta: { gte: desde, lte: hasta },
         reversada: false,
         ...(soloMias ? { usuario_id: req.user!.userId } : {}),
+        ...(ubicacionId ? { ubicacion_id: ubicacionId } : {}),
+        ...(canal ? { canal } : {}),
       },
       orderBy: { fecha_colecta: 'asc' },
       include: {
         detalles: true,
         socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true } },
-        usuario: { select: { username: true } },
+        usuario: { select: { username: true, nombre_completo: true } },
+        ubicacion: { select: { id: true, codigo: true, nombre: true } },
       },
     });
+
+    // Número de acuerdo por servicio: el cliente lo pidió en el listado, y en
+    // el detalle sólo está el id. Se resuelve en dos consultas en vez de una
+    // por fila.
+    const idsFuneraria = new Set<number>();
+    const idsSalud = new Set<number>();
+    for (const colecta of colectas) {
+      for (const d of colecta.detalles) {
+        if (!d.referencia_id) continue;
+        if (d.servicio === 'funeraria') idsFuneraria.add(d.referencia_id);
+        else if (d.servicio === 'salud') idsSalud.add(d.referencia_id);
+      }
+    }
+
+    const [acuerdosFun, acuerdosSal] = await Promise.all([
+      idsFuneraria.size
+        ? prisma.acuerdoFuneraria.findMany({
+            where: { id: { in: [...idsFuneraria] } },
+            select: { id: true, numero_acuerdo: true },
+          })
+        : [],
+      idsSalud.size
+        ? prisma.acuerdoSalud.findMany({
+            where: { id: { in: [...idsSalud] } },
+            select: { id: true, numero_acuerdo: true },
+          })
+        : [],
+    ]);
+
+    const numeroAcuerdo = new Map<string, string | null>([
+      ...acuerdosFun.map((a) => [`funeraria-${a.id}`, a.numero_acuerdo] as const),
+      ...acuerdosSal.map((a) => [`salud-${a.id}`, a.numero_acuerdo] as const),
+    ]);
 
     // Una fila por detalle: es lo que se imprime
     const filas = colectas.flatMap((colecta) =>
       colecta.detalles
         .filter((d) => !servicio || servicio === 'todos' || d.servicio === servicio)
-        .map((d) => ({
-          colecta_id: colecta.id,
-          fecha: colecta.fecha_colecta,
-          servicio: d.servicio,
-          codigo_socio: colecta.socio.codigo_socio,
-          cedula: colecta.socio.cedula,
-          socio: `${colecta.socio.apellido}, ${colecta.socio.nombre}`,
-          concepto: d.concepto,
-          monto_usd: Number(d.monto_usd),
-          monto_bs: Number(d.monto_bs),
-          cajero: colecta.usuario.username,
-        }))
+        .map((d) => {
+          const cubiertoHasta =
+            d.cobertura_ano_despues !== null && d.cobertura_semana_despues !== null
+              ? { ano: d.cobertura_ano_despues, semana: d.cobertura_semana_despues }
+              : null;
+
+          return {
+            colecta_id: colecta.id,
+            fecha: colecta.fecha_colecta,
+            servicio: d.servicio,
+            codigo_socio: colecta.socio.codigo_socio,
+            cedula: colecta.socio.cedula,
+            socio: `${colecta.socio.apellido}, ${colecta.socio.nombre}`,
+            // Datos que el cliente pidió ver en el reporte de servicios
+            numero_acuerdo: d.referencia_id
+              ? (numeroAcuerdo.get(`${d.servicio}-${d.referencia_id}`) ?? null)
+              : null,
+            semanas: d.semanas,
+            pagado_hasta: cubiertoHasta,
+            pagado_hasta_texto: formatearPeriodo(cubiertoHasta),
+            es_reintegro: d.es_reintegro,
+            concepto: d.concepto,
+            monto_usd: Number(d.monto_usd),
+            monto_bs: Number(d.monto_bs),
+            cajero: colecta.usuario.username,
+            cajero_nombre: colecta.usuario.nombre_completo,
+            oficina: colecta.ubicacion?.nombre ?? null,
+            canal: colecta.canal,
+          };
+        })
     );
 
-    const porServicio: Record<string, { cantidad: number; usd: number; bs: number }> = {};
+    // Cantidad de PERSONAS, no de operaciones: un socio que paga tres
+    // servicios es una persona atendida, no tres.
+    const personasPorServicio: Record<string, Set<string>> = {};
+    const porServicio: Record<string, { cantidad: number; personas: number; usd: number; bs: number }> = {};
+
     for (const fila of filas) {
-      const acc = (porServicio[fila.servicio] ??= { cantidad: 0, usd: 0, bs: 0 });
+      const acc = (porServicio[fila.servicio] ??= { cantidad: 0, personas: 0, usd: 0, bs: 0 });
       acc.cantidad++;
       acc.usd += fila.monto_usd;
       acc.bs += fila.monto_bs;
+      (personasPorServicio[fila.servicio] ??= new Set()).add(fila.codigo_socio);
     }
+
     for (const k of Object.keys(porServicio)) {
       porServicio[k]!.usd = redondear(porServicio[k]!.usd);
       porServicio[k]!.bs = redondear(porServicio[k]!.bs);
+      porServicio[k]!.personas = personasPorServicio[k]!.size;
     }
 
     res.json({
@@ -1567,6 +1647,7 @@ export const reportePorServicio = async (req: Request, res: Response): Promise<v
         resumen: {
           por_servicio: porServicio,
           cantidad: filas.length,
+          personas: new Set(filas.map((f) => f.codigo_socio)).size,
           total_usd: redondear(filas.reduce((a, f) => a + f.monto_usd, 0)),
           total_bs: redondear(filas.reduce((a, f) => a + f.monto_bs, 0)),
         },
@@ -1574,6 +1655,166 @@ export const reportePorServicio = async (req: Request, res: Response): Promise<v
     });
   } catch (error) {
     responderError(res, error, 'Error al generar el reporte');
+  }
+};
+
+// ============================================
+// CUADRE DE CAJA POR OFICINA, COLECTOR Y CANAL
+// ============================================
+
+/** Totales por servicio de un conjunto de colectas, mas su cuenta de personas. */
+interface TotalesCuadre {
+  ahorro_usd: number;
+  funeraria_usd: number;
+  salud_usd: number;
+  prestamos_usd: number;
+  total_usd: number;
+  ahorro_bs: number;
+  funeraria_bs: number;
+  salud_bs: number;
+  prestamos_bs: number;
+  total_bs: number;
+  operaciones: number;
+  personas: number;
+}
+
+const totalesVacios = (): TotalesCuadre => ({
+  ahorro_usd: 0, funeraria_usd: 0, salud_usd: 0, prestamos_usd: 0, total_usd: 0,
+  ahorro_bs: 0, funeraria_bs: 0, salud_bs: 0, prestamos_bs: 0, total_bs: 0,
+  operaciones: 0, personas: 0,
+});
+
+const redondearTotales = (t: TotalesCuadre): TotalesCuadre => ({
+  ...t,
+  ahorro_usd: redondear(t.ahorro_usd),
+  funeraria_usd: redondear(t.funeraria_usd),
+  salud_usd: redondear(t.salud_usd),
+  prestamos_usd: redondear(t.prestamos_usd),
+  total_usd: redondear(t.total_usd),
+  ahorro_bs: redondear(t.ahorro_bs),
+  funeraria_bs: redondear(t.funeraria_bs),
+  salud_bs: redondear(t.salud_bs),
+  prestamos_bs: redondear(t.prestamos_bs),
+  total_bs: redondear(t.total_bs),
+});
+
+/**
+ * GET /api/colecta/reportes/caja?desde=&hasta=&ubicacion_id=&usuario_id=&canal=
+ *
+ * Requisito 9: el cuadre se pide por oficina, por colector y por canal, con el
+ * detalle de cada uno Y un consolidado general. Antes habia que sumar a mano
+ * los reportes diarios de cada oficina para saber lo del mes.
+ *
+ * "Cantidad de personas atendidas" cuenta SOCIOS DISTINTOS, no operaciones:
+ * un socio que paga ahorro, funeraria y salud es una persona, no tres. (El
+ * cliente aun debe confirmar este criterio.)
+ */
+export const reporteCaja = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { desde, hasta } = rangoFechas(req);
+
+    const colectas = await prisma.colecta.findMany({
+      where: {
+        fecha_colecta: { gte: desde, lte: hasta },
+        reversada: false,
+        ...(req.query.ubicacion_id ? { ubicacion_id: Number(req.query.ubicacion_id) } : {}),
+        ...(req.query.usuario_id ? { usuario_id: Number(req.query.usuario_id) } : {}),
+        ...(req.query.canal ? { canal: String(req.query.canal) } : {}),
+      },
+      orderBy: { fecha_colecta: 'asc' },
+      include: {
+        detalles: true,
+        socio: { select: { codigo_socio: true, nombre: true, apellido: true } },
+        usuario: { select: { id: true, username: true, nombre_completo: true } },
+        ubicacion: { select: { id: true, codigo: true, nombre: true } },
+      },
+    });
+
+    // Un acumulador por cada corte pedido, alimentados en una sola pasada
+    const porOficina = new Map<string, { clave: string; nombre: string; totales: TotalesCuadre; socios: Set<string> }>();
+    const porColector = new Map<string, { clave: string; nombre: string; totales: TotalesCuadre; socios: Set<string> }>();
+    const porCanal = new Map<string, { clave: string; nombre: string; totales: TotalesCuadre; socios: Set<string> }>();
+    const consolidado = totalesVacios();
+    const sociosTotales = new Set<string>();
+
+    const acumular = (
+      mapa: Map<string, { clave: string; nombre: string; totales: TotalesCuadre; socios: Set<string> }>,
+      clave: string,
+      nombre: string,
+      colecta: (typeof colectas)[number]
+    ) => {
+      const entrada = mapa.get(clave) ?? { clave, nombre, totales: totalesVacios(), socios: new Set<string>() };
+      sumarColecta(entrada.totales, colecta);
+      entrada.socios.add(colecta.socio.codigo_socio);
+      mapa.set(clave, entrada);
+    };
+
+    function sumarColecta(t: TotalesCuadre, colecta: (typeof colectas)[number]) {
+      t.operaciones++;
+      for (const d of colecta.detalles) {
+        const usd = Number(d.monto_usd);
+        const bs = Number(d.monto_bs);
+        if (d.servicio === 'ahorro') { t.ahorro_usd += usd; t.ahorro_bs += bs; }
+        else if (d.servicio === 'funeraria') { t.funeraria_usd += usd; t.funeraria_bs += bs; }
+        else if (d.servicio === 'salud') { t.salud_usd += usd; t.salud_bs += bs; }
+        else if (d.servicio === 'prestamo') { t.prestamos_usd += usd; t.prestamos_bs += bs; }
+        t.total_usd += usd;
+        t.total_bs += bs;
+      }
+    }
+
+    for (const colecta of colectas) {
+      acumular(porOficina, String(colecta.ubicacion_id ?? 'sin-oficina'),
+        colecta.ubicacion?.nombre ?? 'Sin oficina asignada', colecta);
+      acumular(porColector, String(colecta.usuario.id),
+        colecta.usuario.nombre_completo || colecta.usuario.username, colecta);
+      acumular(porCanal, colecta.canal,
+        colecta.canal === 'digital' ? 'Cajero digital' : 'Presencial', colecta);
+
+      sumarColecta(consolidado, colecta);
+      sociosTotales.add(colecta.socio.codigo_socio);
+    }
+
+    const materializar = (
+      mapa: Map<string, { clave: string; nombre: string; totales: TotalesCuadre; socios: Set<string> }>
+    ) =>
+      [...mapa.values()]
+        .map((e) => ({
+          clave: e.clave,
+          nombre: e.nombre,
+          totales: redondearTotales({ ...e.totales, personas: e.socios.size }),
+        }))
+        .sort((a, b) => b.totales.total_usd - a.totales.total_usd);
+
+    // Detalle con NOMBRES: el cliente lo pidió para poder rastrear diferencias
+    // en el consolidado sin tener que cruzar contra otro listado.
+    const detalle = colectas.map((c) => ({
+      colecta_id: c.id,
+      fecha: c.fecha_colecta,
+      codigo_socio: c.socio.codigo_socio,
+      socio: `${c.socio.apellido}, ${c.socio.nombre}`,
+      oficina: c.ubicacion?.nombre ?? null,
+      colector: c.usuario.nombre_completo || c.usuario.username,
+      canal: c.canal,
+      semanas: c.semanas_cobradas,
+      monto_usd: Number(c.monto_total_usd),
+      monto_bs: Number(c.monto_total_bs),
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        desde,
+        hasta,
+        por_oficina: materializar(porOficina),
+        por_colector: materializar(porColector),
+        por_canal: materializar(porCanal),
+        consolidado: redondearTotales({ ...consolidado, personas: sociosTotales.size }),
+        detalle,
+      },
+    });
+  } catch (error) {
+    responderError(res, error, 'Error al generar el cuadre de caja');
   }
 };
 

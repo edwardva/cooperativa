@@ -15,6 +15,7 @@ import {
   listarCierresCaja,
   reversarColecta,
   reportePorServicio,
+  reporteCaja,
   asientoContable,
 } from '../controllers/colectaController';
 import { authenticate } from '../middleware/authenticate';
@@ -59,6 +60,12 @@ router.get('/cierres', authorize('colecta', 'read'), listarCierresCaja);
  * Reemplaza los cuatro reportes por servicio del sistema viejo
  */
 router.get('/reportes/por-servicio', authorize('colecta', 'read'), reportePorServicio);
+
+/**
+ * GET /api/colecta/reportes/caja?desde=&hasta=&mes=&ubicacion_id=&usuario_id=&canal=
+ * Cuadre por oficina, colector y canal, mas el consolidado general
+ */
+router.get('/reportes/caja', authorize('colecta', 'read'), reporteCaja);
 
 /**
  * GET /api/colecta/reportes/asiento-contable?desde=&hasta=

@@ -207,10 +207,20 @@ export interface FilaReporte {
   codigo_socio: string
   cedula: string
   socio: string
+  /** Numero de acuerdo del servicio, que el cliente pidio ver en el listado */
+  numero_acuerdo: string | null
+  semanas: number | null
+  /** Hasta que ano y semana quedo pagado con este cobro */
+  pagado_hasta: Periodo | null
+  pagado_hasta_texto: string
+  es_reintegro: boolean
   concepto: string | null
   monto_usd: number
   monto_bs: number
   cajero: string
+  cajero_nombre: string
+  oficina: string | null
+  canal: string
 }
 
 export interface ReportePorServicio {
@@ -218,11 +228,59 @@ export interface ReportePorServicio {
   hasta: string
   filas: FilaReporte[]
   resumen: {
-    por_servicio: Record<string, { cantidad: number; usd: number; bs: number }>
+    por_servicio: Record<string, { cantidad: number; personas: number; usd: number; bs: number }>
     cantidad: number
+    /** Socios distintos, no operaciones */
+    personas: number
     total_usd: number
     total_bs: number
   }
+}
+
+/** Totales de un corte del cuadre (una oficina, un colector, un canal) */
+export interface TotalesCuadre {
+  ahorro_usd: number
+  funeraria_usd: number
+  salud_usd: number
+  prestamos_usd: number
+  total_usd: number
+  ahorro_bs: number
+  funeraria_bs: number
+  salud_bs: number
+  prestamos_bs: number
+  total_bs: number
+  operaciones: number
+  personas: number
+}
+
+export interface CorteCuadre {
+  clave: string
+  nombre: string
+  totales: TotalesCuadre
+}
+
+export interface FilaDetalleCaja {
+  colecta_id: number
+  fecha: string
+  codigo_socio: string
+  socio: string
+  oficina: string | null
+  colector: string
+  canal: string
+  semanas: number
+  monto_usd: number
+  monto_bs: number
+}
+
+/** Cuadre por oficina, colector y canal, mas el consolidado general */
+export interface ReporteCaja {
+  desde: string
+  hasta: string
+  por_oficina: CorteCuadre[]
+  por_colector: CorteCuadre[]
+  por_canal: CorteCuadre[]
+  consolidado: TotalesCuadre
+  detalle: FilaDetalleCaja[]
 }
 
 export interface LineaAsiento {
@@ -394,12 +452,32 @@ export const reversarColecta = async (
 // ============================================
 
 export const obtenerReportePorServicio = async (params: {
-  desde: string
-  hasta: string
+  desde?: string
+  hasta?: string
+  /** AAAA-MM: el ingreso del mes sin tener que sumar los reportes diarios */
+  mes?: string
   servicio?: string
   solo_mias?: boolean
+  ubicacion_id?: number
+  canal?: string
 }): Promise<Respuesta<ReportePorServicio>> => {
   const response = await apiClient.get('/colecta/reportes/por-servicio', { params })
+  return response.data
+}
+
+/**
+ * Cuadre de caja: detalle por oficina, por colector y por canal, mas el
+ * consolidado general. Evita sumar a mano los reportes diarios de cada oficina.
+ */
+export const obtenerReporteCaja = async (params: {
+  desde?: string
+  hasta?: string
+  mes?: string
+  ubicacion_id?: number
+  usuario_id?: number
+  canal?: string
+}): Promise<Respuesta<ReporteCaja>> => {
+  const response = await apiClient.get('/colecta/reportes/caja', { params })
   return response.data
 }
 
