@@ -21,6 +21,26 @@ import { BadRequestError, ConflictError, NotFoundError } from '../middleware/err
 import { normalizarCedula } from '../utils/cedula';
 import { distribuirAbono } from '../utils/amortizacion';
 import { resolverTasa } from '../services/tasaCambioService';
+import {
+  formatearPeriodo,
+  semanaActual,
+  type Periodo,
+} from '../utils/calendarioSemanal';
+import {
+  aplicarPago,
+  calcularSituacion,
+  coberturaDe,
+  semanasSinPagoDerivadas,
+} from '../services/coberturaService';
+import {
+  armarPaquete,
+  resumirServicio,
+  semanasParaPonerseAlDia,
+  tarifaDeAcuerdo,
+  validarIntegridadDelPaquete,
+  type AcuerdoCobrable,
+} from '../services/cobroSemanalService';
+import { obtenerTarifas, tipoCuentaAhorroObligatorio } from '../services/tarifasService';
 
 const prisma = new PrismaClient();
 
@@ -73,6 +93,19 @@ const registrarColectaSchema = z.object({
    */
   asamblea_id: z.number().int().positive().optional().nullable(),
 
+  /**
+   * Oficina y canal del cobro. El cuadre se pide por oficina, por colector y
+   * por canal, además del consolidado general (req. 9).
+   */
+  ubicacion_id: z.number().int().positive().optional().nullable(),
+  canal: z.enum(['presencial', 'digital']).optional().default('presencial'),
+
+  /**
+   * Permite saltarse la advertencia de adelanto. No salta el bloqueo cuando la
+   * cooperativa lo activa por parámetro: eso es una regla, no un aviso.
+   */
+  confirmar_advertencias: z.boolean().optional().default(false),
+
   detalles: z.array(detalleColectaSchema).min(1, 'Agregue al menos un cobro'),
   observaciones: z.string().max(500).optional().nullable(),
 });
@@ -119,6 +152,53 @@ async function obtenerTasaActual(): Promise<{ tasa: number; semanaId: number | n
 
 const redondear = (valor: number): number => Math.round(valor * 100) / 100;
 
+/**
+ * Acuerdos vigentes del socio con su situación ya calculada.
+ *
+ * Lo usan el cobro (para validar que el paquete esté completo) y el cálculo
+ * previo del importe, así que ambos ven exactamente lo mismo.
+ */
+async function cargarAcuerdosDelSocio(
+  socioId: number,
+  tarifas: Awaited<ReturnType<typeof obtenerTarifas>>,
+  actual: Periodo
+): Promise<AcuerdoCobrable[]> {
+  const beneficiarios = await prisma.beneficiario.findMany({
+    where: { socio_id: socioId },
+    include: {
+      acuerdos_funeraria: {
+        where: { estado: { in: ['activo', 'suspendido'] } },
+        include: { tipo_acuerdo: true },
+      },
+      acuerdos_salud: {
+        where: { estado: { in: ['activo', 'suspendido'] } },
+        include: { tipo_acuerdo: true },
+      },
+    },
+  });
+
+  return beneficiarios.flatMap((b) => [
+    ...b.acuerdos_funeraria.map((a) => ({
+      servicio: 'funeraria' as const,
+      referencia_id: a.id,
+      titulo: a.tipo_acuerdo.nombre,
+      detalle: `${b.nombre} ${b.apellido}`,
+      numero_acuerdo: a.numero_acuerdo,
+      monto_plan_usd: Number(a.tipo_acuerdo.monto_usd),
+      situacion: calcularSituacion(a, tarifas.semanas_suspension_funeraria, actual),
+    })),
+    ...b.acuerdos_salud.map((a) => ({
+      servicio: 'salud' as const,
+      referencia_id: a.id,
+      titulo: a.tipo_acuerdo.nombre,
+      detalle: `${b.nombre} ${b.apellido}`,
+      numero_acuerdo: a.numero_acuerdo,
+      monto_plan_usd: Number(a.tipo_acuerdo.monto_usd),
+      situacion: calcularSituacion(a, tarifas.semanas_suspension_salud, actual),
+    })),
+  ]);
+}
+
 const responderError = (res: Response, error: unknown, mensaje: string): void => {
   if (error instanceof BadRequestError || error instanceof ConflictError || error instanceof NotFoundError) {
     res.status(error.statusCode).json({
@@ -151,7 +231,12 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       throw new BadRequestError('Indique una cédula o un número de expediente');
     }
 
-    const { tasa } = await obtenerTasaActual();
+    const [{ tasa }, tarifas, codigoCuentaAhorro] = await Promise.all([
+      obtenerTasaActual(),
+      obtenerTarifas(),
+      tipoCuentaAhorroObligatorio(),
+    ]);
+    const actual = semanaActual();
 
     // Cédula si son solo dígitos (se normaliza igual que en el alta de socios);
     // en caso contrario se busca por expediente
@@ -168,7 +253,26 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         ubicacion: { select: { id: true, codigo: true, direccion: true } },
         cuentas_ahorro: {
           where: { estado: true },
-          include: { tipo_cuenta: { select: { id: true, codigo: true, nombre: true } } },
+          include: {
+            tipo_cuenta: { select: { id: true, codigo: true, nombre: true } },
+            // Movimientos recientes en la pantalla principal: el cliente pidió
+            // no tener que abrir otra ventana para verlos (req. 4)
+            movimientos: {
+              orderBy: { fecha_movimiento: 'desc' },
+              take: 5,
+              select: {
+                id: true,
+                tipo_movimiento: true,
+                monto_usd: true,
+                monto_bs: true,
+                moneda: true,
+                canal: true,
+                concepto: true,
+                referencia: true,
+                fecha_movimiento: true,
+              },
+            },
+          },
           orderBy: { numero_cuenta: 'asc' },
         },
         beneficiarios: {
@@ -220,66 +324,128 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
     // Se arma una vista plana de "cobrables" para que el frontend no tenga que
     // recorrer beneficiarios ni calcular montos
     const encontrados = socios.map((socio) => {
-      const ahorro = socio.cuentas_ahorro.map((cuenta) => ({
+      const cuentas = socio.cuentas_ahorro.map((cuenta) => ({
         tipo: 'ahorro' as const,
         referencia_id: cuenta.id,
         titulo: cuenta.tipo_cuenta.nombre,
+        codigo_tipo: cuenta.tipo_cuenta.codigo,
         detalle: cuenta.numero_cuenta,
         saldo_usd: Number(cuenta.saldo_usd),
         saldo_bs: Number(cuenta.saldo_bs),
+        bloqueado_usd: Number(cuenta.monto_bloqueado_usd),
+        // Lo que realmente puede retirar: el resto está comprometido como fianza
+        disponible_usd: redondear(Number(cuenta.saldo_usd) - Number(cuenta.monto_bloqueado_usd)),
         semanas_sin_pago: null as number | null,
         monto_sugerido_usd: null as number | null,
         estado: 'activo',
+        movimientos_recientes: cuenta.movimientos.map((m) => ({
+          id: m.id,
+          tipo: m.tipo_movimiento,
+          monto_usd: Number(m.monto_usd),
+          monto_bs: Number(m.monto_bs),
+          moneda: m.moneda,
+          canal: m.canal,
+          concepto: m.concepto,
+          referencia: m.referencia,
+          fecha: m.fecha_movimiento,
+        })),
       }));
 
-      const funeraria = socio.beneficiarios.flatMap((b) =>
+      // Cuenta que recibe el ahorro obligatorio: la del tipo configurado, y si
+      // no existe, la primera activa. El cajero no arma códigos a mano.
+      const cuentaAhorro =
+        cuentas.find((c) => c.codigo_tipo === codigoCuentaAhorro) ?? cuentas[0] ?? null;
+
+      // --- Acuerdos, con su situación calculada desde la cobertura ---
+      const acuerdosFuneraria: AcuerdoCobrable[] = socio.beneficiarios.flatMap((b) =>
         b.acuerdos_funeraria.map((acuerdo) => ({
-          tipo: 'funeraria' as const,
+          servicio: 'funeraria' as const,
           referencia_id: acuerdo.id,
           titulo: acuerdo.tipo_acuerdo.nombre,
-          detalle: `${b.nombre} ${b.apellido}${acuerdo.numero_acuerdo ? ` · ${acuerdo.numero_acuerdo}` : ''}`,
-          saldo_usd: null as number | null,
-          saldo_bs: null as number | null,
-          semanas_sin_pago: acuerdo.semanas_sin_pago,
-          // Sugerencia: ponerse al día. Si no debe nada, una semana.
-          monto_sugerido_usd: redondear(
-            Number(acuerdo.tipo_acuerdo.monto_usd) * Math.max(acuerdo.semanas_sin_pago, 1)
-          ),
-          monto_semanal_usd: Number(acuerdo.tipo_acuerdo.monto_usd),
-          estado: acuerdo.estado,
+          detalle: `${b.nombre} ${b.apellido}`,
+          numero_acuerdo: acuerdo.numero_acuerdo,
+          monto_plan_usd: Number(acuerdo.tipo_acuerdo.monto_usd),
+          situacion: calcularSituacion(acuerdo, tarifas.semanas_suspension_funeraria, actual),
         }))
       );
 
+      const acuerdosSalud: AcuerdoCobrable[] = socio.beneficiarios.flatMap((b) =>
+        b.acuerdos_salud.map((acuerdo) => ({
+          servicio: 'salud' as const,
+          referencia_id: acuerdo.id,
+          titulo: acuerdo.tipo_acuerdo.nombre,
+          detalle: `${b.nombre} ${b.apellido}`,
+          numero_acuerdo: acuerdo.numero_acuerdo,
+          monto_plan_usd: Number(acuerdo.tipo_acuerdo.monto_usd),
+          situacion: calcularSituacion(acuerdo, tarifas.semanas_suspension_salud, actual),
+        }))
+      );
+
+      const acuerdos = [...acuerdosFuneraria, ...acuerdosSalud];
+
+      // Resumen POR SERVICIO, no una fila por semana adeudada (req. 1)
+      const servicios = acuerdos.map((a) => resumirServicio(a, tarifas));
+
+      // --- Préstamos ---
       const prestamos = (prestamosPorSocio.get(socio.id) ?? []).map((p) => ({
         tipo: 'prestamo' as const,
         referencia_id: p.id,
         titulo: p.tipo_prestamo.nombre,
+        // Categoría, pagaré, moneda y saldo, separados en vez de amontonados
+        categoria: p.tipo_prestamo.nombre,
+        numero_pagare: p.numero_prestamo,
+        moneda: 'USD',
         detalle: `${p.numero_prestamo} · cuota $${Number(p.cuota_semanal_usd).toFixed(2)}`,
-        saldo_usd: Number(p.saldo_capital_usd) + Number(p.saldo_interes_usd) + Number(p.saldo_mora_usd),
-        saldo_bs: null as number | null,
+        saldo_usd: redondear(
+          Number(p.saldo_capital_usd) + Number(p.saldo_interes_usd) + Number(p.saldo_mora_usd)
+        ),
+        saldo_capital_usd: Number(p.saldo_capital_usd),
+        saldo_interes_usd: Number(p.saldo_interes_usd),
+        saldo_mora_usd: Number(p.saldo_mora_usd),
+        saldo_bs: redondear(
+          (Number(p.saldo_capital_usd) + Number(p.saldo_interes_usd) + Number(p.saldo_mora_usd)) * tasa
+        ),
+        fecha_desembolso: p.fecha_desembolso,
+        // El dato que hoy obliga a abrir otra pantalla (req. 5)
+        fecha_ultimo_abono: p.fecha_ultimo_abono,
         semanas_sin_pago: null as number | null,
-        // Sugerencia: una cuota semanal, mas la mora si la hay
         monto_sugerido_usd: redondear(Number(p.cuota_semanal_usd) + Number(p.saldo_mora_usd)),
         monto_semanal_usd: Number(p.cuota_semanal_usd),
         estado: p.estado,
       }));
 
-      const salud = socio.beneficiarios.flatMap((b) =>
-        b.acuerdos_salud.map((acuerdo) => ({
-          tipo: 'salud' as const,
-          referencia_id: acuerdo.id,
-          titulo: acuerdo.tipo_acuerdo.nombre,
-          detalle: `${b.nombre} ${b.apellido}`,
+      // --- Cobrables: se conserva la forma que ya consume el frontend ---
+      const cobrablesServicio = acuerdos.map((a) => {
+        const tarifa = tarifaDeAcuerdo(a, tarifas);
+        return {
+          tipo: a.servicio,
+          referencia_id: a.referencia_id,
+          titulo: a.titulo,
+          detalle: `${a.detalle}${a.numero_acuerdo ? ` · ${a.numero_acuerdo}` : ''}`,
           saldo_usd: null as number | null,
           saldo_bs: null as number | null,
-          semanas_sin_pago: acuerdo.semanas_sin_pago,
-          monto_sugerido_usd: redondear(
-            Number(acuerdo.tipo_acuerdo.monto_usd) * Math.max(acuerdo.semanas_sin_pago, 1)
-          ),
-          monto_semanal_usd: Number(acuerdo.tipo_acuerdo.monto_usd),
-          estado: acuerdo.estado,
-        }))
-      );
+          semanas_sin_pago: a.situacion.semanas_pendientes,
+          monto_sugerido_usd: redondear(tarifa * Math.max(a.situacion.semanas_pendientes, 1)),
+          monto_semanal_usd: tarifa,
+          estado: a.situacion.estado_registrado,
+          pagado_hasta: a.situacion.cobertura,
+          pagado_hasta_texto: formatearPeriodo(a.situacion.cobertura),
+          fecha_ultimo_pago: a.situacion.fecha_ultimo_pago,
+          semanas_adelantadas: a.situacion.semanas_adelantadas,
+        };
+      });
+
+      // Semanas sugeridas: las que hacen falta para dejar TODO al día
+      const pendientes = semanasParaPonerseAlDia(acuerdos);
+
+      // Paquete de una semana, para que la pantalla muestre el desglose al abrir
+      const paqueteSugerido = armarPaquete({
+        semanas: Math.max(pendientes, 1),
+        acuerdos,
+        tarifas,
+        tasa,
+        cuentaAhorroId: cuentaAhorro?.referencia_id ?? null,
+      });
 
       return {
         id: socio.id,
@@ -288,32 +454,146 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         nombre: socio.nombre,
         apellido: socio.apellido,
         estado: socio.estado,
+        es_trabajador: socio.es_trabajador,
         telefono: socio.telefono,
         ubicacion: socio.ubicacion,
-        cobrables: [...ahorro, ...funeraria, ...salud, ...prestamos],
+
+        cobrables: [...cuentas, ...cobrablesServicio, ...prestamos],
+
+        // Vistas ya resueltas para la pantalla principal
+        cuentas_ahorro: cuentas,
+        cuenta_ahorro_obligatorio_id: cuentaAhorro?.referencia_id ?? null,
+        servicios,
+        prestamos,
+        semanas_para_ponerse_al_dia: pendientes,
+        paquete_sugerido: paqueteSugerido,
+
         // Cantidad de acuerdos por servicio: en el sistema viejo son nu_fun y
         // nu_sal, los multiplicadores del subtotal
-        cantidad_funeraria: funeraria.length,
-        cantidad_salud: salud.length,
-        // Cuota semanal de cada servicio (el mayor si tiene varios planes)
-        cuota_funeraria_usd: funeraria.reduce((max, a) => Math.max(max, a.monto_semanal_usd ?? 0), 0),
-        cuota_salud_usd: salud.reduce((max, a) => Math.max(max, a.monto_semanal_usd ?? 0), 0),
-        // Mayor atraso entre sus acuerdos: es lo que sugiere cuántas semanas cobrar
-        mayor_atraso: Math.max(0, ...[...funeraria, ...salud].map((a) => a.semanas_sin_pago ?? 0)),
+        cantidad_funeraria: acuerdosFuneraria.length,
+        cantidad_salud: acuerdosSalud.length,
+        cuota_funeraria_usd: Math.max(
+          0,
+          ...acuerdosFuneraria.map((a) => tarifaDeAcuerdo(a, tarifas))
+        ),
+        cuota_salud_usd: Math.max(0, ...acuerdosSalud.map((a) => tarifaDeAcuerdo(a, tarifas))),
+        mayor_atraso: pendientes,
         asambleas_asistidas: asistencias
           .filter((a) => a.socio_id === socio.id)
           .map((a) => a.asamblea_id),
         alertas: {
           // Se avisa, no se bloquea: la decisión es del cajero
           socio_retirado: socio.estado === 'retirado',
-          acuerdos_suspendidos: [...funeraria, ...salud].filter((a) => a.estado === 'suspendido').length,
+          acuerdos_suspendidos: acuerdos.filter(
+            (a) => a.situacion.estado_registrado === 'suspendido'
+          ).length,
+          // Acuerdos cuyo estado guardado no coincide con lo que dice la
+          // cobertura: es el caso que el personal marcó como mal calculado
+          servicios_a_revisar: servicios.filter((sv) => sv.requiere_revision).length,
+          // Fianzas que comprometen su ahorro (req. 5)
+          ahorro_bloqueado_usd: redondear(
+            cuentas.reduce((total, c) => total + c.bloqueado_usd, 0)
+          ),
         },
       };
     });
 
-    res.json({ success: true, data: { encontrados, tasa, asambleas } });
+    res.json({
+      success: true,
+      data: {
+        encontrados,
+        tasa,
+        asambleas,
+        // Tarifas de SÓLO LECTURA: la pantalla las muestra, no las edita (req. 2)
+        tarifas,
+        semana_actual: actual,
+        semana_actual_texto: formatearPeriodo(actual),
+      },
+    });
   } catch (error) {
     responderError(res, error, 'Error al buscar el socio');
+  }
+};
+
+// ============================================
+// CÁLCULO DEL PAQUETE SEMANAL
+// ============================================
+
+const calcularPaqueteSchema = z.object({
+  socio_id: z.coerce.number().int().positive(),
+  semanas: z.coerce.number().int().min(1).max(104).default(1),
+  ahorro_adicional_usd: z.coerce.number().min(0).default(0),
+});
+
+/**
+ * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_usd=
+ *
+ * El cajero escribe cuántas semanas paga el socio y esto devuelve el importe:
+ * ahorro obligatorio más cada servicio contratado, con su desglose y el total
+ * en USD y en bolívares.
+ *
+ * Las tarifas vienen de parámetros y salen como SÓLO LECTURA. Lo único que se
+ * decide en la pantalla de cobro es la cantidad de semanas (req. 1 y 2).
+ */
+export const calcularPaquete = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const validacion = calcularPaqueteSchema.safeParse(req.query);
+    if (!validacion.success) {
+      throw new BadRequestError('Indique el socio y la cantidad de semanas');
+    }
+    const { socio_id, semanas, ahorro_adicional_usd } = validacion.data;
+
+    const [{ tasa }, tarifas, codigoCuenta] = await Promise.all([
+      obtenerTasaActual(),
+      obtenerTarifas(),
+      tipoCuentaAhorroObligatorio(),
+    ]);
+    const actual = semanaActual();
+
+    const socio = await prisma.socio.findUnique({ where: { id: socio_id } });
+    if (!socio) throw new NotFoundError('Socio no encontrado');
+
+    const acuerdos = await cargarAcuerdosDelSocio(socio_id, tarifas, actual);
+
+    const cuentas = await prisma.cuentaAhorro.findMany({
+      where: { socio_id, estado: true },
+      include: { tipo_cuenta: { select: { codigo: true } } },
+      orderBy: { numero_cuenta: 'asc' },
+    });
+    const cuentaAhorro =
+      cuentas.find((c) => c.tipo_cuenta.codigo === codigoCuenta) ?? cuentas[0] ?? null;
+
+    // Sólo se cobran los acuerdos activos: los suspendidos requieren reintegro,
+    // que es una decisión aparte del cajero.
+    const activos = acuerdos.filter((a) => a.situacion.estado_registrado === 'activo');
+
+    const paquete = armarPaquete({
+      semanas,
+      acuerdos: activos,
+      tarifas,
+      tasa,
+      cuentaAhorroId: cuentaAhorro?.id ?? null,
+      ahorroAdicionalUsd: ahorro_adicional_usd,
+    });
+
+    const pendientes = semanasParaPonerseAlDia(acuerdos);
+
+    res.json({
+      success: true,
+      data: {
+        ...paquete,
+        tarifas,
+        semana_actual: actual,
+        semana_actual_texto: formatearPeriodo(actual),
+        // Pendientes y adelantadas se suman: "una pendiente más diez
+        // adelantadas equivale a pagar once semanas"
+        semanas_pendientes: pendientes,
+        semanas_adelantadas: Math.max(0, semanas - pendientes),
+        acuerdos_suspendidos: acuerdos.length - activos.length,
+      },
+    });
+  } catch (error) {
+    responderError(res, error, 'Error al calcular el cobro');
   }
 };
 
@@ -341,11 +621,41 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
     }
 
     const datos = validacion.data;
-    const { tasa, semanaId } = await obtenerTasaActual();
+    const [{ tasa, semanaId }, tarifas] = await Promise.all([obtenerTasaActual(), obtenerTarifas()]);
+    const actual = semanaActual();
 
     const socio = await prisma.socio.findUnique({ where: { id: datos.socio_id } });
     if (!socio) {
       throw new NotFoundError('Socio no encontrado');
+    }
+
+    // ------------------------------------------------------------------
+    // Integridad del paquete, ANTES de escribir nada.
+    //
+    // "No permitir seleccionar únicamente uno de los servicios contratados
+    //  para pagar esa semana." Se valida aquí y no sólo en la pantalla: es una
+    // regla del negocio y no puede depender de que el cliente HTTP se porte
+    // bien.
+    // ------------------------------------------------------------------
+    const acuerdosDelSocio = await cargarAcuerdosDelSocio(datos.socio_id, tarifas, actual);
+
+    const cobrados = datos.detalles
+      .filter((d) => (d.servicio === 'funeraria' || d.servicio === 'salud') && !d.es_reintegro)
+      .map((d) => ({
+        servicio: d.servicio as 'funeraria' | 'salud',
+        referencia_id: d.referencia_id,
+        semanas: d.semanas ?? datos.semanas,
+      }));
+
+    const problemas = validarIntegridadDelPaquete({
+      acuerdosDelSocio,
+      cobrados,
+      tarifas,
+      semanasSolicitadas: datos.semanas,
+    });
+
+    if (problemas.length > 0) {
+      throw new BadRequestError(problemas.map((p) => p.mensaje).join(' '));
     }
 
     const resultado = await prisma.$transaction(async (tx) => {
@@ -408,27 +718,42 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
           semana_cobro: datos.semana_cobro ?? null,
           ano_cobro: datos.ano_cobro ?? null,
           referencia: datos.referencia ?? null,
+          ubicacion_id: datos.ubicacion_id ?? socio.ubicacion_id ?? null,
+          canal: datos.canal,
           monto_total_usd: totalUsd,
           monto_total_bs: totalBs,
           tasa_cambio: tasa,
+          // Tarifas congeladas: cambiarlas mañana no altera lo ya cobrado
+          tarifa_ahorro_usd: tarifas.ahorro_usd,
+          tarifa_funeraria_usd: tarifas.funeraria_usd,
+          tarifa_salud_usd: tarifas.salud_usd,
           observaciones: datos.observaciones ?? null,
         },
       });
 
-      // Ahora sí se impacta cada servicio
+      // Ahora sí se impacta cada servicio.
+      //
+      // El renglón de servicio se resuelve primero (para saber adónde queda la
+      // cobertura) y el detalle se escribe con ese dato: es lo que permite que
+      // el reverso devuelva la cobertura exacta sin tener que adivinarla.
       for (const item of preparados) {
         const { detalle, montoUsd, montoBs } = item;
 
-        await tx.detalleColecta.create({
-          data: {
-            colecta_id: colecta.id,
-            servicio: detalle.servicio,
-            referencia_id: detalle.referencia_id,
-            monto_usd: montoUsd,
-            monto_bs: montoBs,
-            concepto: detalle.concepto ?? null,
-          },
-        });
+        let datosDetalle: {
+          semanas: number | null;
+          tarifa_unitaria_usd: number | null;
+          cobertura_ano_antes: number | null;
+          cobertura_semana_antes: number | null;
+          cobertura_ano_despues: number | null;
+          cobertura_semana_despues: number | null;
+        } = {
+          semanas: null,
+          tarifa_unitaria_usd: null,
+          cobertura_ano_antes: null,
+          cobertura_semana_antes: null,
+          cobertura_ano_despues: null,
+          cobertura_semana_despues: null,
+        };
 
         if (detalle.servicio === 'ahorro') {
           const cuenta = (item as any).cuenta;
@@ -444,6 +769,10 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
               tasa_cambio: tasa,
               saldo_anterior_usd: saldoAnterior,
               saldo_nuevo_usd: saldoNuevo,
+              // El cuadre necesita saber si entraron bolívares o divisas, y si
+              // fue presencial o por el cajero digital (req. 4 y 9)
+              moneda: 'BS' as const,
+              canal: datos.canal,
               concepto: detalle.concepto ?? 'Colecta',
               referencia: `COL-${colecta.id}`,
             },
@@ -500,23 +829,50 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
               saldo_interes_bs: redondear(Math.max(interes, 0) * tasa),
               saldo_mora_usd: Math.max(mora, 0),
               saldo_mora_bs: redondear(Math.max(mora, 0) * tasa),
+              // El dato que hoy obliga a abrir otra pantalla para saber cuándo
+              // pagó por última vez (req. 5)
+              fecha_ultimo_abono: new Date(),
               ...(saldado ? { estado: 'saldado' as const } : {}),
             },
           });
         } else {
           const acuerdo = (item as any).acuerdo;
-          const montoSemanal = Number(acuerdo.tipo_acuerdo.monto_usd);
+          const tarifaUnitaria =
+            Number(acuerdo.tipo_acuerdo.monto_usd) > 0
+              ? Number(acuerdo.tipo_acuerdo.monto_usd)
+              : detalle.servicio === 'funeraria'
+                ? tarifas.funeraria_usd
+                : tarifas.salud_usd;
 
-          // El reintegro no cubre semanas: es el cargo por reactivar.
-          // Para un pago normal: lo indicado en el renglon, si no el driver
-          // global de la colecta, y como ultimo recurso deducido del monto.
+          // El reintegro es el cargo por reactivar: suma al total pero NO
+          // mueve la cobertura, porque no cubre ninguna semana.
           const semanasPagadas = detalle.es_reintegro
             ? 0
-            : detalle.semanas ??
+            : (detalle.semanas ??
               datos.semanas ??
-              (montoSemanal > 0 ? Math.floor(montoUsd / montoSemanal) : 0);
+              (tarifaUnitaria > 0 ? Math.floor(montoUsd / tarifaUnitaria) : 0));
 
-          const semanasRestantes = Math.max(acuerdo.semanas_sin_pago - semanasPagadas, 0);
+          // -----------------------------------------------------------
+          // Cobertura: aquí es donde el pago se traduce a "hasta cuándo".
+          //
+          // Es una suma sobre el calendario, así que un pago de diciembre que
+          // se pasa a enero no necesita ningún caso especial, y adelantar más
+          // allá del año en curso tampoco.
+          // -----------------------------------------------------------
+          const coberturaAntes = coberturaDe(acuerdo, actual);
+          const coberturaDespues =
+            coberturaAntes && semanasPagadas > 0
+              ? aplicarPago(coberturaAntes, semanasPagadas)
+              : coberturaAntes;
+
+          datosDetalle = {
+            semanas: semanasPagadas,
+            tarifa_unitaria_usd: tarifaUnitaria,
+            cobertura_ano_antes: coberturaAntes?.ano ?? null,
+            cobertura_semana_antes: coberturaAntes?.semana ?? null,
+            cobertura_ano_despues: coberturaDespues?.ano ?? null,
+            cobertura_semana_despues: coberturaDespues?.semana ?? null,
+          };
 
           const datosMovimiento = {
             acuerdo_id: acuerdo.id,
@@ -525,14 +881,33 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
             monto_bs: montoBs,
             tasa_cambio: tasa,
             semanas_pagadas: semanasPagadas,
+            // Hasta cuándo dejó cubierto el acuerdo ESTE movimiento
+            ano_cobertura: coberturaDespues?.ano ?? null,
+            semana_cobertura: coberturaDespues?.semana ?? null,
             concepto: detalle.concepto ?? (detalle.es_reintegro ? 'Reintegro' : 'Colecta'),
           };
+
+          // `semanas_sin_pago` pasa a ser un valor derivado: se recalcula desde
+          // la cobertura en vez de restarse a ciegas. Se sigue escribiendo
+          // porque lo leen funeraria, salud y los reportes.
+          const semanasRestantes = coberturaDespues
+            ? semanasSinPagoDerivadas(coberturaDespues, actual)
+            : Math.max(acuerdo.semanas_sin_pago - semanasPagadas, 0);
 
           // Se reactiva al pagar el reintegro, o al quedar sin atraso
           const reactivar =
             acuerdo.estado === 'suspendido' && (detalle.es_reintegro || semanasRestantes === 0);
+
           const datosAcuerdo = {
             semanas_sin_pago: semanasRestantes,
+            ...(coberturaDespues
+              ? {
+                  ano_pagado_hasta: coberturaDespues.ano,
+                  semana_pagada_hasta: coberturaDespues.semana,
+                }
+              : {}),
+            // Cuándo se cobró, que es OTRO dato distinto de hasta cuándo cubre
+            ...(semanasPagadas > 0 ? { fecha_ultimo_pago: new Date() } : {}),
             ...(reactivar ? { estado: 'activo' as const, fecha_suspension: null } : {}),
           };
 
@@ -540,10 +915,26 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
             await tx.movimientoFuneraria.create({ data: datosMovimiento });
             await tx.acuerdoFuneraria.update({ where: { id: acuerdo.id }, data: datosAcuerdo });
           } else {
-            await tx.movimientoSalud.create({ data: datosMovimiento });
+            await tx.movimientoSalud.create({
+              data: { ...datosMovimiento, ubicacion_id: datos.ubicacion_id ?? socio.ubicacion_id ?? null },
+            });
             await tx.acuerdoSalud.update({ where: { id: acuerdo.id }, data: datosAcuerdo });
           }
         }
+
+        // El detalle se escribe al final, ya con la cobertura resuelta
+        await tx.detalleColecta.create({
+          data: {
+            colecta_id: colecta.id,
+            servicio: detalle.servicio,
+            referencia_id: detalle.referencia_id,
+            monto_usd: montoUsd,
+            monto_bs: montoBs,
+            es_reintegro: detalle.es_reintegro,
+            concepto: detalle.concepto ?? null,
+            ...datosDetalle,
+          },
+        });
       }
 
       // La caja es donde se ve al socio: si el cajero marca que asistio, la
@@ -864,6 +1255,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
     }
 
     const tasa = Number(colecta.tasa_cambio);
+    const actual = semanaActual();
 
     await prisma.$transaction(async (tx) => {
       for (const detalle of colecta.detalles) {
@@ -896,20 +1288,73 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
             where: { id: cuenta.id },
             data: { saldo_usd: saldoNuevo, saldo_bs: redondear(saldoNuevo * tasa) },
           });
-        } else if (detalle.servicio === 'funeraria' || detalle.servicio === 'salud') {
-          // Se recupera cuántas semanas cubrió el pago para devolverlas
-          const movimiento =
-            detalle.servicio === 'funeraria'
-              ? await tx.movimientoFuneraria.findFirst({
-                  where: { acuerdo_id: detalle.referencia_id, tipo_movimiento: 'pago' },
-                  orderBy: { created_at: 'desc' },
-                })
-              : await tx.movimientoSalud.findFirst({
-                  where: { acuerdo_id: detalle.referencia_id, tipo_movimiento: 'pago' },
-                  orderBy: { created_at: 'desc' },
-                });
+        } else if (detalle.servicio === 'prestamo') {
+          // El cliente pidió expresamente poder reversar abonos a préstamo
+          // (req. 6). Antes el reverso de la colecta los dejaba aplicados.
+          const prestamo = await tx.prestamo.findUnique({ where: { id: detalle.referencia_id } });
+          if (!prestamo) continue;
 
-          const semanas = movimiento?.semanas_pagadas ?? 0;
+          // Se busca el abono de ESTA colecta, no "el último": entremedio puede
+          // haber habido otro abono desde el módulo de préstamos.
+          const abono = await tx.abonoPrestamo.findFirst({
+            where: {
+              prestamo_id: prestamo.id,
+              reversado: false,
+              concepto: { contains: `Colecta #${colecta.id}` },
+            },
+            orderBy: { fecha_abono: 'desc' },
+          });
+          if (!abono) continue;
+
+          await tx.abonoPrestamo.update({
+            where: { id: abono.id },
+            data: {
+              reversado: true,
+              fecha_reverso: new Date(),
+              motivo_reverso: validacion.data.motivo,
+              reversado_por: req.user!.userId,
+            },
+          });
+
+          // Se devuelve cada saldo a lo que era: capital, interés y mora
+          const capital = redondear(
+            Number(prestamo.saldo_capital_usd) + Number(abono.aplicado_capital_usd)
+          );
+          const interes = redondear(
+            Number(prestamo.saldo_interes_usd) + Number(abono.aplicado_interes_usd)
+          );
+          const mora = redondear(Number(prestamo.saldo_mora_usd) + Number(abono.aplicado_mora_usd));
+
+          // Fecha del último abono: la del abono vigente anterior, si queda alguno
+          const anterior = await tx.abonoPrestamo.findFirst({
+            where: { prestamo_id: prestamo.id, reversado: false, id: { not: abono.id } },
+            orderBy: { fecha_abono: 'desc' },
+            select: { fecha_abono: true },
+          });
+
+          await tx.prestamo.update({
+            where: { id: prestamo.id },
+            data: {
+              saldo_capital_usd: capital,
+              saldo_capital_bs: redondear(capital * tasa),
+              saldo_interes_usd: interes,
+              saldo_interes_bs: redondear(interes * tasa),
+              saldo_mora_usd: mora,
+              saldo_mora_bs: redondear(mora * tasa),
+              fecha_ultimo_abono: anterior?.fecha_abono ?? null,
+              // Si el abono lo había saldado, vuelve a estar activo
+              ...(prestamo.estado === 'saldado' ? { estado: 'activo' as const } : {}),
+            },
+          });
+        } else if (detalle.servicio === 'funeraria' || detalle.servicio === 'salud') {
+          // La cobertura anterior viene GUARDADA en el detalle: se devuelve
+          // exactamente adonde estaba. Antes se buscaba "el último movimiento
+          // del acuerdo", que podía ser el de otra operación posterior.
+          const semanas = detalle.semanas ?? 0;
+          const coberturaAntes =
+            detalle.cobertura_ano_antes !== null && detalle.cobertura_semana_antes !== null
+              ? { ano: detalle.cobertura_ano_antes, semana: detalle.cobertura_semana_antes }
+              : null;
 
           const datosReverso = {
             acuerdo_id: detalle.referencia_id,
@@ -918,8 +1363,19 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
             monto_bs: montoBs,
             tasa_cambio: tasa,
             semanas_pagadas: -semanas,
+            ano_cobertura: coberturaAntes?.ano ?? null,
+            semana_cobertura: coberturaAntes?.semana ?? null,
             concepto: `Reverso de colecta #${colecta.id}: ${validacion.data.motivo}`,
           };
+
+          // Datos viejos sin cobertura guardada: se cae al cálculo por contador
+          const datosAcuerdo = coberturaAntes
+            ? {
+                ano_pagado_hasta: coberturaAntes.ano,
+                semana_pagada_hasta: coberturaAntes.semana,
+                semanas_sin_pago: semanasSinPagoDerivadas(coberturaAntes, actual),
+              }
+            : null;
 
           if (detalle.servicio === 'funeraria') {
             const acuerdo = await tx.acuerdoFuneraria.findUnique({ where: { id: detalle.referencia_id } });
@@ -927,7 +1383,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
             await tx.movimientoFuneraria.create({ data: datosReverso });
             await tx.acuerdoFuneraria.update({
               where: { id: acuerdo.id },
-              data: { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas },
+              data: datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas },
             });
           } else {
             const acuerdo = await tx.acuerdoSalud.findUnique({ where: { id: detalle.referencia_id } });
@@ -935,7 +1391,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
             await tx.movimientoSalud.create({ data: datosReverso });
             await tx.acuerdoSalud.update({
               where: { id: acuerdo.id },
-              data: { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas },
+              data: datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas },
             });
           }
         }

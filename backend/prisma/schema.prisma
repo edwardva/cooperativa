@@ -77,6 +77,9 @@ model Socio {
   fecha_inscripcion DateTime    @db.Date
   estado            EstadoSocio @default(activo)
   es_delegado       Boolean     @default(false)
+  // Socio trabajador vs. no trabajador: condiciona las categorias de prestamo
+  // a las que puede acceder (req. 7 de la reunion)
+  es_trabajador     Boolean     @default(false)
   ubicacion_id      Int?
   foto_url          String?     @db.VarChar(255) // URL antigua (deprecado)
   foto              Bytes? // Foto del socio almacenada como BLOB
@@ -162,9 +165,10 @@ model Ubicacion {
   created_at DateTime @default(now())
 
   // Relaciones
-  socios      Socio[]
+  socios            Socio[]
   movimientos_salud MovimientoSalud[]
-  asambleas Asamblea[]
+  asambleas         Asamblea[]
+  colectas          Colecta[]
 
   @@map("ubicaciones")
 }
@@ -220,6 +224,11 @@ model MovimientoAhorro {
   tasa_cambio        Decimal  @db.Decimal(10, 4) // Tasa en el momento de la transacción
   saldo_anterior_usd Decimal  @db.Decimal(12, 2)
   saldo_nuevo_usd    Decimal  @db.Decimal(12, 2)
+  // Moneda en que el socio entrego el dinero. La cuenta lleva ambos saldos,
+  // pero el cuadre de caja necesita saber si entraron bolivares o divisas.
+  moneda             Moneda   @default(BS)
+  // Presencial o cajero digital: el cliente pidio diferenciarlos (req. 4)
+  canal              String   @default("presencial") @db.VarChar(20)
   concepto           String?  @db.Text
   referencia         String?  @db.VarChar(50)
   fecha_movimiento   DateTime @default(now())
@@ -253,19 +262,31 @@ model TipoAcuerdoFuneraria {
 }
 
 model AcuerdoFuneraria {
-  id               Int            @id @default(autoincrement())
-  beneficiario_id  Int
-  tipo_acuerdo_id  Int
-  numero_acuerdo   String?        @unique @db.VarChar(20)
-  numero_contrato  String?        @db.VarChar(20)
-  estado           EstadoServicio @default(activo)
-  semanas_sin_pago Int            @default(0)
-  fecha_suspension DateTime?      @db.Date
-  fecha_retiro     DateTime?      @db.Date
-  motivo_retiro    String?        @db.Text
-  fecha_inicio     DateTime       @default(now()) @db.Date
-  created_at       DateTime       @default(now())
-  updated_at       DateTime       @updatedAt
+  id              Int            @id @default(autoincrement())
+  beneficiario_id Int
+  tipo_acuerdo_id Int
+  numero_acuerdo  String?        @unique @db.VarChar(20)
+  numero_contrato String?        @db.VarChar(20)
+  estado          EstadoServicio @default(activo)
+
+  // COBERTURA: hasta que (ano, semana) quedo pagado el servicio.
+  //
+  // Es lo que el cliente pide ver y lo unico que permite adelantar semanas y
+  // cruzar diciembre-enero. `semanas_sin_pago` pasa a ser un valor DERIVADO de
+  // la cobertura contra la semana actual; se mantiene poblado porque lo leen
+  // los modulos de funeraria, salud y los reportes.
+  ano_pagado_hasta    Int?
+  semana_pagada_hasta Int?
+  // Cuando se cobro, que es distinto de hasta cuando quedo cubierto
+  fecha_ultimo_pago   DateTime?
+
+  semanas_sin_pago Int       @default(0)
+  fecha_suspension DateTime? @db.Date
+  fecha_retiro     DateTime? @db.Date
+  motivo_retiro    String?   @db.Text
+  fecha_inicio     DateTime  @default(now()) @db.Date
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
   // Relaciones
   beneficiario Beneficiario          @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
@@ -286,6 +307,10 @@ model MovimientoFuneraria {
   monto_bs         Decimal  @db.Decimal(10, 2)
   tasa_cambio      Decimal  @db.Decimal(10, 4)
   semanas_pagadas  Int? // Cuántas semanas cubre este pago
+  // Hasta que (ano, semana) dejo cubierto el acuerdo ESTE movimiento. Es lo que
+  // sale en los reportes y en el archivo para la funeraria externa.
+  ano_cobertura    Int?
+  semana_cobertura Int?
   concepto         String?  @db.Text
   fecha_movimiento DateTime @default(now())
   created_at       DateTime @default(now())
@@ -317,24 +342,30 @@ model TipoAcuerdoSalud {
 }
 
 model AcuerdoSalud {
-  id                   Int                 @id @default(autoincrement())
-  beneficiario_id      Int
-  tipo_acuerdo_id      Int
-  numero_acuerdo       String?             @db.VarChar(20) // Compartido por hasta 9 personas (titular + 8 beneficiarios)
-  numero_contrato      String?             @db.VarChar(20)
-  estado               EstadoServicio      @default(activo)
-  semanas_sin_pago     Int                 @default(0)
-  fecha_suspension     DateTime?           @db.Date
-  fecha_retiro         DateTime?           @db.Date
-  motivo_retiro        String?             @db.Text // 'Socio' | 'Voluntario' | 'Art. 5'
-  fecha_inicio         DateTime            @default(now()) @db.Date
-  created_at           DateTime            @default(now())
-  updated_at           DateTime            @updatedAt
+  id              Int            @id @default(autoincrement())
+  beneficiario_id Int
+  tipo_acuerdo_id Int
+  numero_acuerdo  String?        @db.VarChar(20) // Compartido por hasta 9 personas (titular + 8 beneficiarios)
+  numero_contrato String?        @db.VarChar(20)
+  estado          EstadoServicio @default(activo)
+
+  // Cobertura pagada: ver la nota en AcuerdoFuneraria
+  ano_pagado_hasta    Int?
+  semana_pagada_hasta Int?
+  fecha_ultimo_pago   DateTime?
+
+  semanas_sin_pago Int       @default(0)
+  fecha_suspension DateTime? @db.Date
+  fecha_retiro     DateTime? @db.Date
+  motivo_retiro    String?   @db.Text // 'Socio' | 'Voluntario' | 'Art. 5'
+  fecha_inicio     DateTime  @default(now()) @db.Date
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
   // Relaciones
-  beneficiario         Beneficiario        @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
-  tipo_acuerdo         TipoAcuerdoSalud    @relation(fields: [tipo_acuerdo_id], references: [id])
-  movimientos          MovimientoSalud[]
+  beneficiario Beneficiario      @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
+  tipo_acuerdo TipoAcuerdoSalud  @relation(fields: [tipo_acuerdo_id], references: [id])
+  movimientos  MovimientoSalud[]
 
   @@unique([numero_acuerdo, beneficiario_id])
   @@index([beneficiario_id])
@@ -344,22 +375,26 @@ model AcuerdoSalud {
 }
 
 model MovimientoSalud {
-  id                Int            @id @default(autoincrement())
-  acuerdo_id        Int
-  tipo_movimiento   String         @db.VarChar(20) // pago, suspension, reactivacion
-  monto_usd         Decimal        @db.Decimal(10, 2)
-  monto_bs          Decimal        @db.Decimal(10, 2)
-  tasa_cambio       Decimal        @db.Decimal(10, 4)
-  semanas_pagadas   Int?
-  numero_recibo     String?        @db.VarChar(30)
-  ubicacion_id      Int?
-  concepto          String?        @db.Text
-  fecha_movimiento  DateTime       @default(now())
-  created_at        DateTime       @default(now())
+  id               Int      @id @default(autoincrement())
+  acuerdo_id       Int
+  tipo_movimiento  String   @db.VarChar(20) // pago, suspension, reactivacion
+  monto_usd        Decimal  @db.Decimal(10, 2)
+  monto_bs         Decimal  @db.Decimal(10, 2)
+  tasa_cambio      Decimal  @db.Decimal(10, 4)
+  semanas_pagadas  Int?
+  // Hasta que (ano, semana) dejo cubierto el acuerdo ESTE movimiento
+  ano_cobertura    Int?
+  semana_cobertura Int?
+  numero_recibo    String?  @db.VarChar(30)
+  ubicacion_id     Int?
+  concepto         String?  @db.Text
+  fecha_movimiento DateTime @default(now())
+  created_at       DateTime @default(now())
 
   // Relaciones
-  acuerdo           AcuerdoSalud   @relation(fields: [acuerdo_id], references: [id])
-  ubicacion         Ubicacion?     @relation(fields: [ubicacion_id], references: [id])
+  acuerdo   AcuerdoSalud @relation(fields: [acuerdo_id], references: [id])
+  ubicacion Ubicacion?   @relation(fields: [ubicacion_id], references: [id])
+
   @@index([acuerdo_id])
   @@index([fecha_movimiento])
   @@index([numero_recibo])
@@ -415,6 +450,9 @@ model Prestamo {
   estado              EstadoPrestamo @default(activo)
   fecha_desembolso    DateTime       @db.Date
   fecha_vencimiento   DateTime       @db.Date
+  // El cliente ve hoy la fecha de otorgamiento y tiene que abrir otra pantalla
+  // para saber cuando pago por ultima vez (req. 5 de la reunion)
+  fecha_ultimo_abono  DateTime?
   created_at          DateTime       @default(now())
   updated_at          DateTime       @updatedAt
 
@@ -476,20 +514,27 @@ model PlanPago {
 }
 
 model AbonoPrestamo {
-  id                   Int      @id @default(autoincrement())
+  id                   Int     @id @default(autoincrement())
   prestamo_id          Int
-  monto_usd            Decimal  @db.Decimal(10, 2)
-  monto_bs             Decimal  @db.Decimal(10, 2)
-  tasa_cambio          Decimal  @db.Decimal(10, 4)
-  aplicado_capital_usd Decimal  @db.Decimal(10, 2)
-  aplicado_capital_bs  Decimal  @db.Decimal(10, 2)
-  aplicado_interes_usd Decimal  @db.Decimal(10, 2)
-  aplicado_interes_bs  Decimal  @db.Decimal(10, 2)
-  aplicado_mora_usd    Decimal  @default(0) @db.Decimal(10, 2)
-  aplicado_mora_bs     Decimal  @default(0) @db.Decimal(10, 2)
-  concepto             String?  @db.Text
-  fecha_abono          DateTime @default(now())
-  created_at           DateTime @default(now())
+  monto_usd            Decimal @db.Decimal(10, 2)
+  monto_bs             Decimal @db.Decimal(10, 2)
+  tasa_cambio          Decimal @db.Decimal(10, 4)
+  aplicado_capital_usd Decimal @db.Decimal(10, 2)
+  aplicado_capital_bs  Decimal @db.Decimal(10, 2)
+  aplicado_interes_usd Decimal @db.Decimal(10, 2)
+  aplicado_interes_bs  Decimal @db.Decimal(10, 2)
+  aplicado_mora_usd    Decimal @default(0) @db.Decimal(10, 2)
+  aplicado_mora_bs     Decimal @default(0) @db.Decimal(10, 2)
+  concepto             String? @db.Text
+
+  // Reverso del abono: no se borra, se marca y se deja rastro (req. 6)
+  reversado      Boolean   @default(false)
+  fecha_reverso  DateTime?
+  motivo_reverso String?   @db.Text
+  reversado_por  Int?
+
+  fecha_abono DateTime @default(now())
+  created_at  DateTime @default(now())
 
   // Relaciones
   prestamo Prestamo @relation(fields: [prestamo_id], references: [id])
@@ -540,6 +585,17 @@ model Colecta {
   ano_cobro        Int?
   referencia       String? @db.VarChar(50)
 
+  // Oficina y canal: el cuadre se pide por oficina, por colector y por canal,
+  // ademas del consolidado general (req. 9)
+  ubicacion_id Int?
+  canal        String @default("presencial") @db.VarChar(20)
+
+  // Tarifas vigentes al cobrar. Se guardan para que un cambio posterior de
+  // parametros no altere transacciones historicas.
+  tarifa_ahorro_usd    Decimal? @db.Decimal(10, 4)
+  tarifa_funeraria_usd Decimal? @db.Decimal(10, 4)
+  tarifa_salud_usd     Decimal? @db.Decimal(10, 4)
+
   // Reverso: la colecta no se borra, se marca. Deja rastro de quien y por que.
   reversada      Boolean   @default(false)
   fecha_reverso  DateTime?
@@ -552,8 +608,10 @@ model Colecta {
   socio          Socio            @relation(fields: [socio_id], references: [id])
   usuario        Usuario          @relation("UsuarioColecta", fields: [usuario_id], references: [id])
   semana_colecta SemanaColecta?   @relation(fields: [semana_colecta_id], references: [id])
+  ubicacion      Ubicacion?       @relation(fields: [ubicacion_id], references: [id])
   detalles       DetalleColecta[]
 
+  @@index([ubicacion_id])
   @@index([socio_id])
   @@index([fecha_colecta])
   @@index([usuario_id])
@@ -563,14 +621,30 @@ model Colecta {
 }
 
 model DetalleColecta {
-  id            Int      @id @default(autoincrement())
+  id            Int     @id @default(autoincrement())
   colecta_id    Int
-  servicio      String   @db.VarChar(20) // ahorro, funeraria, salud, prestamo
+  servicio      String  @db.VarChar(20) // ahorro, funeraria, salud, prestamo
   referencia_id Int? // ID del acuerdo o préstamo
-  monto_usd     Decimal  @db.Decimal(10, 2)
-  monto_bs      Decimal  @db.Decimal(10, 2)
-  concepto      String?  @db.Text
-  created_at    DateTime @default(now())
+  monto_usd     Decimal @db.Decimal(10, 2)
+  monto_bs      Decimal @db.Decimal(10, 2)
+
+  // Cuantas semanas cubrio ESTE renglon y a que tarifa unitaria. Guardarlo aqui
+  // hace el reverso exacto: hoy hay que adivinarlo buscando "el ultimo
+  // movimiento del acuerdo", que puede no ser el de esta colecta.
+  semanas             Int?
+  tarifa_unitaria_usd Decimal? @db.Decimal(10, 4)
+  // Cargo por reactivar un acuerdo suspendido: suma al total pero NO cubre semanas
+  es_reintegro        Boolean  @default(false)
+
+  // Cobertura del acuerdo antes y despues del renglon. El reverso devuelve
+  // exactamente a `_antes`, sin recalcular nada.
+  cobertura_ano_antes      Int?
+  cobertura_semana_antes   Int?
+  cobertura_ano_despues    Int?
+  cobertura_semana_despues Int?
+
+  concepto   String?  @db.Text
+  created_at DateTime @default(now())
 
   // Relaciones
   colecta Colecta @relation(fields: [colecta_id], references: [id], onDelete: Cascade)
@@ -582,6 +656,7 @@ model DetalleColecta {
 model CierreCaja {
   id                     Int      @id @default(autoincrement())
   usuario_id             Int
+  ubicacion_id           Int?
   fecha_cierre           DateTime @default(now())
   fecha_inicio_operacion DateTime @db.Date
   fecha_fin_operacion    DateTime @db.Date

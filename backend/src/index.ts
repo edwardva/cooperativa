@@ -26,6 +26,9 @@ import ahorroRouter from './routes/ahorro';
 import funerariaRouter from './routes/funeraria';
 import saludRouter from './routes/salud';
 import { iniciarJobSemanalSalud } from './jobs/saludSuspension';
+import { sembrarParametrosColecta } from './services/tarifasService';
+import { mantenerCalendario } from './services/semanasColectaService';
+import { iniciarJobCalendarioColecta } from './jobs/calendarioColecta';
 
 const app: Application = express();
 
@@ -156,6 +159,13 @@ app.listen(PORT, () => {
   if (process.env.SINCRONIZAR_TASA !== 'false') {
     iniciarSincronizacionAutomatica(Number(process.env.TASA_INTERVALO_HORAS ?? 6));
   }
+
+  // El calendario de colecta se mantiene solo: las semanas del año siguiente
+  // se crean con meses de antelación, así que en diciembre ya están y nadie
+  // tiene que llamar al proveedor para poder seguir cobrando.
+  void sembrarParametrosColecta();
+  void mantenerCalendario();
+  iniciarJobCalendarioColecta();
 });
 
 // Manejo de errores no capturados

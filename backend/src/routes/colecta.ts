@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import {
   buscarSocioParaColecta,
+  calcularPaquete,
   registrarColecta,
   obtenerColecta,
   listarColectas,
@@ -30,6 +31,12 @@ router.use(authenticate);
  * Búsqueda unificada: devuelve el socio con todo lo cobrable
  */
 router.get('/buscar', authorize('colecta', 'read'), buscarSocioParaColecta);
+
+/**
+ * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_usd=
+ * Importe del paquete semanal, para el desglose en vivo de la pantalla
+ */
+router.get('/calcular', authorize('colecta', 'read'), calcularPaquete);
 
 /**
  * GET /api/colecta/cierre/previo

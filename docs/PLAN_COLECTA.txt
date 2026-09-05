@@ -1,0 +1,372 @@
+Te dejo los requisitos organizados por módulo, en un formato que puedes copiar y pasarle a Claude Code. Distingo las reglas descritas por el cliente, las mejoras solicitadas y los puntos que necesitan confirmación porque la transcripción tiene fragmentos confusos.
+
+---
+
+**Instrucciones para Claude Code**
+
+Revisa el sistema actual y contrasta su implementación con los siguientes requisitos obtenidos de una reunión con el cliente.
+
+Conserva las funcionalidades existentes que cumplan estas reglas. Implementa las mejoras faltantes siguiendo la arquitectura del proyecto. No conviertas los puntos pendientes de confirmación en reglas definitivas.
+
+La prioridad del cliente es poder operar la **colecta presencial**, incluyendo pagos adelantados que pasen de diciembre a enero, sin depender de un técnico para habilitar cada año.
+
+**1. Colecta: pantalla principal y cobro integrado**
+
+Es el módulo central de la solicitud.
+
+**Información del asociado**
+
+Al consultar por número de socio o expediente, mostrar:
+
+- Identificación del asociado.
+- Servicios contratados: funeraria y/o salud.
+- Saldo de ahorro y movimientos recientes.
+- Año y semana actual.
+- Fecha del último pago de los servicios.
+- Año y semana hasta los que tiene pagado cada servicio.
+- Cantidad de semanas pendientes.
+- Estado del servicio, incluyendo suspensión cuando corresponda.
+- Préstamos activos y sus saldos restantes.
+
+Distinguir claramente **la fecha en que se realizó el pago** de **la fecha o semana hasta la que quedó cubierto el servicio**.
+
+Mostrar un resumen por servicio, aunque existan varias semanas pendientes. No es necesario generar una fila por cada semana adeudada.
+
+**Cobro semanal**
+
+- Permitir ingresar la cantidad de semanas que el asociado desea pagar.
+- Calcular automáticamente el importe correspondiente a los servicios que tenga contratados y al ahorro obligatorio.
+- Mostrar el desglose de ahorro, funeraria, salud y total.
+- Cuando tenga ambos servicios, el pago semanal debe incluir los dos más el ahorro obligatorio.
+- No permitir seleccionar únicamente uno de los servicios contratados para pagar esa semana.
+- Si solo tiene uno de los servicios, cobrar ese servicio y el ahorro correspondiente.
+- Los importes unitarios deben provenir de parámetros; no deben editarse directamente en la pantalla de cobro.
+
+**Semanas adelantadas**
+
+- La política operativa mencionada permite adelantar hasta **10 semanas**.
+- Las semanas pendientes se suman a las que se adelantan. Ejemplo mencionado: una semana pendiente más diez adelantadas equivale a pagar once semanas.
+- El sistema anterior permite ingresar cantidades superiores a diez; el límite lo aplica el personal.
+
+**Pendiente de confirmar:** si el nuevo sistema debe bloquear los adelantos superiores a diez semanas, mostrar una advertencia o permitir excepciones autorizadas. No imponer un bloqueo definitivo sin resolverlo.
+
+**Operaciones desde la misma pantalla**
+
+El cliente solicita evitar cambiar continuamente de ventanas. Desde la consulta del asociado debe poder:
+
+- Cobrar la colecta.
+- Registrar ahorro adicional.
+- Registrar depósitos de ahorro en bolívares o divisas.
+- Seleccionar un préstamo y registrar un abono.
+- Consultar el historial completo.
+
+El abono a préstamos es una operación voluntaria, separada de la obligación de pagar juntos los conceptos semanales de colecta.
+
+**2. Parámetros de colecta y tasa de cambio**
+
+- Permitir configurar el aporte semanal de ahorro y las cuotas de funeraria y salud.
+- Los valores de referencia mencionados son:
+  - Ahorro: **USD 0,03 por semana**.
+  - Funeraria: **USD 0,75 por semana**.
+  - Salud: **USD 0,96 por semana**.
+- Estos valores son modificables por acuerdos de la cooperativa; no deben quedar fijos en el código.
+- La cooperativa utiliza como referencia la tasa del BCV que toma el lunes y la mantiene hasta el domingo.
+- Permitir actualizar los parámetros para la nueva semana.
+- Calcular los montos en bolívares a partir de los valores configurados y la tasa semanal.
+- Mostrar esos importes como información de solo lectura en la pantalla de colecta.
+
+**Pendientes de confirmar:**
+
+- Regla exacta de redondeo y cantidad de decimales de la tasa.
+- Tratamiento de semanas atrasadas y adelantadas: confirmar si todas se cobran con la tarifa vigente al pagar.
+- Qué tasa usar cuando no haya una nueva publicación el lunes.
+- Confirmar los valores iniciales antes de cargarlos: las cifras de ejemplo de la transcripción contienen errores.
+
+**Recomendación técnica:** guardar en cada cobro la tasa y las tarifas utilizadas para que los cambios posteriores no alteren transacciones históricas.
+
+**3. Calendario de cobro y continuidad entre años**
+
+Problema actual: al llegar a la última semana del año, el sistema requiere intervención del proveedor para continuar cobrando.
+
+Requisitos:
+
+- Permitir cobrar semanas del año siguiente desde el año actual.
+- Calcular correctamente la cobertura cuando un pago atraviese diciembre y enero.
+- Mostrar año y semana para evitar confundir semanas de años distintos.
+- Eliminar la dependencia de una modificación técnica anual para continuar operando.
+- Mantener consistentes las semanas pagadas, pendientes y adelantadas durante el cambio de año.
+
+**Pendiente de confirmar:** calendario semanal utilizado por la cooperativa, día de inicio de semana y tratamiento de años con 53 semanas. No asumir automáticamente que corresponde al calendario ISO.
+
+**4. Ahorros y cuentas del asociado**
+
+**Aportes y depósitos**
+
+- Registrar el ahorro obligatorio incluido en la colecta.
+- Permitir agregar ahorro voluntario al mismo cobro.
+- Sumar ambos importes al saldo del asociado y reflejarlos en sus movimientos.
+- Permitir depósitos independientes de la colecta.
+- Manejar cuentas de ahorro en bolívares y en divisas.
+- Eliminar la limitación actual que dificulta introducir montos altos y obliga a cambiar de pantalla.
+
+Ejemplo descrito: si dos semanas generan Bs. 47,70 de ahorro obligatorio y el asociado agrega Bs. 500, el incremento del ahorro debe ser Bs. 547,70.
+
+**Identificación de cuentas**
+
+En el sistema anterior se mencionan:
+
+- `01`: ahorro en bolívares.
+- `12`: ahorro en divisas.
+- `02`: cuenta histórica de ahorro acumulado.
+
+Estos códigos sirven como referencia para revisar datos existentes. Confirmar cuáles seguirán operativos.
+
+Permitir seleccionar la cuenta desde el asociado sin obligar al operador a construir manualmente un código compuesto por sector, tipo de cuenta y expediente.
+
+**Movimientos e historial**
+
+- Mostrar movimientos recientes en la pantalla principal.
+- Permitir consultar el historial completo con paginación.
+- Identificar claramente depósitos, retiros, notas de crédito, notas de débito y reversos, según las operaciones habilitadas.
+- Mostrar fecha, importe, tipo de movimiento, documento o referencia y origen.
+- Usar descripciones comprensibles en lugar de mostrar solamente códigos numéricos.
+- Diferenciar operaciones presenciales y del cajero digital.
+
+**5. Préstamos**
+
+**Consulta y abonos**
+
+- Mostrar los préstamos activos desde la pantalla principal del asociado.
+- Mostrar categoría, número de pagaré, saldo restante y moneda.
+- Incorporar la **fecha del último abono**, ya que actualmente aparece la fecha de otorgamiento y obliga a abrir otra pantalla para saber cuándo pagó por última vez.
+- Permitir seleccionar un préstamo y registrar un abono desde la misma pantalla.
+- Permitir consultar su historial de pagos.
+- Mejorar la presentación de importes para evitar cifras amontonadas o cortadas.
+
+Se menciona una periodicidad de **21 días desde el último pago**.
+
+**Pendiente de confirmar:** si esa periodicidad aplica a todos los préstamos y si la próxima fecha realmente se recalcula desde cada abono o existe un cronograma independiente.
+
+**Tipos y restricciones**
+
+Se mencionan préstamos de:
+
+- Línea blanca.
+- Efectivo.
+- Gastos médicos.
+- Divisas entregadas físicamente.
+
+Reglas descritas:
+
+- Distinguir entre socio trabajador y socio no trabajador.
+- Permitir préstamos simultáneos de categorías habilitadas para el asociado.
+- No permitir dos préstamos activos de efectivo para el mismo asociado.
+- No permitir dos préstamos activos de línea blanca para el mismo asociado.
+- Para solicitar otro de la misma categoría, debe haber terminado el anterior.
+
+**Pendientes de confirmar:**
+
+- Categorías disponibles para cada tipo de socio: la transcripción hace referencia a opciones en pantalla sin identificarlas todas claramente.
+- Si “divisa” es una categoría o una modalidad de desembolso/moneda.
+- Diferencia entre préstamo entregado en dólares físicos y préstamo expresado en dólares pero entregado en bolívares.
+- Restricciones aplicables a gastos médicos y divisas.
+
+**Fiadores**
+
+El cliente describe una funcionalidad anterior que desea recuperar:
+
+- Asociar un fiador a un préstamo mediante su número de socio.
+- Registrar el importe que garantiza.
+- Bloquear o reservar ese importe en los ahorros del fiador.
+- Reflejar la garantía en el pagaré.
+- Mostrar una advertencia al consultar al fiador o intentar retirar sus ahorros.
+- Evitar retirar el importe comprometido mientras siga vigente la garantía.
+
+**Pendientes de confirmar:** cuenta y moneda afectadas, cantidad de fiadores permitidos y reglas de liberación del importe garantizado.
+
+**6. Reversos de operaciones**
+
+- Permitir localizar y reversar una colecta mediante su identificador.
+- Revertir conjuntamente sus efectos sobre ahorro, funeraria y salud.
+- Restablecer los saldos y la cobertura que correspondan.
+- Permitir reversar abonos a préstamos.
+- Reflejar los reversos en el cierre de caja.
+
+El cliente destaca la necesidad de control porque estas operaciones pueden utilizarse indebidamente.
+
+**Recomendaciones técnicas:**
+
+- Conservar la operación original y registrar su reverso, sin borrar el historial.
+- Guardar usuario, fecha, motivo y referencia de la operación reversada.
+- Impedir reversos duplicados.
+
+**Pendientes de confirmar:** permisos, necesidad de aprobación y tratamiento de operaciones de cajas ya cerradas o con movimientos posteriores.
+
+**7. Asociados, sectores y acuerdos de servicio**
+
+**Número de socio / expediente**
+
+- Mantener un número único y correlativo.
+- No reutilizar el número de un asociado que se retire o quede inactivo.
+- Conservarlo cuando se reactive.
+- Mantener correspondencia con el libro manual de asociados utilizado por la cooperativa.
+- No derivar el número de socio del sector o de la feria.
+
+**Clasificación**
+
+- Registrar si es socio trabajador.
+- Registrar su sector geográfico.
+- Registrar la clasificación por feria u origen que utilice la cooperativa.
+- Permitir consultar y contar asociados por esas clasificaciones.
+
+Los sectores se usan para organizar reuniones; la clasificación por feria también permite identificar grupos de asociados.
+
+**Pendiente de confirmar:** si sector geográfico y feria deben ser campos separados o pertenecen actualmente a una misma codificación.
+
+**Acuerdos de salud y funeraria**
+
+- Permitir que un asociado tenga salud, funeraria o ambos.
+- Registrar fecha de ingreso y número de acuerdo por servicio.
+- Para salud, se describe un número formado por el expediente con un cero adicional.
+- Para funeraria, se asigna inicialmente un número provisional similar.
+- Cuando la entidad funeraria externa entrega el número definitivo, permitir sustituir el provisional sin cambiar el número de socio ni perder el historial.
+
+**Pendiente de confirmar:** formato exacto de los números, posición del cero, longitud y conservación de ceros iniciales.
+
+**8. Suspensión y estado de los servicios**
+
+- Mostrar las semanas de atraso y el estado de cada servicio.
+- Revisar el cálculo de suspensión: durante la demostración aparece un caso que el personal considera incorrecto.
+- Calcular correctamente la cobertura cuando existan pagos adelantados.
+- Diferenciar servicio vigente, atrasado y suspendido según las reglas que se acuerden.
+
+**Pendientes de confirmar:**
+
+- Cantidad exacta de semanas que provoca suspensión.
+- Si salud y funeraria tienen las mismas reglas.
+- Condiciones de reactivación después de pagar.
+- Tratamiento de pagos realizados por el cajero digital.
+
+No fijar el umbral de suspensión a partir de las menciones aisladas a seis o siete semanas.
+
+**9. Reportes de colecta y caja**
+
+**Reportes por concepto**
+
+Generar reportes separados de:
+
+- Ahorro.
+- Funeraria.
+- Salud.
+- Préstamos, distinguiendo otorgamientos y cobros.
+
+Para servicios, mostrar:
+
+- Número de socio.
+- Nombre del asociado.
+- Número de acuerdo.
+- Año y semana hasta los que pagó.
+- Importe.
+- Totales y cantidad de personas.
+
+En ahorro, reflejar depósitos y retiros según corresponda.
+
+**Filtros por fecha**
+
+- Permitir consultar un día o un rango de fechas.
+- Obtener ingresos mensuales por concepto, especialmente salud.
+- Evitar tener que sumar manualmente reportes diarios para conocer el ingreso de un mes.
+
+**Caja por oficina y consolidado**
+
+- Consultar por oficina, colector o canal.
+- Mantener el detalle de cada oficina.
+- Obtener un consolidado general.
+- Mostrar importes por concepto y cantidad de personas atendidas.
+- Permitir consultar lo recaudado durante el día para apoyar el cuadre.
+- Incluir nombres de asociados en el detalle consolidado para facilitar la búsqueda de diferencias.
+- Revisar el reporte digital que actualmente muestra personas sin reflejar sus montos.
+
+**Pendientes de confirmar:**
+
+- Si “cierre” es solamente un reporte o una operación que bloquea movimientos.
+- Cómo contar personas con varias operaciones.
+- Qué canales deben entrar en el consolidado general.
+
+**10. Exportación de pagos para la entidad funeraria**
+
+- Generar un archivo con los pagos de funeraria para actualizar el sistema de la entidad externa.
+- Permitir seleccionar una fecha o un rango de fechas.
+- Incluir la identificación del asociado/acuerdo y su cobertura pagada, conforme al formato requerido por el receptor.
+- Permitir descargarlo para que el personal lo envíe por correo, como hace actualmente.
+
+**Pendiente obligatorio:** obtener un archivo real de ejemplo y confirmar estructura, columnas, extensión y codificación. La transcripción no identifica claramente el formato.
+
+No asumir que se solicita envío automático de correos ni integración directa entre ambos sistemas.
+
+**11. Asambleas y asistencia**
+
+- Hacer funcional el registro de asistencia, ya que el control “sí/no” actual no guarda o no refleja el cambio.
+- Registrar la asistencia del asociado a la asamblea anual.
+- Permitir organizar jornadas por sectores.
+- Permitir asistir en una jornada distinta de la asignada a su sector.
+- Sustituir la anotación manual que actualmente se introduce en documentos o movimientos de ahorro.
+- Conservar la asistencia por año.
+
+Aclaración del cliente: se trata de **una asamblea anual**, organizada en varias jornadas; no de varias asambleas anuales independientes.
+
+**12. Cajero digital / portal de pagos**
+
+Problemas identificados:
+
+- Los montos grandes se cortan y no muestran todos los decimales.
+- El asociado puede introducir un importe incorrecto porque no logra ver el valor completo.
+- El sistema rechaza diferencias de un céntimo.
+- Hay posibles errores de conexión o validación bancaria, cuya causa no está determinada.
+
+Requisitos:
+
+- Mostrar el importe completo, incluidos los dos decimales.
+- Adaptar los campos a montos grandes y distintos tamaños de pantalla.
+- Mantener consistencia entre el importe mostrado y el esperado al validar.
+- Identificar el canal digital en los movimientos.
+- Revisar la consistencia de pagos digitales con cobertura, suspensión y reportes.
+
+**Pendiente de confirmar:** integración bancaria disponible y reglas de conciliación. El cliente no autorizó tolerancias automáticas para aceptar montos diferentes.
+
+**13. Integración contable — alcance por definir**
+
+El cliente expresa interés en recuperar una integración que existía anteriormente:
+
+- Transferir a contabilidad la información de colecta.
+- Evitar la transcripción manual.
+- Clasificar los importes según su tratamiento contable.
+- Considerar que lo recaudado para la entidad funeraria representa una cuenta por pagar a esa entidad, según el proceso descrito.
+
+**Pendientes:** sistema contable de destino, mecanismo de integración, plan de cuentas y reglas aprobadas por el responsable contable.
+
+Las opciones antiguas “asiento contable” y “colecta simple” no se utilizan o no están terminadas. Su presencia en el menú no constituye por sí sola un requisito para reproducirlas.
+
+**14. Validación y puesta en marcha**
+
+El cliente necesita priorizar la colecta presencial y probarla con el personal antes de usarla en operación.
+
+Escenarios mínimos propuestos:
+
+- Asociado con salud y funeraria; asociado con un solo servicio.
+- Pago de semanas pendientes y adelantadas.
+- Una semana pendiente más diez adelantadas.
+- Pago que cruce de diciembre a enero.
+- Ahorro adicional y depósito de un importe alto.
+- Depósito en divisas.
+- Abono a préstamo desde la consulta del asociado.
+- Reverso completo de colecta y reverso de préstamo.
+- Cuadre por oficina y consolidado.
+- Reporte mensual de salud.
+- Exportación funeraria compatible con el archivo externo.
+- Registro efectivo de asistencia a la asamblea.
+- Visualización de montos grandes en el portal digital.
+
+**Dependencia técnica para la transición:** definir cómo se trasladarán o conciliarán asociados, acuerdos, saldos de ahorro, préstamos y semanas pagadas del sistema anterior. La reunión no detalla esa migración.
+
+Las referencias a septiembre, noviembre o diciembre expresan la urgencia conversada; no deben convertirse en fechas de entrega confirmadas sin un cronograma actualizado.
