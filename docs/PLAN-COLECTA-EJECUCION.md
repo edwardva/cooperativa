@@ -32,6 +32,22 @@ primera pieza del plan y la que desbloquea el resto.
 
 ---
 
+## Estado
+
+| Fase | Estado |
+|---|---|
+| 0 — Cimientos | ✅ hecha |
+| 1 — Motor de cobro | ✅ hecha |
+| 2 — Pantalla única | ✅ hecha |
+| 3 — Estado y suspensión | ✅ hecha |
+| 4 — Reportes y caja | ✅ hecha |
+| 5 — Exportación funeraria | ⏳ pendiente (bloqueada por el archivo de ejemplo) |
+| 6 — Préstamos | ⏳ pendiente |
+| 7 — Asambleas | ⏳ pendiente |
+| 8 — Cajero digital | ⏳ pendiente |
+
+---
+
 ## Fases
 
 Orden por dependencia técnica, no por número de requisito.
@@ -107,6 +123,29 @@ Orden por dependencia técnica, no por número de requisito.
 | # | Entregable | Requisito |
 |---|---|---|
 | 8.1 | Montos completos con dos decimales, campos adaptables, canal identificado en los movimientos, consistencia con cobertura y reportes. | 12 |
+
+### Hallazgos durante la ejecución
+
+Cosas que no estaban en los requisitos y aparecieron al contrastar con el código:
+
+- **Historial de migraciones roto.** Una migración figuraba como fallida y tres
+  nunca se aplicaron, pese a que otras posteriores sí. La base local carecía de
+  columnas de salud (`numero_acuerdo`, `numero_recibo`) que el código ya usaba.
+  Reparado; las migraciones nuevas van con `IF NOT EXISTS` para nivelar la
+  deriva en cualquier entorno.
+- **Un expediente numérico no se podía buscar.** Todo término de sólo dígitos se
+  interpretaba como cédula, y los expedientes también son numéricos. Ahora se
+  buscan ambos.
+- **El reverso dejaba en pie la fecha del último pago** y no deshacía el abono a
+  préstamo. Los movimientos de servicio no sabían de qué colecta venían;
+  se agregó `colecta_id` y `reversado`.
+- **Las tarifas del catálogo no coinciden con las del cliente.** El plan
+  funerario cobra USD 5,00/semana en `tipos_acuerdo_funeraria`, frente a los
+  0,75 que mencionó el cliente. La tarifa del plan manda sobre la general, así
+  que **hay que confirmar los valores del catálogo antes de operar**.
+- **El job semanal habría duplicado el atraso.** Sumaba 1 al contador cada
+  lunes; con la cobertura como fuente de verdad eso pasó a estar mal. Reescrito
+  para recalcular.
 
 ### Fuera de alcance por ahora
 
