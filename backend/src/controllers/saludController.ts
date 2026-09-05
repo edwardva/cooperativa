@@ -1545,29 +1545,14 @@ export const verificarSuspensionesAutomaticas = async (req: Request, res: Respon
 };
 
 /**
- * Incrementa en 1 la cuenta de semanas sin pago de todos los acuerdos de
- * salud activos (por grupo, y para filas sin numero_acuerdo). Llamado
- * únicamente por el job semanal (backend/src/jobs/saludSuspension.ts).
+ * `incrementarSemanasSinPago` se elimino.
+ *
+ * Subia en 1 el contador de cada acuerdo activo todos los lunes. Con la
+ * cobertura por (ano, semana) como fuente de verdad ese incremento pasa a ser
+ * incorrecto: el atraso ya sale de comparar la cobertura con la semana en
+ * curso, asi que sumarle uno lo contaba dos veces y dejaba como atrasado a
+ * quien habia pagado por adelantado.
+ *
+ * Lo reemplaza `recalcularEstados` en services/estadoServiciosService.ts, que
+ * recalcula en vez de acumular y cubre tambien funeraria.
  */
-export async function incrementarSemanasSinPago(): Promise<{ gruposIncrementados: number }> {
-  const activos = await prisma.acuerdoSalud.findMany({ where: { estado: 'activo' }, select: { numero_acuerdo: true } });
-  const numerosAcuerdo = new Set(activos.map((a) => a.numero_acuerdo).filter((n): n is string => !!n));
-  const tieneGrupoNulo = activos.some((a) => !a.numero_acuerdo);
-
-  for (const numeroAcuerdo of numerosAcuerdo) {
-    await prisma.acuerdoSalud.updateMany({
-      where: { numero_acuerdo: numeroAcuerdo, estado: 'activo' },
-      data: { semanas_sin_pago: { increment: 1 } },
-    });
-  }
-
-  if (tieneGrupoNulo) {
-    await prisma.acuerdoSalud.updateMany({
-      where: { estado: 'activo', numero_acuerdo: null },
-      data: { semanas_sin_pago: { increment: 1 } },
-    });
-  }
-
-  logger.info(`Incremento semanal de semanas_sin_pago aplicado a ${numerosAcuerdo.size} grupo(s) de salud`);
-  return { gruposIncrementados: numerosAcuerdo.size };
-}

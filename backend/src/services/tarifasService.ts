@@ -170,6 +170,20 @@ export async function sembrarParametrosColecta(): Promise<void> {
     });
   }
 
+  // Suspension automatica: apagada mientras el cliente no confirme cuantas
+  // semanas suspenden. El job informa a cuantos alcanzaria sin aplicarlo.
+  await prisma.parametroSistema.upsert({
+    where: { clave: 'SUSPENSION_AUTOMATICA' },
+    update: {},
+    create: {
+      clave: 'SUSPENSION_AUTOMATICA',
+      valor: '0',
+      descripcion:
+        'Si vale 1, el job semanal suspende los acuerdos que alcancen el umbral de atraso',
+      tipo_dato: 'number',
+    },
+  });
+
   await prisma.parametroSistema.upsert({
     where: { clave: CLAVE_TIPO_CUENTA_AHORRO },
     update: {},

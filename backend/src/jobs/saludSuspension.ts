@@ -1,37 +1,41 @@
 /**
  * ============================================
- * JOB: SUSPENSIÓN SEMANAL DE SALUD
+ * JOB: estado semanal de los servicios
  * ============================================
- * Cada semana, incrementa en 1 las "semanas sin pago" de todos los acuerdos
- * de salud activos, y suspende (en cascada, por grupo) los que lleguen a
- * SEMANAS_LIMITE_SUSPENSION. Este mecanismo no existe hoy para Funeraria
- * (queda fuera del alcance de este trabajo): solo se agrega para Salud.
+ *
+ * Requisito 8 de la reunión.
+ *
+ * Antes este job sumaba 1 a `semanas_sin_pago` de cada acuerdo de salud todos
+ * los lunes. Con la cobertura por (año, semana) como fuente de verdad eso pasó
+ * a estar mal: el atraso ya sale de comparar la cobertura con la semana en
+ * curso, así que incrementarlo ademas lo contaba dos veces, y a un socio que
+ * pagó por adelantado lo dejaba figurando como atrasado.
+ *
+ * Ahora RECALCULA, y cubre funeraria además de salud — antes funeraria no
+ * tenía ningún mecanismo.
  */
 
 import cron from 'node-cron';
-import { incrementarSemanasSinPago, suspenderGruposVencidos } from '../controllers/saludController';
+import { recalcularEstados } from '../services/estadoServiciosService';
 import { logger } from '../utils/logger';
 
 async function ejecutarJobSemanal(): Promise<void> {
   try {
-    const { gruposIncrementados } = await incrementarSemanasSinPago();
-    const { gruposSuspendidos, personasSuspendidas } = await suspenderGruposVencidos(null);
-    logger.info(
-      `Job semanal de salud completado: ${gruposIncrementados} grupo(s) incrementado(s), ${gruposSuspendidos} grupo(s) suspendido(s) (${personasSuspendidas} persona(s))`
-    );
+    await recalcularEstados();
   } catch (error) {
-    logger.error('Error en el job semanal de salud:', error);
+    logger.error('Error en el job semanal de estado de servicios:', error);
   }
 }
 
 /**
- * Programa el job para correr todos los lunes a las 00:05 (hora del servidor).
+ * Lunes 00:05, después del job de calendario: el atraso se mide contra la
+ * semana en curso, así que primero tiene que estar marcada.
  */
 export function iniciarJobSemanalSalud(): void {
   cron.schedule('5 0 * * 1', () => {
     void ejecutarJobSemanal();
   });
-  logger.info('Job semanal de salud programado (lunes 00:05)');
+  logger.info('Job semanal de estado de servicios programado (lunes 00:05)');
 }
 
 // Exportado para pruebas manuales / ejecución bajo demanda.
