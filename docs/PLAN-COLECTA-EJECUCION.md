@@ -41,7 +41,7 @@ primera pieza del plan y la que desbloquea el resto.
 | 2 — Pantalla única | ✅ hecha |
 | 3 — Estado y suspensión | ✅ hecha |
 | 4 — Reportes y caja | ✅ hecha |
-| 5 — Exportación funeraria | ⏳ pendiente (bloqueada por el archivo de ejemplo) |
+| 5 — Exportación funeraria | ✅ hecha (formato obtenido del sistema actual) |
 | 6 — Préstamos | ⏳ pendiente |
 | 7 — Asambleas | ⏳ pendiente |
 | 8 — Cajero digital | ⏳ pendiente |
@@ -124,6 +124,23 @@ Orden por dependencia técnica, no por número de requisito.
 |---|---|---|
 | 8.1 | Montos completos con dos decimales, campos adaptables, canal identificado en los movimientos, consistencia con cobertura y reportes. | 12 |
 
+### Lo que respondió el sistema actual
+
+Se revisó Colecta Global en producción (socio 108413 como referencia). Varias
+dudas que la reunión dejó abiertas quedaron resueltas con evidencia:
+
+| Duda | Respuesta del sistema actual |
+|---|---|
+| Valores de las tarifas | **Confirmados**: 23,85 / 596,24 / 763,19 Bs a tasa 795 = **0,03 / 0,75 / 0,96 USD**. El catálogo de nuestra base traía USD 5,00 en funeraria: era relleno. |
+| Calendario semanal | **ISO, semana de lunes a domingo**. El acuerdo cubierto hasta la semana 35 de 2026 muestra «hasta 30/08/2026», que es el domingo de esa semana. |
+| ¿«Divisa» es categoría o moneda? | **Moneda**, y es un atributo del TIPO de préstamo: «línea blanca» se otorga en divisas, «efectivo» en bolívares. |
+| Formato del archivo para la funeraria | **Obtenido**: `'socio','acuerdo','nombre','semana','monto','monto';` en una sola línea. El acuerdo va en 8 caracteres rellenados con espacios; el nombre sin coma porque la coma separa campos. |
+| Cajero digital en los movimientos | Se marca con el documento `CAJ_DIG`. |
+| Cobertura de servicios | El sistema actual ya lleva `ano` + `sem` + `hasta` (fecha) + `atraso`, que es exactamente el modelo de cobertura adoptado. |
+
+Sigue pendiente de confirmar **la codificación del archivo** con la funeraria
+(se genera en latin1, como el sistema actual) y el resto de la tabla de abajo.
+
 ### Hallazgos durante la ejecución
 
 Cosas que no estaban en los requisitos y aparecieron al contrastar con el código:
@@ -146,6 +163,12 @@ Cosas que no estaban en los requisitos y aparecieron al contrastar con el códig
 - **El job semanal habría duplicado el atraso.** Sumaba 1 al contador cada
   lunes; con la cobertura como fuente de verdad eso pasó a estar mal. Reescrito
   para recalcular.
+- **La libreta perdía céntimos.** El saldo de cada movimiento se derivaba de
+  los dólares multiplicando por la tasa: mostraba 524,80 donde la cuenta decía
+  527,84. Se guarda el saldo en bolívares tal cual.
+- **El catálogo de tipos de préstamo tenía un solo registro de relleno**
+  («Préstamo Personal»), así que los cuatro préstamos de un socio salían con el
+  mismo nombre. Se cargaron las categorías reales.
 
 ### Fuera de alcance por ahora
 
@@ -173,7 +196,7 @@ No se convierten en reglas hasta que el cliente responda. Se implementan como
 | Sector vs. feria | ¿Campos separados o una sola codificación? | Hoy comparten `ubicacion`; se separa si confirma |
 | Préstamos | Periodicidad de 21 días: ¿aplica a todos? ¿se recalcula desde cada abono? | No se implementa hasta confirmar |
 | Números de acuerdo | Formato exacto, posición del cero, longitud | No se genera automáticamente hasta confirmar |
-| Exportación funeraria | **Archivo real de ejemplo** (columnas, extensión, codificación) | Formato configurable, CSV por defecto |
+| Exportación funeraria | ~~Archivo de ejemplo~~ **resuelto**; queda confirmar la codificación | Formato del sistema actual, latin1 |
 | Cierre de caja | ¿Es sólo un reporte o bloquea movimientos? | Hoy bloquea el reverso; se conserva |
 | Personas atendidas | ¿Cómo se cuenta un socio con varias operaciones? | Socios distintos, no operaciones |
 

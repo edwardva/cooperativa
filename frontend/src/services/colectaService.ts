@@ -487,6 +487,52 @@ export const obtenerReportePorServicio = async (params: {
   return response.data
 }
 
+/** Una linea del archivo que se envia a la funeraria externa */
+export interface FilaFuneraria {
+  socio: string
+  acuerdo: string
+  nombre: string
+  semana: number | null
+  monto_bs: number
+}
+
+export interface ExportacionFuneraria {
+  desde: string
+  hasta: string
+  filas: FilaFuneraria[]
+  cantidad: number
+  total_bs: number
+  /** Primeros caracteres del archivo tal cual se va a enviar */
+  vista_previa: string
+}
+
+/**
+ * Vista previa del archivo de pagos de funeraria. El personal quiere ver que
+ * va a enviar antes de descargarlo.
+ */
+export const obtenerExportacionFuneraria = async (params: {
+  desde?: string
+  hasta?: string
+  mes?: string
+}): Promise<Respuesta<ExportacionFuneraria>> => {
+  const response = await apiClient.get('/colecta/reportes/funeraria', {
+    params: { ...params, formato: 'json' },
+  })
+  return response.data
+}
+
+/** URL de descarga del archivo. Va por el mismo origen, con la sesion activa. */
+export const urlExportacionFuneraria = (params: {
+  desde?: string
+  hasta?: string
+  mes?: string
+}): string => {
+  const q = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v) as [string, string][]
+  )
+  return `/api/colecta/reportes/funeraria?${q.toString()}`
+}
+
 /**
  * Cuadre de caja: detalle por oficina, por colector y por canal, mas el
  * consolidado general. Evita sumar a mano los reportes diarios de cada oficina.

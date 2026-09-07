@@ -12,15 +12,31 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { FileDown, Loader2, Calculator, ListFilter, AlertTriangle, Wallet, Users } from 'lucide-react'
+import {
+  FileDown,
+  Loader2,
+  Calculator,
+  ListFilter,
+  AlertTriangle,
+  Wallet,
+  Users,
+  Download,
+  Shield,
+} from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { PrintableListado } from '../components/print/PrintableListado'
 import * as colectaService from '../services/colectaService'
-import type { AsientoContable, CorteCuadre, ReporteCaja, ReportePorServicio } from '../services/colectaService'
+import type {
+  AsientoContable,
+  CorteCuadre,
+  ExportacionFuneraria,
+  ReporteCaja,
+  ReportePorServicio,
+} from '../services/colectaService'
 import { getErrorMessage } from '../services/api'
 
-type Vista = 'servicios' | 'caja' | 'asiento'
+type Vista = 'servicios' | 'caja' | 'funeraria' | 'asiento'
 
 /** Filtro por periodo: dia/rango, o un mes completo */
 type ModoPeriodo = 'rango' | 'mes'
@@ -57,6 +73,7 @@ export default function ColectaReportesPage() {
 
   const [reporte, setReporte] = useState<ReportePorServicio | null>(null)
   const [caja, setCaja] = useState<ReporteCaja | null>(null)
+  const [funeraria, setFuneraria] = useState<ExportacionFuneraria | null>(null)
   const [asiento, setAsiento] = useState<AsientoContable | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
@@ -81,6 +98,9 @@ export default function ColectaReportesPage() {
       } else if (vista === 'caja') {
         const r = await colectaService.obtenerReporteCaja(periodo)
         if (r.success) setCaja(r.data)
+      } else if (vista === 'funeraria') {
+        const r = await colectaService.obtenerExportacionFuneraria(periodo)
+        if (r.success) setFuneraria(r.data)
       } else {
         const r = await colectaService.obtenerAsientoContable(
           periodo as { desde: string; hasta: string }
@@ -157,6 +177,7 @@ export default function ColectaReportesPage() {
         {([
           { id: 'servicios' as const, label: 'Por servicio', icon: ListFilter },
           { id: 'caja' as const, label: 'Cuadre de caja', icon: Wallet },
+          { id: 'funeraria' as const, label: 'Envio a funeraria', icon: Shield },
           { id: 'asiento' as const, label: 'Asiento contable', icon: Calculator },
         ]).map((item) => {
           const activa = vista === item.id
@@ -546,6 +567,111 @@ export default function ColectaReportesPage() {
               money(d.monto_bs),
             ])}
           />
+        </>
+      )}
+
+      {/* VISTA: ARCHIVO PARA LA FUNERARIA */}
+      {vista === 'funeraria' && (
+        <>
+          {/*
+            Requisito 10: el archivo con los pagos de funeraria que el personal
+            envia por correo a la entidad externa. El formato se tomo del que
+            genera hoy el sistema actual, campo por campo.
+
+            Se muestra antes de descargar porque el personal quiere ver que va
+            a enviar. No se envia el correo: el cliente no lo pidio.
+          */}
+          <Card className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-neutral-800">
+                  Pagos de funeraria del {rango}
+                </h3>
+                <p className="mt-1 text-sm tabular-nums text-neutral-600">
+                  {funeraria?.cantidad ?? 0} pago(s) · {money(funeraria?.total_bs ?? 0)} Bs
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                disabled={!funeraria || funeraria.cantidad === 0}
+                onClick={() => {
+                  window.location.href = colectaService.urlExportacionFuneraria(periodo)
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Descargar archivo
+              </Button>
+            </div>
+
+            {funeraria && funeraria.cantidad > 0 && (
+              <div className="mt-4">
+                <p className="text-[11px] uppercase tracking-wide text-neutral-500">
+                  Asi se vera el archivo
+                </p>
+                <pre className="mt-1 overflow-x-auto rounded-lg bg-neutral-900 px-3 py-2 font-mono text-[11px] leading-relaxed text-neutral-100">
+                  {funeraria.vista_previa}
+                  {funeraria.vista_previa.length >= 500 ? '…' : ''}
+                </pre>
+              </div>
+            )}
+
+            <p className="mt-3 text-xs text-amber-800">
+              Pendiente de confirmar con la funeraria: la codificacion del archivo. Se genera en
+              latin1, como el sistema actual.
+            </p>
+          </Card>
+
+          <Card padding="none" className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-neutral-200">
+                <thead className="bg-neutral-50">
+                  <tr className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <th className="px-4 py-3 text-left">Socio</th>
+                    <th className="px-4 py-3 text-left">Acuerdo</th>
+                    <th className="px-4 py-3 text-left">Nombre</th>
+                    <th className="px-4 py-3 text-center">Semana</th>
+                    <th className="px-4 py-3 text-right">Monto Bs</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 bg-white">
+                  {cargando ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center">
+                        <div className="flex items-center justify-center gap-2 text-neutral-500">
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          <span>Generando...</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : !funeraria || funeraria.filas.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-neutral-500">
+                        No hay pagos de funeraria en el periodo seleccionado
+                      </td>
+                    </tr>
+                  ) : (
+                    funeraria.filas.map((f, i) => (
+                      <tr key={`${f.socio}-${i}`} className="hover:bg-neutral-50">
+                        <td className="whitespace-nowrap px-4 py-2.5 font-mono text-sm text-neutral-700">
+                          {f.socio}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 font-mono text-sm text-neutral-700">
+                          {f.acuerdo || <span className="text-amber-700">sin numero</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-neutral-900">{f.nombre}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-center text-sm tabular-nums text-neutral-700">
+                          {f.semana ?? '—'}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right text-sm font-medium tabular-nums text-neutral-900">
+                          {money(f.monto_bs)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </>
       )}
 

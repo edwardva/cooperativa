@@ -1894,6 +1894,139 @@ export const reporteCaja = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
+// ============================================
+// EXPORTACIÓN DE PAGOS PARA LA FUNERARIA
+// ============================================
+
+/**
+ * GET /api/colecta/reportes/funeraria.txt?desde=&hasta=&mes=
+ *
+ * Requisito 10: el archivo con los pagos de funeraria que el personal envía
+ * por correo a la entidad externa para que actualice su sistema.
+ *
+ * El formato se tomó del sistema actual (`rep_colecta_txt.php`), que produce
+ * una sola línea con los registros separados por `;`, cada campo entre comillas
+ * simples y separado por comas:
+ *
+ *   'socio','acuerdo','nombre','semana','monto','monto';
+ *
+ * Detalles que importan porque el receptor los espera así:
+ *
+ *   - El número de acuerdo va en 8 caracteres, rellenado con espacios a la
+ *     derecha ('13124-0 ').
+ *   - El nombre va con los apellidos primero y SIN coma, porque la coma es el
+ *     separador de campos.
+ *   - La semana es el año/semana hasta el que quedó cubierto el acuerdo.
+ *   - El monto va en bolívares y se repite en los dos últimos campos.
+ *
+ * Se descarga; no se envía por correo. El cliente no pidió envío automático.
+ */
+export const exportarFuneraria = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { desde, hasta } = rangoFechas(req);
+
+    const colectas = await prisma.colecta.findMany({
+      where: { fecha_colecta: { gte: desde, lte: hasta }, reversada: false },
+      orderBy: { fecha_colecta: 'asc' },
+      include: {
+        detalles: { where: { servicio: 'funeraria' } },
+        socio: { select: { codigo_socio: true, nombre: true, apellido: true } },
+      },
+    });
+
+    const ids = [
+      ...new Set(
+        colectas.flatMap((c) => c.detalles.map((d) => d.referencia_id).filter((x): x is number => x !== null))
+      ),
+    ];
+    const acuerdos = ids.length
+      ? await prisma.acuerdoFuneraria.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, numero_acuerdo: true },
+        })
+      : [];
+    const numeroPorAcuerdo = new Map(acuerdos.map((a) => [a.id, a.numero_acuerdo]));
+
+    /** Comilla simple dentro de un campo rompería el formato del receptor. */
+    const limpiar = (texto: string): string => texto.replace(/'/g, ' ').trim();
+
+    const registros: string[] = [];
+    const filas: {
+      socio: string;
+      acuerdo: string;
+      nombre: string;
+      semana: number | null;
+      monto_bs: number;
+    }[] = [];
+
+    for (const colecta of colectas) {
+      for (const d of colecta.detalles) {
+        // Los reintegros no son cobertura del servicio: no van en el archivo
+        if (d.es_reintegro || !d.referencia_id) continue;
+
+        const numeroAcuerdo = numeroPorAcuerdo.get(d.referencia_id) ?? '';
+        // Apellidos primero y sin coma: la coma separa campos
+        const nombre = limpiar(`${colecta.socio.apellido} ${colecta.socio.nombre}`);
+        const montoBs = Number(d.monto_bs).toFixed(2);
+        const semana = d.cobertura_semana_despues;
+
+        registros.push(
+          [
+            colecta.socio.codigo_socio,
+            // 8 caracteres, rellenado con espacios a la derecha
+            numeroAcuerdo.padEnd(8, ' ').slice(0, 8),
+            nombre,
+            semana !== null ? String(semana) : '',
+            montoBs,
+            montoBs,
+          ]
+            .map((campo) => `'${campo}'`)
+            .join(',')
+        );
+
+        filas.push({
+          socio: colecta.socio.codigo_socio,
+          acuerdo: numeroAcuerdo,
+          nombre,
+          semana,
+          monto_bs: Number(d.monto_bs),
+        });
+      }
+    }
+
+    const contenido = registros.map((r) => `${r};`).join('');
+
+    // `formato=json` devuelve las filas para poder previsualizarlas en pantalla
+    // antes de descargar; el personal quiere ver qué va a enviar.
+    if (String(req.query.formato ?? '') === 'json') {
+      res.json({
+        success: true,
+        data: {
+          desde,
+          hasta,
+          filas,
+          cantidad: filas.length,
+          total_bs: redondear(filas.reduce((a, f) => a + f.monto_bs, 0)),
+          vista_previa: contenido.slice(0, 500),
+        },
+      });
+      return;
+    }
+
+    const nombreArchivo = `funeraria_${desde.toISOString().slice(0, 10)}_${hasta
+      .toISOString()
+      .slice(0, 10)}.txt`;
+
+    // latin1 como el sistema actual: los nombres llevan tildes y Ñ, y el
+    // receptor no lee UTF-8. (Pendiente de confirmar con la funeraria.)
+    res.setHeader('Content-Type', 'text/plain; charset=ISO-8859-1');
+    res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}"`);
+    res.send(Buffer.from(contenido, 'latin1'));
+  } catch (error) {
+    responderError(res, error, 'Error al generar el archivo para la funeraria');
+  }
+};
+
 /** Cuenta contable de cada servicio, configurable en Parámetros del sistema. */
 const CUENTAS_CONTABLES: Record<string, { clave: string; porDefecto: string; nombre: string }> = {
   ahorro: { clave: 'CUENTA_CONTABLE_AHORRO', porDefecto: '21210702002', nombre: 'Colecta Ahorro' },

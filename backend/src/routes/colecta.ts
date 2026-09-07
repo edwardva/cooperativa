@@ -16,6 +16,7 @@ import {
   reversarColecta,
   reportePorServicio,
   reporteCaja,
+  exportarFuneraria,
   asientoContable,
 } from '../controllers/colectaController';
 import { authenticate } from '../middleware/authenticate';
@@ -66,6 +67,12 @@ router.get('/reportes/por-servicio', authorize('colecta', 'read'), reportePorSer
  * Cuadre por oficina, colector y canal, mas el consolidado general
  */
 router.get('/reportes/caja', authorize('colecta', 'read'), reporteCaja);
+
+/**
+ * GET /api/colecta/reportes/funeraria?desde=&hasta=&mes=&formato=json
+ * Archivo de pagos de funeraria para la entidad externa (req. 10)
+ */
+router.get('/reportes/funeraria', authorize('colecta', 'read'), exportarFuneraria);
 
 /**
  * GET /api/colecta/reportes/asiento-contable?desde=&hasta=
