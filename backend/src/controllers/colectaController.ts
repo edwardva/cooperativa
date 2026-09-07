@@ -22,6 +22,7 @@ import { normalizarCedula } from '../utils/cedula';
 import { distribuirAbono } from '../utils/amortizacion';
 import { resolverTasa } from '../services/tasaCambioService';
 import {
+  esAnterior,
   formatearPeriodo,
   semanaActual,
   type Periodo,
@@ -267,12 +268,16 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
             // no tener que abrir otra ventana para verlos (req. 4)
             movimientos: {
               orderBy: { fecha_movimiento: 'desc' },
-              take: 5,
+              take: 8,
               select: {
                 id: true,
                 tipo_movimiento: true,
                 monto_usd: true,
                 monto_bs: true,
+                // La libreta del sistema actual muestra el saldo despues de
+                // cada movimiento, no solo el importe
+                saldo_nuevo_usd: true,
+                saldo_nuevo_bs: true,
                 moneda: true,
                 canal: true,
                 concepto: true,
@@ -341,6 +346,22 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       prestamosPorSocio.set(p.socio_id, lista);
     }
 
+    // Lo abonado hasta hoy en cada prestamo. El sistema actual lo muestra como
+    // columna propia (Abo / Abo$) junto al monto y al saldo.
+    const abonos = prestamos.length
+      ? await prisma.abonoPrestamo.groupBy({
+          by: ['prestamo_id'],
+          where: { prestamo_id: { in: prestamos.map((p) => p.id) }, reversado: false },
+          _sum: { monto_usd: true, monto_bs: true },
+        })
+      : [];
+    const abonosPorPrestamo = new Map(
+      abonos.map((a) => [
+        a.prestamo_id,
+        { usd: Number(a._sum.monto_usd ?? 0), bs: Number(a._sum.monto_bs ?? 0) },
+      ])
+    );
+
     // Se arma una vista plana de "cobrables" para que el frontend no tenga que
     // recorrer beneficiarios ni calcular montos
     const encontrados = socios.map((socio) => {
@@ -358,13 +379,26 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         semanas_sin_pago: null as number | null,
         monto_sugerido_usd: null as number | null,
         estado: 'activo',
-        movimientos_recientes: cuenta.movimientos.map((m) => ({
+        // La libreta se lee de arriba hacia abajo: fecha, documento, importe y
+        // el saldo con el que quedo la cuenta. El sistema actual marca el
+        // cajero digital con el documento CAJ_DIG; aqui es un campo propio.
+        movimientos_recientes: cuenta.movimientos.map((m, indice, todos) => ({
+          // Item correlativo dentro de lo que se muestra, como en la libreta
+          item: todos.length - indice,
           id: m.id,
           tipo: m.tipo_movimiento,
           monto_usd: Number(m.monto_usd),
           monto_bs: Number(m.monto_bs),
+          saldo_usd: Number(m.saldo_nuevo_usd),
+          // El guardado manda; sólo se deriva si el movimiento es anterior a
+          // que se empezara a guardar
+          saldo_bs:
+            m.saldo_nuevo_bs !== null
+              ? Number(m.saldo_nuevo_bs)
+              : redondear(Number(m.saldo_nuevo_usd) * tasa),
           moneda: m.moneda,
           canal: m.canal,
+          documento: m.canal === 'digital' ? 'CAJ_DIG' : (m.referencia ?? '—'),
           concepto: m.concepto,
           referencia: m.referencia,
           fecha: m.fecha_movimiento,
@@ -407,32 +441,51 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       const servicios = acuerdos.map((a) => resumirServicio(a, tarifas));
 
       // --- Préstamos ---
-      const prestamos = (prestamosPorSocio.get(socio.id) ?? []).map((p) => ({
-        tipo: 'prestamo' as const,
-        referencia_id: p.id,
-        titulo: p.tipo_prestamo.nombre,
-        // Categoría, pagaré, moneda y saldo, separados en vez de amontonados
-        categoria: p.tipo_prestamo.nombre,
-        numero_pagare: p.numero_prestamo,
-        moneda: 'USD',
-        detalle: `${p.numero_prestamo} · cuota $${Number(p.cuota_semanal_usd).toFixed(2)}`,
-        saldo_usd: redondear(
+      // El sistema actual muestra cada prestamo con monto, abono y saldo en LAS
+      // DOS monedas a la vez, y la moneda de otorgamiento aparte de la
+      // categoria. Se replica, porque el personal cuadra con ambas cifras.
+      const prestamos = (prestamosPorSocio.get(socio.id) ?? []).map((p) => {
+        const saldoUsd = redondear(
           Number(p.saldo_capital_usd) + Number(p.saldo_interes_usd) + Number(p.saldo_mora_usd)
-        ),
-        saldo_capital_usd: Number(p.saldo_capital_usd),
-        saldo_interes_usd: Number(p.saldo_interes_usd),
-        saldo_mora_usd: Number(p.saldo_mora_usd),
-        saldo_bs: redondear(
-          (Number(p.saldo_capital_usd) + Number(p.saldo_interes_usd) + Number(p.saldo_mora_usd)) * tasa
-        ),
-        fecha_desembolso: p.fecha_desembolso,
-        // El dato que hoy obliga a abrir otra pantalla (req. 5)
-        fecha_ultimo_abono: p.fecha_ultimo_abono,
-        semanas_sin_pago: null as number | null,
-        monto_sugerido_usd: redondear(Number(p.cuota_semanal_usd) + Number(p.saldo_mora_usd)),
-        monto_semanal_usd: Number(p.cuota_semanal_usd),
-        estado: p.estado,
-      }));
+        );
+        const saldoBs = redondear(
+          Number(p.saldo_capital_bs) + Number(p.saldo_interes_bs) + Number(p.saldo_mora_bs)
+        );
+        const abonado = abonosPorPrestamo.get(p.id);
+
+        return {
+          tipo: 'prestamo' as const,
+          referencia_id: p.id,
+          titulo: p.tipo_prestamo.nombre,
+          // Categoria, pagare y moneda, cada uno en su campo en vez de
+          // amontonados en una sola celda
+          categoria: p.tipo_prestamo.nombre,
+          numero_pagare: p.numero_prestamo,
+          moneda: p.moneda,
+          detalle: `${p.numero_prestamo} · cuota $${Number(p.cuota_semanal_usd).toFixed(2)}`,
+
+          monto_original_usd: Number(p.monto_original_usd),
+          monto_original_bs: Number(p.monto_original_bs),
+          abonado_usd: redondear(abonado?.usd ?? 0),
+          abonado_bs: redondear(abonado?.bs ?? 0),
+          saldo_usd: saldoUsd,
+          saldo_bs: saldoBs,
+          saldo_capital_usd: Number(p.saldo_capital_usd),
+          saldo_interes_usd: Number(p.saldo_interes_usd),
+          saldo_mora_usd: Number(p.saldo_mora_usd),
+
+          fecha_desembolso: p.fecha_desembolso,
+          // El dato que hoy obliga a abrir otra pantalla (req. 5)
+          fecha_ultimo_abono: p.fecha_ultimo_abono,
+          cuota_semanal_usd: Number(p.cuota_semanal_usd),
+          cuota_semanal_bs: Number(p.cuota_semanal_bs),
+
+          semanas_sin_pago: null as number | null,
+          monto_sugerido_usd: redondear(Number(p.cuota_semanal_usd) + Number(p.saldo_mora_usd)),
+          monto_semanal_usd: Number(p.cuota_semanal_usd),
+          estado: p.estado,
+        };
+      });
 
       // --- Cobrables: se conserva la forma que ya consume el frontend ---
       const cobrablesServicio = acuerdos.map((a) => {
@@ -457,6 +510,20 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
 
       // Semanas sugeridas: las que hacen falta para dejar TODO al día
       const pendientes = semanasParaPonerseAlDia(acuerdos);
+
+      // Los tres indicadores que el sistema actual pone junto al campo de
+      // semanas: hasta que semana esta cubierto, cuanto debe y si esta
+      // suspendido (`ult_sem`, `atraso`, `suspendido` del formulario original).
+      const coberturas = acuerdos
+        .map((a) => a.situacion.cobertura)
+        .filter((c): c is NonNullable<typeof c> => c !== null);
+
+      // La MENOR cobertura manda: es la que decide cuanto hay que cobrar para
+      // dejar al socio al dia en todos sus servicios.
+      const ultimaSemana =
+        coberturas.length > 0
+          ? coberturas.reduce((menor, c) => (esAnterior(c, menor) ? c : menor))
+          : null;
 
       // Paquete de una semana, para que la pantalla muestre el desglose al abrir
       const paqueteSugerido = armarPaquete({
@@ -487,6 +554,12 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         prestamos,
         semanas_para_ponerse_al_dia: pendientes,
         paquete_sugerido: paqueteSugerido,
+
+        // Cabecera del cobro
+        ultima_semana_pagada: ultimaSemana,
+        ultima_semana_pagada_texto: formatearPeriodo(ultimaSemana),
+        atraso: pendientes,
+        suspendido: acuerdos.filter((a) => a.situacion.estado_registrado === 'suspendido').length,
 
         // Cantidad de acuerdos por servicio: en el sistema viejo son nu_fun y
         // nu_sal, los multiplicadores del subtotal
@@ -789,6 +862,9 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
               tasa_cambio: tasa,
               saldo_anterior_usd: saldoAnterior,
               saldo_nuevo_usd: saldoNuevo,
+              // En bolívares tal cual, sin pasar por los dólares: ese ida y
+              // vuelta pierde céntimos y descuadra la libreta
+              saldo_nuevo_bs: redondear(saldoNuevo * tasa),
               // El cuadre necesita saber si entraron bolívares o divisas, y si
               // fue presencial o por el cajero digital (req. 4 y 9)
               moneda: 'BS' as const,
@@ -857,12 +933,11 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
           });
         } else {
           const acuerdo = (item as any).acuerdo;
-          const tarifaUnitaria =
-            Number(acuerdo.tipo_acuerdo.monto_usd) > 0
-              ? Number(acuerdo.tipo_acuerdo.monto_usd)
-              : detalle.servicio === 'funeraria'
-                ? tarifas.funeraria_usd
-                : tarifas.salud_usd;
+          // Misma precedencia que en el calculo previo: manda la tarifa
+          // general del parametro, el catalogo es solo respaldo.
+          const general =
+            detalle.servicio === 'funeraria' ? tarifas.funeraria_usd : tarifas.salud_usd;
+          const tarifaUnitaria = general > 0 ? general : Number(acuerdo.tipo_acuerdo.monto_usd);
 
           // El reintegro es el cargo por reactivar: suma al total pero NO
           // mueve la cobertura, porque no cubre ninguna semana.
@@ -1301,6 +1376,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
               tasa_cambio: tasa,
               saldo_anterior_usd: saldoAnterior,
               saldo_nuevo_usd: saldoNuevo,
+              saldo_nuevo_bs: redondear(saldoNuevo * tasa),
               concepto: `Reverso de colecta #${colecta.id}: ${validacion.data.motivo}`,
               referencia: `REV-${colecta.id}`,
             },

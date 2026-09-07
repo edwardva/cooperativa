@@ -757,6 +757,51 @@ export default function ColectaPage() {
                 </label>
               </div>
 
+              {/*
+                Los tres indicadores que el sistema actual pone junto al campo
+                de semanas: hasta que semana esta cubierto, cuanto debe y si
+                hay algo suspendido. Van de solo lectura porque son un
+                resultado, no algo que el cajero decida.
+              */}
+              <div className="mt-3 grid grid-cols-3 gap-3">
+                <div className="rounded-lg bg-neutral-50 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">
+                    Ultima semana pagada
+                  </p>
+                  <p className="text-sm font-semibold text-neutral-900">
+                    {socio.ultima_semana_pagada_texto}
+                  </p>
+                </div>
+                <div
+                  className={`rounded-lg px-3 py-2 ${
+                    socio.atraso > 0 ? 'bg-amber-50' : 'bg-neutral-50'
+                  }`}
+                >
+                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Atraso</p>
+                  <p
+                    className={`text-sm font-semibold tabular-nums ${
+                      socio.atraso > 0 ? 'text-amber-900' : 'text-neutral-900'
+                    }`}
+                  >
+                    {socio.atraso} semana{socio.atraso === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div
+                  className={`rounded-lg px-3 py-2 ${
+                    socio.suspendido > 0 ? 'bg-red-50' : 'bg-neutral-50'
+                  }`}
+                >
+                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Suspendido</p>
+                  <p
+                    className={`text-sm font-semibold tabular-nums ${
+                      socio.suspendido > 0 ? 'text-red-800' : 'text-neutral-900'
+                    }`}
+                  >
+                    {socio.suspendido}
+                  </p>
+                </div>
+              </div>
+
               <p className="mt-2 text-xs text-neutral-500">
                 Las semanas multiplican por igual el ahorro y cada servicio contratado. Arranca en lo
                 que hace falta para ponerlo al dia ({socio.semanas_para_ponerse_al_dia} semana
@@ -862,26 +907,52 @@ export default function ColectaPage() {
                         </div>
                       </div>
 
-                      {/* Movimientos recientes en la misma pantalla (req. 4) */}
+                      {/*
+                        La libreta, como la lee el personal en el sistema
+                        actual: item, fecha, documento, importe y el saldo con
+                        el que quedo la cuenta. El cajero digital se marca
+                        aparte, que es lo que alli se ve como CAJ_DIG.
+                      */}
                       {(cuenta.movimientos_recientes?.length ?? 0) > 0 && (
-                        <div className="mt-3 space-y-1 border-t border-neutral-100 pt-2">
-                          {cuenta.movimientos_recientes!.map((m) => (
-                            <div
-                              key={m.id}
-                              className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                            >
-                              <span className="text-neutral-600">
-                                {new Date(m.fecha).toLocaleDateString('es-VE')} · {m.tipo}
-                                {m.canal === 'digital' && (
-                                  <span className="ml-1 text-primary-600">(cajero digital)</span>
-                                )}
-                                {m.concepto ? ` · ${m.concepto}` : ''}
-                              </span>
-                              <span className="tabular-nums font-medium text-neutral-800">
-                                ${money(m.monto_usd)} · {money(m.monto_bs)} Bs
-                              </span>
-                            </div>
-                          ))}
+                        <div className="mt-3 overflow-x-auto border-t border-neutral-100 pt-2">
+                          <table className="min-w-full text-xs">
+                            <thead>
+                              <tr className="text-[10px] uppercase tracking-wide text-neutral-400">
+                                <th className="py-1 pr-3 text-left font-medium">Item</th>
+                                <th className="py-1 pr-3 text-left font-medium">Fecha</th>
+                                <th className="py-1 pr-3 text-left font-medium">Doc.</th>
+                                <th className="py-1 pr-3 text-left font-medium">Tipo</th>
+                                <th className="py-1 pr-3 text-right font-medium">Monto Bs</th>
+                                <th className="py-1 text-right font-medium">Saldo Bs</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {cuenta.movimientos_recientes!.map((m) => (
+                                <tr key={m.id} className="border-t border-neutral-50">
+                                  <td className="py-1 pr-3 tabular-nums text-neutral-500">{m.item}</td>
+                                  <td className="whitespace-nowrap py-1 pr-3 text-neutral-600">
+                                    {new Date(m.fecha).toLocaleDateString('es-VE')}
+                                  </td>
+                                  <td className="whitespace-nowrap py-1 pr-3">
+                                    {m.canal === 'digital' ? (
+                                      <span className="rounded bg-primary-50 px-1.5 py-0.5 font-medium text-primary-700">
+                                        CAJ_DIG
+                                      </span>
+                                    ) : (
+                                      <span className="text-neutral-500">{m.documento}</span>
+                                    )}
+                                  </td>
+                                  <td className="py-1 pr-3 text-neutral-600">{m.tipo}</td>
+                                  <td className="py-1 pr-3 text-right tabular-nums font-medium text-neutral-800">
+                                    {money(m.monto_bs)}
+                                  </td>
+                                  <td className="py-1 text-right tabular-nums text-neutral-600">
+                                    {money(m.saldo_bs)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       )}
                     </div>
@@ -924,52 +995,85 @@ export default function ColectaPage() {
                             <p className="text-sm font-medium text-neutral-900">
                               {prestamo.categoria ?? prestamo.titulo}
                             </p>
-                            {/* Categoria, pagare, moneda y fechas separados en
-                                su propia rejilla: el cliente reporto cifras
-                                amontonadas y cortadas (req. 5) */}
-                            <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
-                              <div>
-                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
-                                  Pagare
-                                </dt>
-                                <dd className="text-xs font-medium text-neutral-800">
-                                  {prestamo.numero_pagare ?? '—'}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
-                                  Saldo ({prestamo.moneda ?? 'USD'})
-                                </dt>
-                                <dd className="text-xs font-semibold tabular-nums text-neutral-900">
-                                  ${money(prestamo.saldo_usd ?? 0)}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
-                                  Ultimo abono
-                                </dt>
-                                <dd className="text-xs font-medium text-neutral-800">
-                                  {prestamo.fecha_ultimo_abono
-                                    ? new Date(prestamo.fecha_ultimo_abono).toLocaleDateString('es-VE')
-                                    : 'Sin abonos'}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
-                                  Otorgado
-                                </dt>
-                                <dd className="text-xs text-neutral-600">
-                                  {prestamo.fecha_desembolso
-                                    ? new Date(prestamo.fecha_desembolso).toLocaleDateString('es-VE')
-                                    : '—'}
-                                </dd>
-                              </div>
-                            </dl>
-                            {(prestamo.saldo_mora_usd ?? 0) > 0 && (
-                              <p className="mt-1.5 text-xs text-error-600">
-                                Mora: ${money(prestamo.saldo_mora_usd ?? 0)}
-                              </p>
-                            )}
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+                              <span className="font-mono">{prestamo.numero_pagare ?? '—'}</span>
+                              {/* La moneda va aparte de la categoria: en el
+                                  sistema actual son dos campos distintos, y eso
+                                  resuelve la duda de si "divisa" era un tipo de
+                                  prestamo (no lo es, es la moneda). */}
+                              <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700">
+                                {prestamo.moneda === 'USD' ? 'Divisas' : 'Bolivares'}
+                              </span>
+                              <span>
+                                Otorgado{' '}
+                                {prestamo.fecha_desembolso
+                                  ? new Date(prestamo.fecha_desembolso).toLocaleDateString('es-VE')
+                                  : '—'}
+                              </span>
+                              {/* El dato por el que hoy hay que abrir otra
+                                  pantalla: cuando pago por ultima vez */}
+                              {prestamo.fecha_ultimo_abono ? (
+                                <span className="font-medium text-neutral-700">
+                                  Ultimo abono{' '}
+                                  {new Date(prestamo.fecha_ultimo_abono).toLocaleDateString('es-VE')}
+                                </span>
+                              ) : (
+                                <span className="text-amber-700">Sin abonos</span>
+                              )}
+                            </div>
+
+                            {/* Monto, abonado y saldo en LAS DOS monedas, como
+                                en el sistema actual, y en columnas alineadas
+                                para que no se amontonen ni se corten. */}
+                            <div className="mt-2 overflow-x-auto">
+                              <table className="min-w-full text-xs">
+                                <thead>
+                                  <tr className="text-[10px] uppercase tracking-wide text-neutral-400">
+                                    <th className="py-1 pr-3 text-left font-medium"></th>
+                                    <th className="py-1 pr-4 text-right font-medium">Bs</th>
+                                    <th className="py-1 text-right font-medium">USD</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="tabular-nums">
+                                  <tr>
+                                    <td className="py-0.5 pr-3 text-neutral-500">Monto</td>
+                                    <td className="py-0.5 pr-4 text-right text-neutral-700">
+                                      {money(prestamo.monto_original_bs ?? 0)}
+                                    </td>
+                                    <td className="py-0.5 text-right text-neutral-700">
+                                      {money(prestamo.monto_original_usd ?? 0)}
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td className="py-0.5 pr-3 text-neutral-500">Abonado</td>
+                                    <td className="py-0.5 pr-4 text-right text-neutral-700">
+                                      {money(prestamo.abonado_bs ?? 0)}
+                                    </td>
+                                    <td className="py-0.5 text-right text-neutral-700">
+                                      {money(prestamo.abonado_usd ?? 0)}
+                                    </td>
+                                  </tr>
+                                  <tr className="border-t border-neutral-100">
+                                    <td className="py-0.5 pr-3 font-medium text-neutral-700">Saldo</td>
+                                    <td className="py-0.5 pr-4 text-right font-semibold text-neutral-900">
+                                      {money(prestamo.saldo_bs ?? 0)}
+                                    </td>
+                                    <td className="py-0.5 text-right font-semibold text-neutral-900">
+                                      {money(prestamo.saldo_usd ?? 0)}
+                                    </td>
+                                  </tr>
+                                  {(prestamo.saldo_mora_usd ?? 0) > 0 && (
+                                    <tr>
+                                      <td className="py-0.5 pr-3 text-error-600">Mora</td>
+                                      <td className="py-0.5 pr-4 text-right text-error-600">—</td>
+                                      <td className="py-0.5 text-right font-medium text-error-600">
+                                        {money(prestamo.saldo_mora_usd ?? 0)}
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
 
                           {marcado && (

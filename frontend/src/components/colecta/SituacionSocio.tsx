@@ -105,7 +105,17 @@ export function SituacionSocio({ servicios, semanaActualTexto, tasa }: Props) {
               </div>
               <div>
                 <dt className="text-[11px] uppercase tracking-wide text-neutral-500">Cubierto hasta</dt>
-                <dd className="text-sm font-semibold text-neutral-900">{servicio.pagado_hasta_texto}</dd>
+                <dd className="text-sm font-semibold text-neutral-900">
+                  {servicio.pagado_hasta_texto}
+                </dd>
+                {/* La fecha del domingo que cierra esa semana. El sistema
+                    actual muestra las dos formas y el personal usa ambas: la
+                    semana para el calculo, la fecha para explicarsela al socio. */}
+                {servicio.pagado_hasta_fecha && (
+                  <dd className="text-[11px] text-neutral-500">
+                    {fecha(servicio.pagado_hasta_fecha)}
+                  </dd>
+                )}
               </div>
               <div>
                 <dt className="text-[11px] uppercase tracking-wide text-neutral-500">Cuota semanal</dt>

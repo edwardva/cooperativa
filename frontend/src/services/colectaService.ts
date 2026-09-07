@@ -17,12 +17,19 @@ export interface Periodo {
 }
 
 export interface MovimientoAhorroReciente {
+  /** Correlativo dentro de la libreta */
+  item: number
   id: number
   tipo: string
   monto_usd: number
   monto_bs: number
+  /** Saldo con el que quedo la cuenta despues del movimiento */
+  saldo_usd: number
+  saldo_bs: number
   moneda: string
   canal: string
+  /** CAJ_DIG cuando vino del cajero digital, como en el sistema actual */
+  documento: string
   concepto: string | null
   referencia: string | null
   fecha: string
@@ -50,15 +57,22 @@ export interface Cobrable {
   bloqueado_usd?: number
   disponible_usd?: number
   movimientos_recientes?: MovimientoAhorroReciente[]
-  /** Solo en prestamos */
+  /** Solo en prestamos: se muestran las dos monedas a la vez */
   categoria?: string
   numero_pagare?: string
+  /** Moneda de otorgamiento (BS o USD), aparte de la categoria */
   moneda?: string
   fecha_desembolso?: string
   fecha_ultimo_abono?: string | null
+  monto_original_usd?: number
+  monto_original_bs?: number
+  abonado_usd?: number
+  abonado_bs?: number
   saldo_capital_usd?: number
   saldo_interes_usd?: number
   saldo_mora_usd?: number
+  cuota_semanal_usd?: number
+  cuota_semanal_bs?: number
 }
 
 /** Resumen POR SERVICIO para la cabecera: una fila por servicio, no por semana */
@@ -72,6 +86,8 @@ export interface ResumenServicio {
   fecha_ultimo_pago: string | null
   pagado_hasta: Periodo | null
   pagado_hasta_texto: string
+  /** Fecha (domingo) hasta la que cubre esa semana */
+  pagado_hasta_fecha: string | null
   semanas_pendientes: number
   semanas_adelantadas: number
   estado: string
@@ -155,6 +171,12 @@ export interface SocioColecta {
   prestamos: Cobrable[]
   semanas_para_ponerse_al_dia: number
   paquete_sugerido: PaqueteSemanal
+
+  /** Indicadores de cabecera: ult_sem, atraso y suspendido */
+  ultima_semana_pagada: Periodo | null
+  ultima_semana_pagada_texto: string
+  atraso: number
+  suspendido: number
 
   /** Multiplicadores del subtotal: nu_fun y nu_sal del sistema viejo */
   cantidad_funeraria: number

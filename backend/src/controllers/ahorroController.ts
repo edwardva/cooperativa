@@ -575,6 +575,9 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
             tasa_cambio: tasaCambio,
             saldo_anterior_usd: 0,
             saldo_nuevo_usd: datos.monto_inicial_usd,
+            // En bolivares tal cual: derivarlo de los dolares por la tasa
+            // pierde centimos y descuadra la libreta
+            saldo_nuevo_bs: Math.round(datos.monto_inicial_usd * tasaCambio * 100) / 100,
             concepto: 'Apertura de cuenta',
             fecha_movimiento: new Date(),
           },
@@ -827,6 +830,7 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
           tasa_cambio: tasaCambio,
           saldo_anterior_usd: saldoAnteriorUsd,
           saldo_nuevo_usd: nuevoSaldoUsd,
+          saldo_nuevo_bs: Math.round(nuevoSaldoUsd * tasaCambio * 100) / 100,
           concepto: datos.concepto,
           referencia: datos.referencia,
           fecha_movimiento: new Date(),

@@ -224,6 +224,10 @@ model MovimientoAhorro {
   tasa_cambio        Decimal  @db.Decimal(10, 4) // Tasa en el momento de la transacción
   saldo_anterior_usd Decimal  @db.Decimal(12, 2)
   saldo_nuevo_usd    Decimal  @db.Decimal(12, 2)
+  // Saldo en bolivares tras el movimiento. Se guarda en vez de derivarlo de
+  // los dolares por la tasa: ese ida y vuelta pierde centimos y la libreta
+  // termina mostrando un saldo que no cuadra con el de la cuenta.
+  saldo_nuevo_bs     Decimal? @db.Decimal(12, 2)
   // Moneda en que el socio entrego el dinero. La cuenta lleva ambos saldos,
   // pero el cuadre de caja necesita saber si entraron bolivares o divisas.
   moneda             Moneda   @default(BS)
@@ -430,6 +434,11 @@ model TipoPrestamo {
   tasa_mora_mensual    Decimal  @default(2.00) @db.Decimal(5, 2)
   plazo_maximo_semanas Int      @default(52)
   requiere_fiadores    Boolean  @default(true)
+  // Moneda en que se otorga esta categoria. En el sistema actual es una
+  // propiedad del TIPO ("linea blanca" se da en divisas, "efectivo" en
+  // bolivares), lo que resuelve la duda de la reunion: divisa no es una
+  // categoria de prestamo aparte, es la moneda de la categoria.
+  moneda               Moneda   @default(BS)
   estado               Boolean  @default(true)
   created_at           DateTime @default(now())
 
@@ -463,6 +472,12 @@ model Prestamo {
   // El cliente ve hoy la fecha de otorgamiento y tiene que abrir otra pantalla
   // para saber cuando pago por ultima vez (req. 5 de la reunion)
   fecha_ultimo_abono  DateTime?
+
+  // Moneda en que se otorgo. El sistema actual la lleva como un campo aparte
+  // ("Bolivares" / "Divisas") de la CATEGORIA (efectivo, linea blanca, gastos
+  // medicos), lo que responde la duda de la reunion: divisa es una modalidad,
+  // no una categoria de prestamo.
+  moneda              Moneda         @default(BS)
   created_at          DateTime       @default(now())
   updated_at          DateTime       @updatedAt
 

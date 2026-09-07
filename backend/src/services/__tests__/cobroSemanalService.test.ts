@@ -54,11 +54,20 @@ const crearAcuerdo = (
 };
 
 describe('tarifaDeAcuerdo', () => {
-  it('usa la tarifa del plan cuando el catálogo la tiene cargada', () => {
-    expect(tarifaDeAcuerdo(crearAcuerdo('funeraria', { plan: 1.25 }), TARIFAS)).toBe(1.25);
+  it('manda la tarifa general del parámetro, no la del catálogo', () => {
+    // El catálogo trae valores de relleno (USD 5,00 en funeraria) frente a los
+    // USD 0,75 que cobra la cooperativa de verdad. Darle precedencia cobraba
+    // de más.
+    expect(tarifaDeAcuerdo(crearAcuerdo('funeraria', { plan: 5 }), TARIFAS)).toBe(0.75);
+    expect(tarifaDeAcuerdo(crearAcuerdo('salud', { plan: 3 }), TARIFAS)).toBe(0.96);
   });
 
-  it('cae en la tarifa general del parámetro si el plan no la trae', () => {
+  it('cae en la del plan sólo si el parámetro está vacío o en cero', () => {
+    const sinTarifas = { ...TARIFAS, funeraria_usd: 0 };
+    expect(tarifaDeAcuerdo(crearAcuerdo('funeraria', { plan: 1.25 }), sinTarifas)).toBe(1.25);
+  });
+
+  it('usa la tarifa general cuando el plan no trae ninguna', () => {
     expect(tarifaDeAcuerdo(crearAcuerdo('funeraria'), TARIFAS)).toBe(0.75);
     expect(tarifaDeAcuerdo(crearAcuerdo('salud'), TARIFAS)).toBe(0.96);
   });

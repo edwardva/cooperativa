@@ -20,7 +20,7 @@
 
 import { aplicarPago, calcularSituacion, type SituacionServicio } from './coberturaService';
 import type { TarifasColecta } from './tarifasService';
-import { type Periodo, formatearPeriodo } from '../utils/calendarioSemanal';
+import { type Periodo, formatearPeriodo, rangoDeSemana } from '../utils/calendarioSemanal';
 
 /** Redondeo a céntimos, el mismo criterio en todo el módulo de colecta. */
 export const redondear = (valor: number): number => Math.round(valor * 100) / 100;
@@ -72,15 +72,22 @@ export interface PaqueteSemanal {
 }
 
 /**
- * Tarifa que aplica a un acuerdo: la de su plan si la tiene, y si no la general.
+ * Tarifa semanal que aplica a un acuerdo.
  *
- * Los tipos de acuerdo ya llevan su propio `monto_usd` y se editan desde el
- * catálogo, así que un plan con tarifa propia manda. La tarifa general del
- * parámetro cubre a los que no la tengan cargada.
+ * Manda la tarifa GENERAL del parámetro. La cooperativa cobra una sola cuota
+ * por servicio y la multiplica por la cantidad de acuerdos del socio — es lo
+ * que hace el sistema actual, donde la pantalla tiene un único campo por
+ * servicio (`bs_fun`, `bs_sal`) multiplicado por `nu_fun` / `nu_sal`.
+ *
+ * El `monto_usd` del tipo de acuerdo queda como respaldo, por si el parámetro
+ * llegara vacío o en cero. Antes tenía precedencia, y eso cobraba de más: el
+ * catálogo trae valores de relleno (USD 5,00 en funeraria) frente a los USD
+ * 0,75 que cobra la cooperativa de verdad.
  */
 export function tarifaDeAcuerdo(acuerdo: AcuerdoCobrable, tarifas: TarifasColecta): number {
-  if (acuerdo.monto_plan_usd > 0) return acuerdo.monto_plan_usd;
-  return acuerdo.servicio === 'funeraria' ? tarifas.funeraria_usd : tarifas.salud_usd;
+  const general = acuerdo.servicio === 'funeraria' ? tarifas.funeraria_usd : tarifas.salud_usd;
+  if (general > 0) return general;
+  return acuerdo.monto_plan_usd;
 }
 
 /**
@@ -293,6 +300,11 @@ export function resumirServicio(acuerdo: AcuerdoCobrable, tarifas: TarifasColect
     fecha_ultimo_pago: s.fecha_ultimo_pago,
     pagado_hasta: s.cobertura,
     pagado_hasta_texto: formatearPeriodo(s.cobertura),
+    // El sistema actual muestra la semana Y la fecha hasta la que cubre
+    // ("Sem 35 / 2026" junto a "Hasta 30/08/2026"). Son el mismo dato dicho de
+    // dos formas, y el personal usa las dos: la semana para el calculo y la
+    // fecha para explicarsela al socio.
+    pagado_hasta_fecha: s.cobertura ? rangoDeSemana(s.cobertura).fin : null,
     semanas_pendientes: s.semanas_pendientes,
     semanas_adelantadas: s.semanas_adelantadas,
     estado: s.estado_registrado,
