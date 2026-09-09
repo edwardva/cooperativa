@@ -9,14 +9,17 @@
  */
 
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom'
-import { PrintableListado } from '../components/print/PrintableListado';
+import { useEffect, useMemo, useState } from 'react';
+import { PrintableFichaAcuerdo } from '../components/print/PrintableFichaAcuerdo';
+import type { PrintableFichaAcuerdoProps } from '../components/print/PrintableFichaAcuerdo';
+import { PrintableListadoGrupos } from '../components/print/PrintableListadoGrupos';
+import { SortableHeader } from '../components/ui/SortableHeader';
 
 
 import {
   PlusCircle,
   Search,
+  FileSearch,
   AlertTriangle,
   CheckCircle2,
   XCircle,
@@ -26,6 +29,7 @@ import {
   HeartPulse,
   ShieldOff,
   MoreVertical,
+  MoreHorizontal,
   Eye,
   Printer,
   FileSpreadsheet,
@@ -44,12 +48,17 @@ import {
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
+import { Select } from '../components/ui/Select'
 import { Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
+import { Alert } from '../components/ui/Alert'
+import { ActionMenu } from '../components/ui/ActionMenu'
+import type { ActionMenuItem } from '../components/ui/ActionMenu'
 import * as saludService from '../services/saludService'
 import * as sociosService from '../services/sociosService'
 import * as funerariaService from '../services/funerariaService'
 import * as feriasService from '../services/feriasService'
+import * as ahorroService from '../services/ahorroService'
 import type {
   AcuerdoSalud,
   TipoAcuerdo,
@@ -73,6 +82,13 @@ type RetiroCandidato = {
   beneficiario: { cedula: string; nombre_completo: string }
 }
 
+/** Forma mínima que necesita abrirCambiarEstado; AcuerdoSalud y GrupoSalud.titular la cumplen. */
+type CambiarEstadoCandidato = {
+  id: number
+  numero_acuerdo: string | null
+  socio: { nombre_completo: string } | null
+}
+
 const MAX_BENEFICIARIOS_POR_GRUPO = 8
 
 const hoyISO = (): string => new Date().toISOString().split('T')[0] ?? ''
@@ -87,6 +103,49 @@ const emptyBeneficiarioGrupoForm = (): BeneficiarioGrupoInput => ({
   estado: 'activo',
   telefono: '',
 })
+
+/** Mini-formulario "buscar por número" reutilizado en los modales de Eliminar, Retirar, Pagos y Traspaso. */
+function BuscarPorNumeroInline({
+  label,
+  value,
+  onChange,
+  onBuscar,
+  buscando,
+  autoFocus,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  onBuscar: () => void
+  buscando: boolean
+  autoFocus?: boolean
+}) {
+  return (
+    <div className="flex gap-2">
+      <Input
+        label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && onBuscar()}
+        className="flex-1"
+        autoFocus={autoFocus}
+      />
+      <Button onClick={onBuscar} isLoading={buscando} className="self-end">
+        <Search className="w-4 h-4" />
+      </Button>
+    </div>
+  )
+}
+
+/** Tarjeta resumen de socio/grupo reutilizada en varios modales de Salud. */
+function ResumenSocioCard({ nombre, detalle }: { nombre: string; detalle: string }) {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+      <p className="text-sm font-semibold text-neutral-900">{nombre}</p>
+      <p className="text-xs text-neutral-500">{detalle}</p>
+    </div>
+  )
+}
 
 export default function SaludPage() {
   const { hasPermission } = usePermissions()
@@ -116,12 +175,19 @@ export default function SaludPage() {
   const [totalRegistros, setTotalRegistros] = useState(0)
   const [itemsPorPagina, setItemsPorPagina] = useState(5)
 
-  const [descargandoExcelAcuerdos, setDescargandoExcelAcuerdos] = useState(false)
-
 
   // Ordenamiento
-  const [sortField] = useState<string>('id');
-  const [sortOrder] = useState<'asc' | 'desc'>('asc');
+const [sortField, setSortField] = useState<string>('id');
+const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+const handleSort = (field: string) => {
+  if (sortField === field) {
+    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+  } else {
+    setSortField(field)
+    setSortOrder('asc')
+  }
+}
 
   // Modales
   //const [modalAbierto, setModalAbierto] = useState<'crear' | 'detalle' | 'cambiar-estado' | null>(
@@ -129,58 +195,8 @@ export default function SaludPage() {
   //);
 //  const [_acuerdoSeleccionado, setAcuerdoSeleccionado] = useState<AcuerdoSalud | null>(null);
 
-  // Menú de acciones por fila (portal, se abre hacia arriba si no cabe)
-  const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null)
-  const [menuAncla, setMenuAncla] = useState<{ top: number; bottom: number; right: number } | null>(null)
-  const [menuEstilo, setMenuEstilo] = useState<{ top: number; left: number } | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
+  // Menú de acciones por fila (Radix ActionMenu, ver components/ui/ActionMenu)
   const [imprimiendoFilaId, setImprimiendoFilaId] = useState<number | null>(null)
-
-  const cerrarMenuAcciones = () => {
-    setMenuAbiertoId(null)
-    setMenuAncla(null)
-    setMenuEstilo(null)
-  }
-
-  const alternarMenuAcciones = (acuerdoId: number, event: React.MouseEvent<HTMLButtonElement>) => {
-    if (menuAbiertoId === acuerdoId) {
-      cerrarMenuAcciones()
-      return
-    }
-    const rect = event.currentTarget.getBoundingClientRect()
-    setMenuEstilo(null)
-    setMenuAncla({ top: rect.top, bottom: rect.bottom, right: rect.right })
-    setMenuAbiertoId(acuerdoId)
-  }
-
-  useLayoutEffect(() => {
-    if (menuAbiertoId === null || !menuAncla || !menuRef.current) return
-
-    const MENU_ANCHO = 224
-    const MARGEN = 8
-    const alturaMenu = menuRef.current.offsetHeight
-    const alturaVentana = window.innerHeight
-    const anchoVentana = window.innerWidth
-
-    const abrirHaciaArriba = menuAncla.bottom + alturaMenu + MARGEN > alturaVentana
-    const top = abrirHaciaArriba
-      ? Math.max(MARGEN, menuAncla.top - alturaMenu - 4)
-      : menuAncla.bottom + 4
-    const left = Math.min(Math.max(MARGEN, menuAncla.right - MENU_ANCHO), anchoVentana - MENU_ANCHO - MARGEN)
-
-    setMenuEstilo({ top, left })
-  }, [menuAbiertoId, menuAncla])
-
-  useEffect(() => {
-    if (menuAbiertoId === null) return
-    window.addEventListener('scroll', cerrarMenuAcciones, true)
-    window.addEventListener('resize', cerrarMenuAcciones)
-    return () => {
-      window.removeEventListener('scroll', cerrarMenuAcciones, true)
-      window.removeEventListener('resize', cerrarMenuAcciones)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [menuAbiertoId])
 
   // ============================================
   // CARGA DE DATOS
@@ -243,17 +259,6 @@ export default function SaludPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paginaActual, busqueda, tab, itemsPorPagina])
 
-  const descargarExcelAcuerdos = async () => {
-    setDescargandoExcelAcuerdos(true)
-    try {
-      await saludService.descargarReporteAcuerdos()
-    } catch (err) {
-      window.alert(getErrorMessage(err))
-    } finally {
-      setDescargandoExcelAcuerdos(false)
-    }
-  }
-
   // ============================================
   // WIZARD: NUEVO ACUERDO (titular + beneficiarios en un solo paso)
   // ============================================
@@ -294,7 +299,23 @@ export default function SaludPage() {
     try {
       const respuesta = await sociosService.buscarSocioPorExpediente(wizardExpediente.trim())
       if (!respuesta.success || !respuesta.data) throw new Error('Socio no encontrado')
-      setWizardSocio(respuesta.data)
+      const socio = respuesta.data
+
+      // La misma regla de negocio que valida el backend al crear el grupo
+      // (el socio necesita una cuenta de ahorro activa), pero verificada acá
+      // para avisar de inmediato en el paso 1 y no dejar que el usuario
+      // complete todo el wizard para recién enterarse en el paso 3.
+      const respuestaCuentas = await ahorroService.obtenerCuentasPorSocio(socio.id)
+      const tieneCuentaActiva =
+        respuestaCuentas.success && respuestaCuentas.data.cuentas.some((c) => c.estado)
+      if (!tieneCuentaActiva) {
+        setWizardError(
+          `El socio con expediente ${socio.codigo_socio} (cédula ${socio.cedula}) no tiene ninguna cuenta de ahorro activa registrada. Debe tener al menos una cuenta de ahorro activa para acceder al beneficio de salud.`
+        )
+        return
+      }
+
+      setWizardSocio(socio)
       setWizardPaso(2)
     } catch (err) {
       setWizardError(getErrorMessage(err) || 'Socio no encontrado')
@@ -370,9 +391,77 @@ export default function SaludPage() {
   const [grupoCargando, setGrupoCargando] = useState(false)
   const [grupoActual, setGrupoActual] = useState<GrupoSalud | null>(null)
   const [imprimiendoFicha, setImprimiendoFicha] = useState(false)
+  const [fichaParaImprimir, setFichaParaImprimir] = useState<PrintableFichaAcuerdoProps | null>(null)
+
+  // ============================================
+  // MODAL: LISTADO POR TIPO (Imprimir listado / Acuerdos en Excel)
+  // ============================================
+  const [modoListadoModal, setModoListadoModal] = useState<'pdf' | 'excel' | null>(null)
+  const [tipoListadoSeleccionado, setTipoListadoSeleccionado] = useState<saludService.TipoListadoSalud>('activos')
+  const [procesandoListado, setProcesandoListado] = useState(false)
+  const [listadoSinDatosMensaje, setListadoSinDatosMensaje] = useState<string | null>(null)
+  const [gruposParaImprimir, setGruposParaImprimir] = useState<{
+    tipo: saludService.TipoListadoSalud
+    grupos: saludService.GrupoSalud[]
+  } | null>(null)
+
+  const ETIQUETAS_TIPO_LISTADO: Record<saludService.TipoListadoSalud, string> = {
+    activos: 'socios activos',
+    suspendidos: 'socios suspendidos',
+    proximos_suspender: 'socios próximos a suspender',
+  }
+
+  const abrirModalListado = (modo: 'pdf' | 'excel') => {
+    setTipoListadoSeleccionado('activos')
+    setListadoSinDatosMensaje(null)
+    setModoListadoModal(modo)
+  }
+
+  const cambiarTipoListado = (tipo: saludService.TipoListadoSalud) => {
+    setTipoListadoSeleccionado(tipo)
+    setListadoSinDatosMensaje(null)
+  }
+
+  const confirmarImprimirListado = async () => {
+    setProcesandoListado(true)
+    setListadoSinDatosMensaje(null)
+    try {
+      // Antes de imprimir o descargar se valida que la selección tenga
+      // resultados: evita generar un PDF/Excel vacío y, en el caso del PDF,
+      // una última página en blanco cuando no hay ni un solo grupo que imprimir.
+      const respuesta = await saludService.listarGruposPorTipo(tipoListadoSeleccionado)
+      if (!respuesta.success) throw new Error('No fue posible obtener el listado')
+
+      if (respuesta.data.length === 0) {
+        setListadoSinDatosMensaje(`No hay registros de ${ETIQUETAS_TIPO_LISTADO[tipoListadoSeleccionado]} para mostrar.`)
+        return
+      }
+
+      if (modoListadoModal === 'excel') {
+        await saludService.descargarReporteGrupos(tipoListadoSeleccionado)
+        setModoListadoModal(null)
+      } else {
+        setModoListadoModal(null)
+        setGruposParaImprimir({ tipo: tipoListadoSeleccionado, grupos: respuesta.data })
+      }
+    } catch (err) {
+      window.alert(getErrorMessage(err))
+    } finally {
+      setProcesandoListado(false)
+    }
+  }
+
+  // Se dispara solo cuando hay un listado agrupado listo: espera a que React
+  // monte PrintableListadoGrupos con los datos antes de abrir el diálogo de impresión.
+  useEffect(() => {
+    if (!gruposParaImprimir) return
+    window.print()
+    const limpiar = () => setGruposParaImprimir(null)
+    window.addEventListener('afterprint', limpiar, { once: true })
+    return () => window.removeEventListener('afterprint', limpiar)
+  }, [gruposParaImprimir])
 
   const abrirGrupo = async (numeroAcuerdo: string) => {
-    cerrarMenuAcciones()
     setGrupoModalAbierto(true)
     setGrupoCargando(true)
     setGrupoActual(null)
@@ -522,7 +611,6 @@ export default function SaludPage() {
   const [eliminarEnviando, setEliminarEnviando] = useState(false)
 
   const abrirEliminarModal = () => {
-    cerrarMenuAcciones()
     setEliminarModalAbierto(true)
     setEliminarNumeroAcuerdo('')
     setEliminarError(null)
@@ -603,7 +691,6 @@ export default function SaludPage() {
   const [buscarError, setBuscarError] = useState<string | null>(null)
 
   const abrirBuscarModal = () => {
-    cerrarMenuAcciones()
     setBuscarModalAbierto(true)
     setBuscarInput('')
     setBuscarError(null)
@@ -662,8 +749,46 @@ export default function SaludPage() {
   const [retirarMotivo, setRetirarMotivo] = useState<(typeof saludService.MOTIVOS_RETIRO_SALUD)[number]>('Voluntario')
   const [retirarEnviando, setRetirarEnviando] = useState(false)
 
+  // ============================================
+  // MODAL: RETIRAR ACUERDO (titular + cascada a todo el grupo)
+  // ============================================
+  const [retirarTitularAbierto, setRetirarTitularAbierto] = useState(false)
+  const [retirarTitularAcuerdo, setRetirarTitularAcuerdo] = useState<AcuerdoSalud | null>(null)
+  const [retirarTitularFecha, setRetirarTitularFecha] = useState(hoyISO())
+  const [retirarTitularMotivo, setRetirarTitularMotivo] = useState<(typeof saludService.MOTIVOS_RETIRO_SALUD)[number]>('Voluntario')
+  const [retirarTitularEnviando, setRetirarTitularEnviando] = useState(false)
+  const [retirarTitularError, setRetirarTitularError] = useState<string | null>(null)
+
+  const abrirRetirarTitularModal = (acuerdo: AcuerdoSalud) => {
+    setRetirarTitularAbierto(true)
+    setRetirarTitularAcuerdo(acuerdo)
+    setRetirarTitularFecha(hoyISO())
+    setRetirarTitularMotivo('Voluntario')
+    setRetirarTitularError(null)
+  }
+
+  const confirmarRetirarTitular = async () => {
+    if (!retirarTitularAcuerdo || !retirarTitularFecha) return
+    setRetirarTitularEnviando(true)
+    setRetirarTitularError(null)
+    try {
+      const respuesta = await saludService.cambiarEstado(retirarTitularAcuerdo.id, {
+        estado: 'retirado',
+        fecha_retiro: retirarTitularFecha,
+        motivo_retiro: retirarTitularMotivo,
+      })
+      if (!respuesta.success) throw new Error('No fue posible retirar el acuerdo')
+      setRetirarTitularAbierto(false)
+      await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
+      if (grupoModalAbierto) await recargarGrupoActual()
+    } catch (err) {
+      setRetirarTitularError(getErrorMessage(err))
+    } finally {
+      setRetirarTitularEnviando(false)
+    }
+  }
+
   const abrirRetirarModal = () => {
-    cerrarMenuAcciones()
     setRetirarAbierto(true)
     setRetirarExpediente('')
     setRetirarError(null)
@@ -675,7 +800,6 @@ export default function SaludPage() {
   }
 
   const abrirRetirarDirecto = (acuerdo: RetiroCandidato) => {
-    cerrarMenuAcciones()
     setRetirarAbierto(true)
     setRetirarError(null)
     setRetirarSocioActual(null)
@@ -743,7 +867,6 @@ export default function SaludPage() {
   const [suspendidosDescargando, setSuspendidosDescargando] = useState<'pdf' | 'excel' | null>(null)
 
   const abrirSuspendidos = async () => {
-    cerrarMenuAcciones()
     setSuspendidosAbierto(true)
     setSuspendidosCargando(true)
     try {
@@ -787,7 +910,6 @@ export default function SaludPage() {
   const [pagosEnviando, setPagosEnviando] = useState(false)
 
   const abrirPagosModal = async (numeroAcuerdoPrefill?: string) => {
-    cerrarMenuAcciones()
     setPagosAbierto(true)
     setPagosNumeroAcuerdo(numeroAcuerdoPrefill || '')
     setPagosGrupo(null)
@@ -894,7 +1016,6 @@ export default function SaludPage() {
   const [traspasoResultado, setTraspasoResultado] = useState<string | null>(null)
 
   const abrirTraspasoModal = async (numeroAcuerdoPrefill?: string) => {
-    cerrarMenuAcciones()
     setTraspasoAbierto(true)
     setTraspasoNumeroAcuerdo(numeroAcuerdoPrefill || '')
     setTraspasoGrupo(null)
@@ -934,6 +1055,11 @@ export default function SaludPage() {
         ...respuesta.data.beneficiarios.map((b) => b.beneficiario_id),
       ]
       setTraspasoSeleccionados(todosLosIds)
+      if (respuesta.data.estado === 'suspendido') {
+        setTraspasoError(
+          `El acuerdo ${numero} está suspendido; reactívelo antes de traspasar personas a Funeraria.`
+        )
+      }
     } catch (err) {
       setTraspasoError(getErrorMessage(err) || 'Acuerdo no encontrado')
     } finally {
@@ -948,7 +1074,11 @@ export default function SaludPage() {
   }
 
   const traspasoFormularioValido =
-    !!traspasoGrupo && traspasoSeleccionados.length > 0 && !!traspasoTipoId && traspasoNumeroBase.trim() !== ''
+    !!traspasoGrupo &&
+    traspasoGrupo.estado !== 'suspendido' &&
+    traspasoSeleccionados.length > 0 &&
+    !!traspasoTipoId &&
+    traspasoNumeroBase.trim() !== ''
 
   const confirmarTraspasoFuneraria = async () => {
     if (!traspasoGrupo?.numero_acuerdo || !traspasoFormularioValido || !traspasoTipoId) return
@@ -983,14 +1113,13 @@ export default function SaludPage() {
   // MODAL: CAMBIAR ESTADO (suspender / reactivar, en cascada por grupo)
   // ============================================
   const [estadoModalAbierto, setEstadoModalAbierto] = useState(false)
-  const [estadoAcuerdo, setEstadoAcuerdo] = useState<AcuerdoSalud | null>(null)
+  const [estadoAcuerdo, setEstadoAcuerdo] = useState<CambiarEstadoCandidato | null>(null)
   const [estadoAccion, setEstadoAccion] = useState<'activo' | 'suspendido' | null>(null)
   const [estadoMotivo, setEstadoMotivo] = useState('')
   const [estadoEnviando, setEstadoEnviando] = useState(false)
   const [estadoError, setEstadoError] = useState<string | null>(null)
 
-  const abrirCambiarEstado = (acuerdo: AcuerdoSalud, accion: 'activo' | 'suspendido') => {
-    cerrarMenuAcciones()
+  const abrirCambiarEstado = (acuerdo: CambiarEstadoCandidato, accion: 'activo' | 'suspendido') => {
     setEstadoAcuerdo(acuerdo)
     setEstadoAccion(accion)
     setEstadoMotivo('')
@@ -1023,34 +1152,10 @@ export default function SaludPage() {
   // ============================================
   // IMPRIMIR FICHA
   // ============================================
-  const abrirVentanaImpresionFicha = (contenido: string) => {
-    const ventana = window.open('', '_blank')
-    if (ventana) {
-      ventana.document.write(`
-        <html>
-          <head>
-            <title>Ficha de Acuerdo - Cooperativa el Triunfo</title>
-            <style>
-              body { margin: 0; padding: 20mm; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; }
-              pre { margin: 0; white-space: pre-wrap; }
-              @media print { body { padding: 0; } }
-            </style>
-          </head>
-          <body>
-            <pre>${contenido}</pre>
-            <script>
-              window.onload = function () {
-                window.print();
-                window.onafterprint = function () { window.close(); };
-              };
-            </script>
-          </body>
-        </html>
-      `)
-      ventana.document.close()
-    }
-  }
-
+  // La API de impresión solo se usa para registrar la impresión en el audit
+  // log; el documento en sí se renderiza localmente con PrintableFichaAcuerdo
+  // (mismo patrón que PrintableListado) para poder imprimirlo o guardarlo
+  // como PDF sin depender del ticket de texto plano de 80mm.
   const construirPayloadFichaDesdeGrupo = (grupo: GrupoSalud): saludService.FichaAcuerdoSaludData => ({
     numero_acuerdo: grupo.numero_acuerdo || 'S/N',
     numero_contrato: grupo.numero_contrato || undefined,
@@ -1070,7 +1175,37 @@ export default function SaludPage() {
       fecha_ingreso: b.fecha_ingreso || grupo.fecha_inicio || hoyISO(),
       fecha_nacimiento: b.fecha_nacimiento || undefined,
       edad: calcularEdad(b.fecha_nacimiento) ?? undefined,
-      estado: b.estado_persona,
+      // El acuerdo suspendido/retirado manda sobre el estado propio de la
+      // persona: si no, un beneficiario con vida "activa" en un acuerdo
+      // suspendido salía impreso como "Activo", sin reflejar la suspensión.
+      estado: b.estado_acuerdo !== 'activo' ? b.estado_acuerdo : b.estado_persona,
+    })),
+  })
+
+  const construirPropsFichaImpresion = (grupo: GrupoSalud): PrintableFichaAcuerdoProps => ({
+    servicio: 'SALUD',
+    numero_acuerdo: grupo.numero_acuerdo || 'S/N',
+    numero_contrato: grupo.numero_contrato,
+    fecha_inicio: grupo.fecha_inicio,
+    estado: grupo.estado || 'activo',
+    socio: {
+      codigo: grupo.socio?.codigo_socio || '',
+      cedula: grupo.socio?.cedula || '',
+      nombre: grupo.socio?.nombre_completo || '',
+      direccion: grupo.socio?.direccion,
+      telefono: grupo.socio?.telefono,
+    },
+    beneficiarios: grupo.beneficiarios.map((b, index) => ({
+      numero: index + 1,
+      nombre: `${b.nombre} ${b.apellido}`,
+      cedula: b.cedula,
+      parentesco: b.parentesco,
+      fecha_ingreso: b.fecha_ingreso || grupo.fecha_inicio,
+      fecha_nacimiento: b.fecha_nacimiento,
+      edad: calcularEdad(b.fecha_nacimiento),
+      // Mismo criterio: el estado del acuerdo (suspendido/retirado) tiene
+      // prioridad sobre el estado propio de la persona.
+      estado: b.estado_acuerdo !== 'activo' ? b.estado_acuerdo : b.estado_persona,
     })),
   })
 
@@ -1078,10 +1213,9 @@ export default function SaludPage() {
     if (!grupoActual) return
     setImprimiendoFicha(true)
     try {
-      const payload = construirPayloadFichaDesdeGrupo(grupoActual)
-      const respuesta = await saludService.imprimirFichaAcuerdo(payload)
+      const respuesta = await saludService.imprimirFichaAcuerdo(construirPayloadFichaDesdeGrupo(grupoActual))
       if (!respuesta.success) throw new Error('No fue posible generar la ficha')
-      abrirVentanaImpresionFicha(respuesta.data.contenido)
+      setFichaParaImprimir(construirPropsFichaImpresion(grupoActual))
     } catch (err) {
       window.alert(getErrorMessage(err))
     } finally {
@@ -1090,7 +1224,6 @@ export default function SaludPage() {
   }
 
   const imprimirFichaDesdeFila = async (acuerdo: AcuerdoSalud) => {
-    cerrarMenuAcciones()
     if (!acuerdo.numero_acuerdo) {
       window.alert('Este acuerdo no tiene número asignado; no se puede generar la ficha completa.')
       return
@@ -1099,10 +1232,9 @@ export default function SaludPage() {
     try {
       const respuesta = await saludService.obtenerGrupoPorNumeroAcuerdo(acuerdo.numero_acuerdo)
       if (!respuesta.success) throw new Error('No fue posible cargar el acuerdo')
-      const payload = construirPayloadFichaDesdeGrupo(respuesta.data)
-      const respuestaFicha = await saludService.imprimirFichaAcuerdo(payload)
+      const respuestaFicha = await saludService.imprimirFichaAcuerdo(construirPayloadFichaDesdeGrupo(respuesta.data))
       if (!respuestaFicha.success) throw new Error('No fue posible generar la ficha')
-      abrirVentanaImpresionFicha(respuestaFicha.data.contenido)
+      setFichaParaImprimir(construirPropsFichaImpresion(respuesta.data))
     } catch (err) {
       window.alert(getErrorMessage(err))
     } finally {
@@ -1110,29 +1242,16 @@ export default function SaludPage() {
     }
   }
 
-  const eliminarAcuerdoAccion = async (acuerdo: AcuerdoSalud) => {
-    cerrarMenuAcciones()
-    const esTitular = acuerdo.beneficiario.parentesco.trim().toLowerCase() === 'titular'
-    const confirmado = window.confirm(
-      esTitular
-        ? `¿Eliminar por completo el acuerdo ${acuerdo.numero_acuerdo || acuerdo.id}? Esto afecta a todas las personas del grupo.`
-        : `¿Eliminar a ${acuerdo.beneficiario.nombre_completo} de este acuerdo? Esta acción solo se permite si no tiene pagos registrados.`
-    )
-    if (!confirmado) return
+  // Se dispara solo cuando hay una ficha lista: evita imprimir contenido
+  // obsoleto y espera a que React monte PrintableFichaAcuerdo con los datos.
+  useEffect(() => {
+    if (!fichaParaImprimir) return
+    window.print()
+    const limpiar = () => setFichaParaImprimir(null)
+    window.addEventListener('afterprint', limpiar, { once: true })
+    return () => window.removeEventListener('afterprint', limpiar)
+  }, [fichaParaImprimir])
 
-    try {
-      if (esTitular && acuerdo.numero_acuerdo) {
-        const respuesta = await saludService.eliminarGrupoAcuerdo(acuerdo.numero_acuerdo)
-        if (!respuesta.success) throw new Error('No fue posible eliminar el acuerdo')
-      } else {
-        const respuesta = await saludService.eliminarAcuerdo(acuerdo.id)
-        if (!respuesta.success) throw new Error('No fue posible eliminar el acuerdo')
-      }
-      await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
-    } catch (err) {
-      window.alert(getErrorMessage(err))
-    }
-  }
 
   // ============================================
   // HELPERS DE PRESENTACIÓN
@@ -1222,139 +1341,172 @@ export default function SaludPage() {
     return acuerdosCopia;
   }, [acuerdos, sortField, sortOrder]);
 
-  const filtrosImpresion = [
-    { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
-    { label: 'Estado', value: tab === 'todos' ? 'Todos' : tab },
-    { label: 'Página', value: `${paginaActual} de ${totalPaginas}` },
-  ];
-
-  const filasImpresion = acuerdosOrdenados.map((acuerdo) => [
-  String(acuerdo.id),
-  acuerdo.beneficiario.nombre_completo,
-  acuerdo.socio?.nombre_completo ?? '',
-  acuerdo.tipo_acuerdo.nombre,
-  String(acuerdo.semanas_sin_pago ?? 0),
-  acuerdo.semanas_sin_pago >= 10 ? 'No' : 'Sí',
-  acuerdo.estado,
-]);
-
   // ============================================
   // RENDER
   // ============================================
   return (
     <div className="p-6 space-y-6">
       {/* HEADER */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-neutral-900">Salud</h1>
           <p className="mt-1 text-sm text-neutral-500">
             Acuerdos familiares de salud · Hasta 9 personas comparten un mismo número de acuerdo
           </p>
         </div>
-<div className="flex flex-wrap gap-3">
-          <Button variant="secondary" onClick={() => window.print()}>
-            <FileDown className="w-4 h-4" />
-            Imprimir listado
-          </Button>
-          <Button variant="outline" onClick={() => void abrirSuspendidos()}>
-            <ShieldOff className="w-4 h-4" />
-            Acuerdos Suspendidos
-          </Button>
-          <Button variant="outline" onClick={() => void descargarExcelAcuerdos()} isLoading={descargandoExcelAcuerdos}>
-            <FileSpreadsheet className="w-4 h-4" />
-            Acuerdos en Excel
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={abrirBuscarModal}>
+            <FileSearch className="w-4 h-4" />
+            Ir a acuerdo
           </Button>
           {puedeEscribir && (
-            <Button onClick={() => setWizardAbierto(true)}>
+            <Button variant="outline" size="sm" onClick={() => void abrirPagosModal()}>
+              <Wallet className="w-4 h-4" />
+              Generar Pago
+            </Button>
+          )}
+          {puedeEscribir && (
+            <Button size="sm" onClick={() => setWizardAbierto(true)}>
               <PlusCircle className="w-4 h-4" />
               Nuevo Acuerdo
             </Button>
           )}
+          <ActionMenu
+            align="end"
+            trigger={
+              <button
+                type="button"
+                title="Más acciones"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+                Más
+              </button>
+            }
+            groups={[
+              [
+                {
+                  key: 'imprimir-listado',
+                  label: 'Imprimir listado',
+                  icon: <FileDown className="h-4 w-4 text-neutral-500" />,
+                  onSelect: () => abrirModalListado('pdf'),
+                },
+                {
+                  key: 'excel',
+                  label: 'Acuerdos en Excel',
+                  icon: <FileSpreadsheet className="h-4 w-4 text-emerald-600" />,
+                  onSelect: () => abrirModalListado('excel'),
+                },
+              ],
+              puedeEscribir
+                ? [
+                    {
+                      key: 'traspaso',
+                      label: 'Traspaso a Funeraria',
+                      icon: <ArrowRightLeft className="h-4 w-4 text-primary-600" />,
+                      onSelect: () => void abrirTraspasoModal(),
+                    },
+                    {
+                      key: 'retirar',
+                      label: 'Retirar acuerdos',
+                      icon: <UserMinus className="h-4 w-4 text-amber-600" />,
+                      onSelect: abrirRetirarModal,
+                    },
+                  ]
+                : [],
+              puedeEliminar
+                ? [
+                    {
+                      key: 'eliminar',
+                      label: 'Eliminar',
+                      icon: <Trash2 className="h-4 w-4" />,
+                      onSelect: abrirEliminarModal,
+                      tone: 'danger' as const,
+                    },
+                  ]
+                : [],
+            ]}
+          />
         </div>
       </div>
 
-      <PrintableListado
-        titulo="Listado de Acuerdos de Salud"
-        subtitulo="Listado generado con los filtros y orden actual del módulo de salud"
-        filtros={filtrosImpresion}
-        resumenes={[
-          { label: 'Acuerdos visibles', value: String(acuerdosOrdenados.length) },
-          { label: 'Total acuerdos', value: String(estadisticas.total_acuerdos) },
-          { label: 'Activos', value: String(estadisticas.activos) },
-          { label: 'Sin derecho', value: String(estadisticas.sin_derecho_servicio) },
-        ]}
-        columnas={['Acuerdo', 'Beneficiario', 'Socio', 'Tipo', 'Semanas sin pago', 'Derecho a servicio', 'Estado']}
-        filas={filasImpresion}
-      />
+      {/* Solo se monta uno de los documentos imprimibles a la vez: si más de
+          un "print root" coincidiera en el DOM durante window.print(), se
+          mostrarían superpuestos. */}
+      {fichaParaImprimir ? (
+        <PrintableFichaAcuerdo {...fichaParaImprimir} />
+      ) : gruposParaImprimir ? (
+        <PrintableListadoGrupos tipo={gruposParaImprimir.tipo} grupos={gruposParaImprimir.grupos} />
+      ) : null}
 
       {/* ESTADÍSTICAS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card className="p-5">
+        <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-neutral-600">Total Registros</p>
+              <p className="text-sm font-medium text-neutral-600">Total Acuerdos</p>
               <p className="text-2xl font-bold text-neutral-900 mt-1">{estadisticas.total_acuerdos.toLocaleString()}</p>
             </div>
-            <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center">
-              <HeartPulse className="w-6 h-6 text-primary-600" />
+            <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+              <HeartPulse className="w-5 h-5 text-primary-600" />
             </div>
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-neutral-600">Activos</p>
               <p className="text-2xl font-bold text-emerald-600 mt-1">{estadisticas.activos.toLocaleString()}</p>
             </div>
-            <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center">
-              <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+            <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             </div>
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-neutral-600">Suspendidos</p>
               <p className="text-2xl font-bold text-amber-600 mt-1">{estadisticas.suspendidos.toLocaleString()}</p>
             </div>
-            <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center">
-              <AlertTriangle className="w-6 h-6 text-amber-600" />
+            <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-amber-600" />
             </div>
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-neutral-600">Próximos a Suspender</p>
               <p className="text-2xl font-bold text-rose-600 mt-1">{estadisticas.proximos_suspender.toLocaleString()}</p>
               <p className="text-xs text-neutral-500 mt-1">≥ 10 semanas sin pago</p>
             </div>
-            <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center">
-              <AlertTriangle className="w-6 h-6 text-rose-600" />
+            <div className="w-10 h-10 bg-rose-100 rounded-full flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-rose-600" />
             </div>
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-neutral-600">Sin Derecho a Servicio</p>
               <p className="text-2xl font-bold text-neutral-700 mt-1">{estadisticas.sin_derecho_servicio.toLocaleString()}</p>
               <p className="text-xs text-neutral-500 mt-1">Activos con atraso</p>
             </div>
-            <div className="w-12 h-12 bg-neutral-100 rounded-full flex items-center justify-center">
-              <ShieldOff className="w-6 h-6 text-neutral-600" />
+            <div className="w-10 h-10 bg-neutral-100 rounded-full flex items-center justify-center">
+              <ShieldOff className="w-5 h-5 text-neutral-600" />
             </div>
           </div>
         </Card>
       </div>
 
-      {/* TABS + BÚSQUEDA + ACCIONES */}
+      {/* TABS + BÚSQUEDA */}
       <Card className="p-4">
-        <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex flex-col md:flex-row md:items-center gap-3">
           <div className="flex gap-1 rounded-lg bg-neutral-100 p-1">
             {tabs.map((t) => (
               <button
@@ -1373,41 +1525,12 @@ export default function SaludPage() {
             ))}
           </div>
 
-          <Button variant="outline" onClick={abrirBuscarModal}>
-            <Search className="w-4 h-4" />
-            Buscar
-          </Button>
-          {puedeEscribir && (
-            <Button variant="outline" onClick={() => void abrirPagosModal()}>
-              <Wallet className="w-4 h-4" />
-              Generar Pago
-            </Button>
-          )}
-          {puedeEscribir && (
-            <Button variant="outline" onClick={() => void abrirTraspasoModal()}>
-              <ArrowRightLeft className="w-4 h-4" />
-              Traspaso a Funeraria
-            </Button>
-          )}
-          {puedeEscribir && (
-            <Button variant="outline" onClick={abrirRetirarModal}>
-              <UserMinus className="w-4 h-4" />
-              Retirar Acuerdos
-            </Button>
-          )}
-          {puedeEliminar && (
-            <Button variant="outline" onClick={abrirEliminarModal}>
-              <Trash2 className="w-4 h-4" />
-              Eliminar
-            </Button>
-          )}
-
           <div className="flex-1 min-w-[220px]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 w-4 h-4" />
               <Input
                 type="text"
-                placeholder="Buscar por beneficiario, cédula o número de acuerdo..."
+                placeholder="Buscar por expediente, cédula, nombre o número de acuerdo..."
                 value={busqueda}
                 onChange={(e) => {
                   setBusqueda(e.target.value)
@@ -1421,24 +1544,87 @@ export default function SaludPage() {
       </Card>
 
       {/* TABLA */}
+      {/* table-fixed + anchos en % garantiza que las columnas quepan en el
+          ancho disponible sin scroll horizontal, sin importar el contenido:
+          a diferencia de un layout automático, el navegador nunca deja que
+          la tabla crezca más allá del 100% del contenedor. */}
       <Card padding="none">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-200">
-            <thead className="bg-neutral-50">
+          <table className="w-full table-fixed divide-y divide-neutral-200">
+            <thead className="bg-neutral-50 text-[11px] font-bold uppercase tracking-wide text-neutral-700">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">N° Expediente</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">N° Acuerdo</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Beneficiario</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Tipo</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-neutral-500 uppercase tracking-wider">Semanas Sin Pago</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-neutral-500 uppercase tracking-wider">Estado</th>
-                <th className="px-2 py-3" />
+                <SortableHeader
+                 label="Expediente"
+                 field="socio.codigo_socio"
+                 className={tab === 'activo' ? 'w-[10%]' : 'w-[9%]'}
+                 currentSortField={sortField}
+                 currentSortOrder={sortOrder}
+                 onSort={handleSort}
+                  />
+                <SortableHeader
+                 label="Acuerdo"
+                 field="numero_acuerdo"
+                 className={tab === 'activo' ? 'w-[10%]' : 'w-[9%]'}
+                 currentSortField={sortField}
+                 currentSortOrder={sortOrder}
+                 onSort={handleSort}
+                   />
+                <SortableHeader
+                 label="Titular"
+                 field="beneficiario.nombre_completo"
+                 className={tab === 'activo' ? 'w-[30%]' : 'w-[27%]'}
+                 currentSortField={sortField}
+                 currentSortOrder={sortOrder}
+                 onSort={handleSort}
+                  />
+                <SortableHeader
+                 label="Tipo"
+                 field="tipo_acuerdo.nombre"
+                 className={tab === 'activo' ? 'w-[15%]' : 'w-[13%]'}
+                 currentSortField={sortField}
+                 currentSortOrder={sortOrder}
+                 onSort={handleSort}
+                  />
+                <SortableHeader
+                 label="Sem. sin pago"
+                 field="semanas_sin_pago"
+                 align="center"
+                 className={tab === 'activo' ? 'w-[10%]' : 'w-[9%]'}
+                 currentSortField={sortField}
+                 currentSortOrder={sortOrder}
+                 onSort={handleSort}
+                  />
+                <SortableHeader
+                 label="Estado"
+                 field="estado"
+                 align="center"
+                 className={tab === 'activo' ? 'w-[10%]' : 'w-[9%]'}
+                 currentSortField={sortField}
+                 currentSortOrder={sortOrder}
+                 onSort={handleSort}
+                  />
+                {/* Socios activos no tienen fecha de suspensión ni de
+                    retiro: la columna no aporta nada en esa vista, así que
+                    no se muestra. En Suspendidos se convierte en "F.
+                    Suspendido" (fecha_suspension); en el resto (Retirados /
+                    Todos) sigue siendo "F. Retiro" (fecha_retiro). */}
+                {tab !== 'activo' && (
+                  <SortableHeader
+                   label={tab === 'suspendido' ? 'F. Suspendido' : 'F. Retiro'}
+                   field={tab === 'suspendido' ? 'fecha_suspension' : 'fecha_retiro'}
+                   className="w-[13%]"
+                   currentSortField={sortField}
+                   currentSortOrder={sortOrder}
+                   onSort={handleSort}
+                    />
+                )}
+                <th className={tab === 'activo' ? 'w-[15%] px-2 py-3' : 'w-[11%] px-2 py-3'} />
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-neutral-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
+                  <td colSpan={tab === 'activo' ? 7 : 8} className="px-6 py-12 text-center">
                     <div className="flex justify-center items-center gap-2 text-neutral-500">
                       <Loader2 className="w-5 h-5 animate-spin" />
                       <span>Cargando acuerdos...</span>
@@ -1447,13 +1633,13 @@ export default function SaludPage() {
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-rose-600">
+                  <td colSpan={tab === 'activo' ? 7 : 8} className="px-6 py-12 text-center text-rose-600">
                     {error}
                   </td>
                 </tr>
               ) : acuerdos.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-neutral-500">
+                  <td colSpan={tab === 'activo' ? 7 : 8} className="px-6 py-12 text-center text-neutral-500">
                     No se encontraron acuerdos
                   </td>
                 </tr>
@@ -1464,24 +1650,24 @@ export default function SaludPage() {
                     className="hover:bg-primary-50/40 cursor-pointer transition-colors"
                     onClick={() => abrirDetalle(acuerdo)}
                   >
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-3 truncate">
                       <span className="font-mono text-sm font-semibold text-neutral-900">
                         {acuerdo.socio?.codigo_socio || '—'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-3 truncate">
                       <span className="font-mono text-sm font-semibold text-primary-700">{acuerdo.numero_acuerdo || '—'}</span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <p className="text-sm font-medium text-neutral-900">{acuerdo.beneficiario.nombre_completo}</p>
-                      <p className="text-xs text-neutral-500">
-                        {acuerdo.beneficiario.cedula} • {acuerdo.beneficiario.parentesco}
+                    <td className="px-3 py-3">
+                      <p className="truncate text-sm font-medium text-neutral-900" title={acuerdo.beneficiario.nombre_completo}>
+                        {acuerdo.beneficiario.nombre_completo}
                       </p>
+                      <p className="truncate text-xs text-neutral-500">{acuerdo.beneficiario.cedula}</p>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="overflow-hidden px-3 py-3">
                       <Badge variant="info">{acuerdo.tipo_acuerdo.nombre}</Badge>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                    <td className="px-3 py-3 whitespace-nowrap text-center">
                       {acuerdo.semanas_sin_pago >= 10 ? (
                         <Badge variant="error">{acuerdo.semanas_sin_pago}</Badge>
                       ) : acuerdo.semanas_sin_pago > 0 ? (
@@ -1490,108 +1676,91 @@ export default function SaludPage() {
                         <span className="text-sm text-neutral-400">0</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-center">{badgeEstado(acuerdo.estado)}</td>
+                    <td className="px-3 py-3 whitespace-nowrap text-center">{badgeEstado(acuerdo.estado)}</td>
+                    {tab !== 'activo' && (
+                      <td className="px-3 py-3 whitespace-nowrap text-center text-sm text-neutral-600">
+                        {tab === 'suspendido'
+                          ? (acuerdo.estado === 'suspendido' && acuerdo.fecha_suspension ? formatearFecha(acuerdo.fecha_suspension) : '')
+                          : (acuerdo.estado === 'retirado' && acuerdo.fecha_retiro ? formatearFecha(acuerdo.fecha_retiro) : '')}
+                      </td>
+                    )}
                     <td className="px-2 py-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
-                      <div className="relative inline-flex items-center justify-end">
-                        <button
-                          onClick={(e) => alternarMenuAcciones(acuerdo.id, e)}
-                          className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800"
-                          title="Acciones"
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </button>
-
-                        {menuAbiertoId === acuerdo.id &&
-                          createPortal(
-                            <>
-                              <div className="fixed inset-0 z-40" onClick={cerrarMenuAcciones} />
-                              <div
-                                ref={menuRef}
-                                style={{
-                                  position: 'fixed',
-                                  top: menuEstilo?.top ?? menuAncla?.bottom ?? 0,
-                                  left: menuEstilo?.left ?? (menuAncla ? menuAncla.right - 224 : 0),
-                                  visibility: menuEstilo ? 'visible' : 'hidden',
-                                }}
-                                className="z-50 w-56 rounded-lg border border-neutral-200 bg-white shadow-lg"
-                              >
-                                <div className="py-1">
-                                  <button
-                                    onClick={() => abrirDetalle(acuerdo)}
-                                    className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50"
-                                  >
-                                    <Eye className="h-4 w-4 text-neutral-500" />
-                                    Ver / Modificar
-                                  </button>
-                                  <button
-                                    onClick={() => void imprimirFichaDesdeFila(acuerdo)}
-                                    disabled={imprimiendoFilaId === acuerdo.id}
-                                    className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-50"
-                                  >
-                                    {imprimiendoFilaId === acuerdo.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
-                                    ) : (
-                                      <Printer className="h-4 w-4 text-emerald-600" />
-                                    )}
-                                    Imprimir ficha
-                                  </button>
-                                  {puedeEscribir && acuerdo.numero_acuerdo && (
-                                    <button
-                                      onClick={() => void abrirPagosModal(acuerdo.numero_acuerdo || undefined)}
-                                      className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50"
-                                    >
-                                      <Wallet className="h-4 w-4 text-primary-600" />
-                                      Generar pago
-                                    </button>
-                                  )}
-                                  {puedeEscribir && acuerdo.beneficiario.parentesco.trim().toLowerCase() !== 'titular' && acuerdo.estado !== 'retirado' && (
-                                    <button
-                                      onClick={() => abrirRetirarDirecto(acuerdo)}
-                                      className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50"
-                                    >
-                                      <UserMinus className="h-4 w-4 text-amber-600" />
-                                      Retirar
-                                    </button>
-                                  )}
-                                  {puedeEscribir && acuerdo.estado === 'suspendido' && (
-                                    <button
-                                      onClick={() => abrirCambiarEstado(acuerdo, 'activo')}
-                                      className="flex w-full items-center gap-3 px-4 py-2 text-sm text-emerald-700 transition hover:bg-emerald-50"
-                                    >
-                                      <CheckCircle2 className="h-4 w-4" />
-                                      Reactivar acuerdo
-                                    </button>
-                                  )}
-                                  {puedeEscribir && acuerdo.estado === 'activo' && (
-                                    <>
-                                      <div className="my-1 border-t border-neutral-200" />
-                                      <button
-                                        onClick={() => abrirCambiarEstado(acuerdo, 'suspendido')}
-                                        className="flex w-full items-center gap-3 px-4 py-2 text-sm text-amber-700 transition hover:bg-amber-50"
-                                      >
-                                        <AlertTriangle className="h-4 w-4" />
-                                        Suspender acuerdo
-                                      </button>
-                                    </>
-                                  )}
-                                  {puedeEliminar && (
-                                    <>
-                                      <div className="my-1 border-t border-neutral-200" />
-                                      <button
-                                        onClick={() => void eliminarAcuerdoAccion(acuerdo)}
-                                        className="flex w-full items-center gap-3 px-4 py-2 text-sm text-rose-700 transition hover:bg-rose-50"
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                        Eliminar
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </>,
-                            document.body
-                          )}
-                      </div>
+                      <ActionMenu
+                        trigger={
+                          <button
+                            type="button"
+                            className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800"
+                            title="Acciones"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+                        }
+                        groups={[
+                          [
+                            {
+                              key: 'ver',
+                              label: 'Ver / Modificar',
+                              icon: <Eye className="h-4 w-4 text-neutral-500" />,
+                              onSelect: () => abrirDetalle(acuerdo),
+                            },
+                            {
+                              key: 'imprimir-ficha',
+                              label: 'Imprimir ficha',
+                              icon:
+                                imprimiendoFilaId === acuerdo.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                                ) : (
+                                  <Printer className="h-4 w-4 text-emerald-600" />
+                                ),
+                              disabled: imprimiendoFilaId === acuerdo.id,
+                              onSelect: () => void imprimirFichaDesdeFila(acuerdo),
+                            },
+                            ...(puedeEscribir && acuerdo.numero_acuerdo && acuerdo.estado !== 'retirado'
+                              ? [
+                                  {
+                                    key: 'generar-pago',
+                                    label: 'Generar pago',
+                                    icon: <Wallet className="h-4 w-4 text-primary-600" />,
+                                    onSelect: () => void abrirPagosModal(acuerdo.numero_acuerdo || undefined),
+                                  } satisfies ActionMenuItem,
+                                ]
+                              : []),
+                            ...(puedeEscribir && acuerdo.estado === 'suspendido'
+                              ? [
+                                  {
+                                    key: 'reactivar',
+                                    label: 'Reactivar acuerdo',
+                                    icon: <CheckCircle2 className="h-4 w-4" />,
+                                    onSelect: () => abrirCambiarEstado(acuerdo, 'activo'),
+                                    tone: 'success' as const,
+                                  } satisfies ActionMenuItem,
+                                ]
+                              : []),
+                          ],
+                          puedeEscribir && acuerdo.estado === 'activo'
+                            ? [
+                                {
+                                  key: 'suspender',
+                                  label: 'Suspender acuerdo',
+                                  icon: <AlertTriangle className="h-4 w-4" />,
+                                  onSelect: () => abrirCambiarEstado(acuerdo, 'suspendido'),
+                                  tone: 'warning' as const,
+                                },
+                              ]
+                            : [],
+                          puedeEscribir && acuerdo.estado !== 'retirado'
+                            ? [
+                                {
+                                  key: 'retirar-titular',
+                                  label: 'Retirar',
+                                  icon: <UserMinus className="h-4 w-4" />,
+                                  onSelect: () => abrirRetirarTitularModal(acuerdo),
+                                  tone: 'danger' as const,
+                                },
+                              ]
+                            : [],
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))
@@ -1657,15 +1826,25 @@ export default function SaludPage() {
       {/* ============================================ */}
       {/* WIZARD: NUEVO ACUERDO */}
       {/* ============================================ */}
-      <Modal open={wizardAbierto} onClose={cerrarWizard} title="Nuevo Acuerdo de Salud" description={`Paso ${wizardPaso} de 3`} size="lg">
-        <div className="mb-5 flex gap-2">
-          {[1, 2, 3].map((paso) => (
-            <div key={paso} className={`h-1.5 flex-1 rounded-full ${paso <= wizardPaso ? 'bg-primary-600' : 'bg-neutral-200'}`} />
-          ))}
+      <Modal open={wizardAbierto} onClose={cerrarWizard} title="Nuevo Acuerdo de Salud" size="lg">
+        <div className="mb-5 flex items-center gap-2">
+          {(['Buscar socio', 'Datos del acuerdo', 'Confirmar'] as const).map((etiqueta, i) => {
+            const paso = (i + 1) as 1 | 2 | 3
+            const activo = paso === wizardPaso
+            const completado = paso < wizardPaso
+            return (
+              <div key={paso} className="flex flex-1 flex-col gap-1.5">
+                <div className={`h-1.5 rounded-full ${completado || activo ? 'bg-primary-600' : 'bg-neutral-200'}`} />
+                <span className={`text-xs font-medium ${activo ? 'text-primary-700' : 'text-neutral-400'}`}>
+                  {paso}. {etiqueta}
+                </span>
+              </div>
+            )
+          })}
         </div>
 
         {wizardError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{wizardError}</div>
+          <Alert variant="error" className="mb-4">{wizardError}</Alert>
         )}
 
         {wizardPaso === 1 && (
@@ -1688,27 +1867,24 @@ export default function SaludPage() {
 
         {wizardPaso === 2 && wizardSocio && (
           <div className="space-y-5">
-            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-              <p className="text-sm font-semibold text-neutral-900">Titular: {wizardSocio.apellido}, {wizardSocio.nombre}</p>
-              <p className="text-xs text-neutral-500">{wizardSocio.codigo_socio} • {wizardSocio.cedula}</p>
-            </div>
+            <ResumenSocioCard
+              nombre={`Titular: ${wizardSocio.apellido}, ${wizardSocio.nombre}`}
+              detalle={`${wizardSocio.codigo_socio} • ${wizardSocio.cedula}`}
+            />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <label className="block text-sm font-medium text-neutral-700">
-                Tipo de acuerdo
-                <select
-                  value={wizardTipoAcuerdoId}
-                  onChange={(e) => setWizardTipoAcuerdoId(Number(e.target.value))}
-                  className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="">Selecciona un tipo...</option>
-                  {tiposAcuerdo.map((tipo) => (
-                    <option key={tipo.id} value={tipo.id}>
-                      {tipo.nombre} (${tipo.monto_usd} USD)
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <Select
+                label="Tipo de acuerdo"
+                value={wizardTipoAcuerdoId}
+                onChange={(e) => setWizardTipoAcuerdoId(Number(e.target.value))}
+              >
+                <option value="">Selecciona un tipo...</option>
+                {tiposAcuerdo.map((tipo) => (
+                  <option key={tipo.id} value={tipo.id}>
+                    {tipo.nombre} (${tipo.monto_usd} USD)
+                  </option>
+                ))}
+              </Select>
               <Input label="Fecha de ingreso" type="date" value={wizardFechaInicio} onChange={(e) => setWizardFechaInicio(e.target.value)} />
               <Input label="Número de acuerdo" value={wizardNumeroAcuerdo} onChange={(e) => setWizardNumeroAcuerdo(e.target.value)} placeholder="Ej: SAL-001234" required />
               <Input label="Número de contrato (opcional)" value={wizardNumeroContrato} onChange={(e) => setWizardNumeroContrato(e.target.value)} />
@@ -1747,19 +1923,16 @@ export default function SaludPage() {
                       value={wizardBenefForm.cedula}
                       onChange={(e) => setWizardBenefForm((f) => ({ ...f, cedula: e.target.value }))}
                     />
-                    <label className="block text-sm font-medium text-neutral-700">
-                      Parentesco
-                      <select
-                        value={wizardBenefForm.parentesco}
-                        onChange={(e) => setWizardBenefForm((f) => ({ ...f, parentesco: e.target.value }))}
-                        className="mt-1.5 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      >
-                        <option value="">Selecciona...</option>
-                        {saludService.PARENTESCOS_BENEFICIARIO_SALUD.map((p) => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <Select
+                      label="Parentesco"
+                      value={wizardBenefForm.parentesco}
+                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, parentesco: e.target.value }))}
+                    >
+                      <option value="">Selecciona...</option>
+                      {saludService.PARENTESCOS_BENEFICIARIO_SALUD.map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </Select>
                     <Input
                       label="Nombre"
                       value={wizardBenefForm.nombre}
@@ -1782,17 +1955,14 @@ export default function SaludPage() {
                       value={wizardBenefForm.fecha_ingreso}
                       onChange={(e) => setWizardBenefForm((f) => ({ ...f, fecha_ingreso: e.target.value }))}
                     />
-                    <label className="block text-sm font-medium text-neutral-700">
-                      Estado
-                      <select
-                        value={wizardBenefForm.estado}
-                        onChange={(e) => setWizardBenefForm((f) => ({ ...f, estado: e.target.value as 'activo' | 'fallecido' }))}
-                        className="mt-1.5 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      >
-                        <option value="activo">Vivo</option>
-                        <option value="fallecido">Fallecido</option>
-                      </select>
-                    </label>
+                    <Select
+                      label="Estado"
+                      value={wizardBenefForm.estado}
+                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, estado: e.target.value as 'activo' | 'fallecido' }))}
+                    >
+                      <option value="activo">Vivo</option>
+                      <option value="fallecido">Fallecido</option>
+                    </Select>
                   </div>
                   <Button variant="outline" size="sm" onClick={agregarBeneficiarioAWizard} className="w-full">
                     <UserPlus className="h-4 w-4" />
@@ -1874,6 +2044,12 @@ export default function SaludPage() {
                 <dt className="text-xs font-medium uppercase text-neutral-500">Semanas Sin Pago</dt>
                 <dd className="text-sm text-neutral-900">{grupoActual.semanas_sin_pago}</dd>
               </div>
+              {grupoActual.estado === 'retirado' && (
+                <div>
+                  <dt className="text-xs font-medium uppercase text-neutral-500">Fecha de Retiro</dt>
+                  <dd className="text-sm text-neutral-900">{formatearFecha(grupoActual.titular?.fecha_retiro) || '—'}</dd>
+                </div>
+              )}
             </dl>
 
             <div>
@@ -1881,7 +2057,7 @@ export default function SaludPage() {
                 <h4 className="text-sm font-semibold text-neutral-900">
                   Beneficiarios ({gruposBeneficiariosVisibles.filter((b) => b.estado_acuerdo !== 'retirado').length} / {MAX_BENEFICIARIOS_POR_GRUPO})
                 </h4>
-                {puedeEscribir && !grupoLimiteAlcanzado && (
+                {puedeEscribir && !grupoLimiteAlcanzado && grupoActual.estado !== 'retirado' && (
                   <Button size="sm" onClick={abrirNuevoBeneficiarioGrupo}>
                     <UserPlus className="h-4 w-4" />
                     Agregar
@@ -1896,9 +2072,11 @@ export default function SaludPage() {
                   <table className="min-w-full divide-y divide-neutral-200 text-sm">
                     <thead className="bg-neutral-50">
                       <tr>
-                        <th className="px-3 py-2 text-left font-medium text-neutral-500">Nombre</th>
                         <th className="px-3 py-2 text-left font-medium text-neutral-500">Cédula</th>
+                        <th className="px-3 py-2 text-left font-medium text-neutral-500">Nombre</th>
+                        <th className="px-3 py-2 text-left font-medium text-neutral-500">Fecha de Ingreso</th>
                         <th className="px-3 py-2 text-left font-medium text-neutral-500">Parentesco</th>
+                        <th className="px-3 py-2 text-left font-medium text-neutral-500">Fecha de Nacimiento</th>
                         <th className="px-3 py-2 text-left font-medium text-neutral-500">Edad</th>
                         <th className="px-3 py-2 text-center font-medium text-neutral-500">Estado</th>
                         {puedeEscribir && <th className="px-3 py-2" />}
@@ -1907,9 +2085,11 @@ export default function SaludPage() {
                     <tbody className="divide-y divide-neutral-100">
                       {gruposBeneficiariosVisibles.map((b) => (
                         <tr key={b.acuerdo_id}>
-                          <td className="px-3 py-2 font-medium text-neutral-900">{b.nombre} {b.apellido}</td>
                           <td className="px-3 py-2 text-neutral-600">{b.cedula}</td>
+                          <td className="px-3 py-2 font-medium text-neutral-900">{b.nombre} {b.apellido}</td>
+                          <td className="px-3 py-2 text-neutral-600">{formatearFecha(b.fecha_ingreso) || '—'}</td>
                           <td className="px-3 py-2 text-neutral-600">{b.parentesco}</td>
+                          <td className="px-3 py-2 text-neutral-600">{formatearFecha(b.fecha_nacimiento) || '—'}</td>
                           <td className="px-3 py-2 text-neutral-600">{calcularEdad(b.fecha_nacimiento) ?? '—'}</td>
                           <td className="px-3 py-2 text-center">
                             <div className="flex flex-col items-center gap-1">
@@ -1957,18 +2137,40 @@ export default function SaludPage() {
             </div>
 
             <div className="flex flex-wrap gap-3 border-t border-neutral-200 pt-4">
+              {puedeEscribir && grupoActual.estado === 'suspendido' && grupoActual.titular && (
+                <Button
+                  onClick={() =>
+                    abrirCambiarEstado(
+                      { id: grupoActual.titular!.acuerdo_id, numero_acuerdo: grupoActual.numero_acuerdo, socio: grupoActual.socio },
+                      'activo'
+                    )
+                  }
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Activar
+                </Button>
+              )}
               <Button variant="outline" onClick={() => void imprimirFichaGrupo()} isLoading={imprimiendoFicha}>
                 <Printer className="h-4 w-4" />
                 Imprimir Ficha
               </Button>
-              {puedeEscribir && (
+              {puedeEscribir && grupoActual.estado !== 'retirado' && (
                 <Button variant="outline" onClick={() => void abrirPagosModal(grupoActual.numero_acuerdo || undefined)}>
                   <Wallet className="h-4 w-4" />
                   Generar Pago
                 </Button>
               )}
-              {puedeEscribir && (
-                <Button variant="outline" onClick={() => void abrirTraspasoModal(grupoActual.numero_acuerdo || undefined)}>
+              {puedeEscribir && grupoActual.estado !== 'retirado' && (
+                <Button
+                  variant="outline"
+                  onClick={() => void abrirTraspasoModal(grupoActual.numero_acuerdo || undefined)}
+                  disabled={grupoActual.estado === 'suspendido'}
+                  title={
+                    grupoActual.estado === 'suspendido'
+                      ? 'No se puede traspasar a Funeraria un acuerdo suspendido: reactívelo primero.'
+                      : undefined
+                  }
+                >
                   <ArrowRightLeft className="h-4 w-4" />
                   Traspaso a Funeraria
                 </Button>
@@ -1998,23 +2200,20 @@ export default function SaludPage() {
         }
       >
         {beneficiarioError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{beneficiarioError}</div>
+          <Alert variant="error" className="mb-4">{beneficiarioError}</Alert>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input label="Cédula" value={beneficiarioForm.cedula} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, cedula: e.target.value }))} disabled={!!beneficiarioEditando} required />
-          <label className="block text-sm font-medium text-neutral-700">
-            Parentesco
-            <select
-              value={beneficiarioForm.parentesco}
-              onChange={(e) => setBeneficiarioForm((f) => ({ ...f, parentesco: e.target.value }))}
-              className="mt-1.5 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="">Selecciona...</option>
-              {saludService.PARENTESCOS_BENEFICIARIO_SALUD.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </label>
+          <Select
+            label="Parentesco"
+            value={beneficiarioForm.parentesco}
+            onChange={(e) => setBeneficiarioForm((f) => ({ ...f, parentesco: e.target.value }))}
+          >
+            <option value="">Selecciona...</option>
+            {saludService.PARENTESCOS_BENEFICIARIO_SALUD.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </Select>
           <Input label="Nombre" value={beneficiarioForm.nombre} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, nombre: e.target.value }))} required />
           <Input label="Apellido" value={beneficiarioForm.apellido} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, apellido: e.target.value }))} required />
           <Input label="Fecha de nacimiento" type="date" value={beneficiarioForm.fecha_nacimiento} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, fecha_nacimiento: e.target.value }))} required />
@@ -2028,29 +2227,24 @@ export default function SaludPage() {
       {/* ============================================ */}
       <Modal open={eliminarModalAbierto} onClose={() => setEliminarModalAbierto(false)} title="Eliminar Acuerdo de Salud" size="md">
         {eliminarError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{eliminarError}</div>
+          <Alert variant="error" className="mb-4">{eliminarError}</Alert>
         )}
         <div className="space-y-4">
-          <div className="flex gap-2">
-            <Input
-              label="Número de acuerdo"
-              value={eliminarNumeroAcuerdo}
-              onChange={(e) => setEliminarNumeroAcuerdo(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void buscarGrupoParaEliminar()}
-              className="flex-1"
-              autoFocus
-            />
-            <Button onClick={() => void buscarGrupoParaEliminar()} isLoading={eliminarBuscando} className="self-end">
-              <Search className="w-4 h-4" />
-            </Button>
-          </div>
+          <BuscarPorNumeroInline
+            label="Número de acuerdo"
+            value={eliminarNumeroAcuerdo}
+            onChange={setEliminarNumeroAcuerdo}
+            onBuscar={() => void buscarGrupoParaEliminar()}
+            buscando={eliminarBuscando}
+            autoFocus
+          />
 
           {eliminarGrupoData && (
             <div className="space-y-3">
-              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-                <p className="text-sm font-semibold text-neutral-900">{eliminarGrupoData.socio?.nombre_completo}</p>
-                <p className="text-xs text-neutral-500">{eliminarGrupoData.total_personas} persona(s) en este acuerdo</p>
-              </div>
+              <ResumenSocioCard
+                nombre={eliminarGrupoData.socio?.nombre_completo || ''}
+                detalle={`${eliminarGrupoData.total_personas} persona(s) en este acuerdo`}
+              />
 
               <div className="space-y-1 max-h-56 overflow-y-auto">
                 {eliminarGrupoData.titular && (
@@ -2095,7 +2289,7 @@ export default function SaludPage() {
       {/* ============================================ */}
       <Modal open={buscarModalAbierto} onClose={() => setBuscarModalAbierto(false)} title="Buscar Acuerdo de Salud" size="sm">
         {buscarError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{buscarError}</div>
+          <Alert variant="error" className="mb-4">{buscarError}</Alert>
         )}
         <div className="space-y-4">
           <Input
@@ -2117,24 +2311,19 @@ export default function SaludPage() {
       {/* ============================================ */}
       <Modal open={retirarAbierto} onClose={() => setRetirarAbierto(false)} title="Retirar Acuerdos" description="Retira a un beneficiario específico (no aplica al titular)" size="md">
         {retirarError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{retirarError}</div>
+          <Alert variant="error" className="mb-4">{retirarError}</Alert>
         )}
 
         {!retirarSeleccionado && (
           <div className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                label="Número de expediente del socio"
-                value={retirarExpediente}
-                onChange={(e) => setRetirarExpediente(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void buscarParaRetirar()}
-                className="flex-1"
-                autoFocus
-              />
-              <Button onClick={() => void buscarParaRetirar()} isLoading={retirarBuscando} className="self-end">
-                <Search className="w-4 h-4" />
-              </Button>
-            </div>
+            <BuscarPorNumeroInline
+              label="Número de expediente del socio"
+              value={retirarExpediente}
+              onChange={setRetirarExpediente}
+              onBuscar={() => void buscarParaRetirar()}
+              buscando={retirarBuscando}
+              autoFocus
+            />
 
             {retirarSocioActual && (
               <div>
@@ -2183,18 +2372,15 @@ export default function SaludPage() {
 
             <Input label="Fecha de retiro" type="date" value={retirarFecha} onChange={(e) => setRetirarFecha(e.target.value)} required />
 
-            <label className="block text-sm font-medium text-neutral-700">
-              Motivo del retiro
-              <select
-                value={retirarMotivo}
-                onChange={(e) => setRetirarMotivo(e.target.value as (typeof saludService.MOTIVOS_RETIRO_SALUD)[number])}
-                className="mt-1.5 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                {saludService.MOTIVOS_RETIRO_SALUD.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </label>
+            <Select
+              label="Motivo del retiro"
+              value={retirarMotivo}
+              onChange={(e) => setRetirarMotivo(e.target.value as (typeof saludService.MOTIVOS_RETIRO_SALUD)[number])}
+            >
+              {saludService.MOTIVOS_RETIRO_SALUD.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </Select>
 
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => setRetirarSeleccionado(null)} className="flex-1">
@@ -2207,6 +2393,109 @@ export default function SaludPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* ============================================ */}
+      {/* MODAL: RETIRAR ACUERDO (titular + cascada a todo el grupo) */}
+      {/* ============================================ */}
+      <Modal
+        open={retirarTitularAbierto}
+        onClose={() => setRetirarTitularAbierto(false)}
+        title="Retirar Acuerdo de Salud"
+        description="El titular y todos los beneficiarios registrados en este acuerdo pasarán a estado Retirado."
+        size="md"
+      >
+        {retirarTitularAcuerdo && (
+          <div className="space-y-4">
+            {retirarTitularError && (
+              <Alert variant="error">{retirarTitularError}</Alert>
+            )}
+
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4">
+              <div>
+                <dt className="text-xs font-medium uppercase text-neutral-500">Acuerdo</dt>
+                <dd className="text-sm font-mono font-semibold text-primary-700">{retirarTitularAcuerdo.numero_acuerdo || '—'}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium uppercase text-neutral-500">Cédula</dt>
+                <dd className="text-sm text-neutral-900">{retirarTitularAcuerdo.socio?.cedula || retirarTitularAcuerdo.beneficiario.cedula}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-xs font-medium uppercase text-neutral-500">Titular</dt>
+                <dd className="text-sm font-semibold text-neutral-900">
+                  {retirarTitularAcuerdo.socio?.nombre_completo || retirarTitularAcuerdo.beneficiario.nombre_completo}
+                </dd>
+              </div>
+            </dl>
+
+            <Input
+              label="Fecha de retiro"
+              type="date"
+              value={retirarTitularFecha}
+              onChange={(e) => setRetirarTitularFecha(e.target.value)}
+              required
+            />
+
+            <Select
+              label="Motivo"
+              value={retirarTitularMotivo}
+              onChange={(e) => setRetirarTitularMotivo(e.target.value as (typeof saludService.MOTIVOS_RETIRO_SALUD)[number])}
+            >
+              {saludService.MOTIVOS_RETIRO_SALUD.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </Select>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setRetirarTitularAbierto(false)} className="flex-1">
+                Cancelar
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => void confirmarRetirarTitular()}
+                isLoading={retirarTitularEnviando}
+                disabled={!retirarTitularFecha}
+                className="flex-1"
+              >
+                Retirar
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ============================================ */}
+      {/* MODAL: LISTADO POR TIPO (Imprimir listado / Acuerdos en Excel) */}
+      {/* ============================================ */}
+      <Modal
+        open={modoListadoModal !== null}
+        onClose={() => setModoListadoModal(null)}
+        title={modoListadoModal === 'excel' ? 'Descargar Acuerdos en Excel' : 'Imprimir Listado'}
+        description="Selecciona qué grupo de socios quieres incluir en el listado."
+        size="sm"
+      >
+        <div className="space-y-4">
+          {listadoSinDatosMensaje && <Alert variant="info">{listadoSinDatosMensaje}</Alert>}
+
+          <Select
+            label="Tipo de listado"
+            value={tipoListadoSeleccionado}
+            onChange={(e) => cambiarTipoListado(e.target.value as saludService.TipoListadoSalud)}
+          >
+            <option value="activos">Socios activos</option>
+            <option value="suspendidos">Socios suspendidos</option>
+            <option value="proximos_suspender">Socios próximos a suspender</option>
+          </Select>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="outline" onClick={() => setModoListadoModal(null)} disabled={procesandoListado}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void confirmarImprimirListado()} isLoading={procesandoListado}>
+              Aceptar
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* ============================================ */}
@@ -2266,30 +2555,25 @@ export default function SaludPage() {
       {/* ============================================ */}
       <Modal open={pagosAbierto} onClose={() => setPagosAbierto(false)} title="Generar Pago de Salud" size="md">
         {pagosError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{pagosError}</div>
+          <Alert variant="error" className="mb-4">{pagosError}</Alert>
         )}
 
         <div className="space-y-4">
-          <div className="flex gap-2">
-            <Input
-              label="Número de acuerdo"
-              value={pagosNumeroAcuerdo}
-              onChange={(e) => setPagosNumeroAcuerdo(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void buscarGrupoParaPago()}
-              className="flex-1"
-              autoFocus
-            />
-            <Button onClick={() => void buscarGrupoParaPago()} isLoading={pagosBuscando} className="self-end">
-              <Search className="w-4 h-4" />
-            </Button>
-          </div>
+          <BuscarPorNumeroInline
+            label="Número de acuerdo"
+            value={pagosNumeroAcuerdo}
+            onChange={setPagosNumeroAcuerdo}
+            onBuscar={() => void buscarGrupoParaPago()}
+            buscando={pagosBuscando}
+            autoFocus
+          />
 
           {pagosGrupo && (
             <>
-              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm">
-                <p className="font-semibold text-neutral-900">{pagosGrupo.socio?.nombre_completo}</p>
-                <p className="text-neutral-500">{pagosGrupo.total_personas} persona(s) cubierta(s) por este pago</p>
-              </div>
+              <ResumenSocioCard
+                nombre={pagosGrupo.socio?.nombre_completo || ''}
+                detalle={`${pagosGrupo.total_personas} persona(s) cubierta(s) por este pago`}
+              />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Input label="Fecha de pago" type="date" value={pagosFecha} onChange={(e) => setPagosFecha(e.target.value)} required />
@@ -2299,19 +2583,16 @@ export default function SaludPage() {
                 <Input label="Tasa de cambio" type="number" step="0.0001" value={pagosTasaCambio} onChange={(e) => setPagosTasaCambio(e.target.value)} required />
                 <Input label="Cantidad de semanas" type="number" min="1" value={pagosSemanas} onChange={(e) => setPagosSemanas(e.target.value)} required />
                 <Input label="Año" type="number" value={pagosAnio} onChange={(e) => setPagosAnio(e.target.value)} required />
-                <label className="block text-sm font-medium text-neutral-700">
-                  Ubicación / Feria
-                  <select
-                    value={pagosUbicacionId}
-                    onChange={(e) => setPagosUbicacionId(Number(e.target.value))}
-                    className="mt-1.5 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  >
-                    <option value="">Selecciona...</option>
-                    {pagosUbicaciones.map((u) => (
-                      <option key={u.id} value={u.id}>{u.nombre}</option>
-                    ))}
-                  </select>
-                </label>
+                <Select
+                  label="Ubicación / Feria"
+                  value={pagosUbicacionId}
+                  onChange={(e) => setPagosUbicacionId(Number(e.target.value))}
+                >
+                  <option value="">Selecciona...</option>
+                  {pagosUbicaciones.map((u) => (
+                    <option key={u.id} value={u.id}>{u.nombre}</option>
+                  ))}
+                </Select>
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -2330,29 +2611,24 @@ export default function SaludPage() {
       {/* ============================================ */}
       <Modal open={traspasoAbierto} onClose={() => setTraspasoAbierto(false)} title="Traspaso a Funeraria" description="Copia al titular y beneficiarios seleccionados al servicio de funeraria" size="md">
         {traspasoError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{traspasoError}</div>
+          <Alert variant="error" className="mb-4">{traspasoError}</Alert>
         )}
 
         {traspasoResultado ? (
           <div className="space-y-4">
-            <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">{traspasoResultado}</div>
+            <Alert variant="success">{traspasoResultado}</Alert>
             <Button onClick={() => setTraspasoAbierto(false)} className="w-full">Cerrar</Button>
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                label="Número de acuerdo de salud"
-                value={traspasoNumeroAcuerdo}
-                onChange={(e) => setTraspasoNumeroAcuerdo(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void buscarGrupoParaTraspaso()}
-                className="flex-1"
-                autoFocus
-              />
-              <Button onClick={() => void buscarGrupoParaTraspaso()} isLoading={traspasoBuscando} className="self-end">
-                <Search className="w-4 h-4" />
-              </Button>
-            </div>
+            <BuscarPorNumeroInline
+              label="Número de acuerdo de salud"
+              value={traspasoNumeroAcuerdo}
+              onChange={setTraspasoNumeroAcuerdo}
+              onBuscar={() => void buscarGrupoParaTraspaso()}
+              buscando={traspasoBuscando}
+              autoFocus
+            />
 
             {traspasoGrupo && (
               <>
@@ -2382,19 +2658,16 @@ export default function SaludPage() {
                   </div>
                 </div>
 
-                <label className="block text-sm font-medium text-neutral-700">
-                  Tipo de acuerdo de funeraria
-                  <select
-                    value={traspasoTipoId}
-                    onChange={(e) => setTraspasoTipoId(Number(e.target.value))}
-                    className="mt-1.5 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  >
-                    <option value="">Selecciona...</option>
-                    {tiposFuneraria.map((t) => (
-                      <option key={t.id} value={t.id}>{t.nombre}</option>
-                    ))}
-                  </select>
-                </label>
+                <Select
+                  label="Tipo de acuerdo de funeraria"
+                  value={traspasoTipoId}
+                  onChange={(e) => setTraspasoTipoId(Number(e.target.value))}
+                >
+                  <option value="">Selecciona...</option>
+                  {tiposFuneraria.map((t) => (
+                    <option key={t.id} value={t.id}>{t.nombre}</option>
+                  ))}
+                </Select>
                 <Input label="Número de acuerdo base (funeraria)" value={traspasoNumeroBase} onChange={(e) => setTraspasoNumeroBase(e.target.value)} placeholder="Ej: FUN-005500" />
                 <Input label="Número de contrato (opcional)" value={traspasoNumeroContrato} onChange={(e) => setTraspasoNumeroContrato(e.target.value)} />
 
@@ -2419,7 +2692,7 @@ export default function SaludPage() {
         size="sm"
       >
         {estadoError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{estadoError}</div>
+          <Alert variant="error" className="mb-4">{estadoError}</Alert>
         )}
         <div className="space-y-4">
           <p className="text-sm text-neutral-600">

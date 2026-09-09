@@ -74,8 +74,11 @@ const actualizarGrupoAcuerdoSchema = z.object({
 });
 
 const cambiarEstadoGrupoSchema = z.object({
-  estado: z.enum(['activo', 'suspendido']),
+  estado: z.enum(['activo', 'suspendido', 'retirado']),
   motivo: z.string().max(500).optional(),
+  // Solo se usan (y se exigen) cuando estado === 'retirado'.
+  fecha_retiro: z.string().optional(),
+  motivo_retiro: z.enum(MOTIVOS_RETIRO).optional(),
 });
 
 const retirarBeneficiarioSchema = z.object({
@@ -331,13 +334,19 @@ export const listarTiposAcuerdo = async (_req: Request, res: Response): Promise<
  */
 export const obtenerEstadisticas = async (_req: Request, res: Response): Promise<void> => {
   try {
+    // Todos los conteos son por GRUPO (titular), no por persona: un acuerdo
+    // con 1 titular + 3 beneficiarios cuenta como 1, no como 4.
+    const soloTitular = { parentesco: { equals: 'titular', mode: 'insensitive' as const } };
+
     const [totalAcuerdos, porEstado, porTipo, proximosSuspender, sinDerecho] = await Promise.all([
-      prisma.acuerdoSalud.count(),
+      prisma.acuerdoSalud.count({ where: { beneficiario: soloTitular } }),
 
       prisma.$queryRaw<Array<{ estado: string; cantidad: bigint }>>`
-        SELECT estado, COUNT(*)::int as cantidad
-        FROM acuerdos_salud
-        GROUP BY estado
+        SELECT a.estado, COUNT(*)::int as cantidad
+        FROM acuerdos_salud a
+        JOIN beneficiarios b ON b.id = a.beneficiario_id
+        WHERE LOWER(b.parentesco) = 'titular'
+        GROUP BY a.estado
         ORDER BY cantidad DESC
       `,
 
@@ -345,6 +354,8 @@ export const obtenerEstadisticas = async (_req: Request, res: Response): Promise
         SELECT tas.nombre as tipo_nombre, COUNT(as2.id)::int as cantidad
         FROM acuerdos_salud as2
         JOIN tipos_acuerdo_salud tas ON as2.tipo_acuerdo_id = tas.id
+        JOIN beneficiarios b ON b.id = as2.beneficiario_id
+        WHERE LOWER(b.parentesco) = 'titular'
         GROUP BY tas.nombre
         ORDER BY cantidad DESC
       `,
@@ -353,11 +364,12 @@ export const obtenerEstadisticas = async (_req: Request, res: Response): Promise
         where: {
           estado: 'activo',
           semanas_sin_pago: { gte: SEMANAS_ALERTA_PROXIMO_SUSPENDER, lt: SEMANAS_LIMITE_SUSPENSION },
+          beneficiario: soloTitular,
         },
       }),
 
       prisma.acuerdoSalud.count({
-        where: { estado: 'activo', semanas_sin_pago: { gt: 0 } },
+        where: { estado: 'activo', semanas_sin_pago: { gt: 0 }, beneficiario: soloTitular },
       }),
     ]);
 
@@ -394,7 +406,9 @@ export const obtenerEstadisticas = async (_req: Request, res: Response): Promise
 
 /**
  * GET /api/salud/acuerdos
- * Listado paginado, fila por persona (no por grupo).
+ * Listado paginado, fila por GRUPO (una fila por titular). Los beneficiarios
+ * viajan con su titular y solo se ven al abrir el detalle del acuerdo
+ * (obtenerGrupoPorNumeroAcuerdo) — nunca como filas propias en este listado.
  */
 export const listarAcuerdos = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -406,25 +420,42 @@ export const listarAcuerdos = async (req: Request, res: Response): Promise<void>
       limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
     });
 
-    const where: Prisma.AcuerdoSaludWhereInput = {};
+    const where: Prisma.AcuerdoSaludWhereInput = {
+      beneficiario: { parentesco: { equals: 'titular', mode: 'insensitive' } },
+    };
 
     if (params.estado) where.estado = params.estado;
     if (params.tipo_acuerdo_id) where.tipo_acuerdo_id = params.tipo_acuerdo_id;
 
     if (params.buscar) {
-      where.OR = [
-        { numero_acuerdo: { contains: params.buscar, mode: 'insensitive' } },
-        { numero_contrato: { contains: params.buscar, mode: 'insensitive' } },
-        {
-          beneficiario: {
-            OR: [
-              { nombre: { contains: params.buscar, mode: 'insensitive' } },
-              { apellido: { contains: params.buscar, mode: 'insensitive' } },
-              { cedula: { contains: params.buscar } },
-            ],
-          },
+      // La búsqueda debe encontrar el grupo aunque el término coincida con un
+      // beneficiario (no con el titular), así que primero se resuelven los
+      // números de acuerdo que coinciden en CUALQUIER persona del grupo, y
+      // luego se filtra el listado (ya limitado a titulares) por esos números.
+      const gruposCoincidentes = await prisma.acuerdoSalud.findMany({
+        where: {
+          numero_acuerdo: { not: null },
+          OR: [
+            { numero_acuerdo: { contains: params.buscar, mode: 'insensitive' } },
+            { numero_contrato: { contains: params.buscar, mode: 'insensitive' } },
+            {
+              beneficiario: {
+                OR: [
+                  { nombre: { contains: params.buscar, mode: 'insensitive' } },
+                  { apellido: { contains: params.buscar, mode: 'insensitive' } },
+                  { cedula: { contains: params.buscar } },
+                  { socio: { codigo_socio: { contains: params.buscar, mode: 'insensitive' } } },
+                ],
+              },
+            },
+          ],
         },
-      ];
+        select: { numero_acuerdo: true },
+        distinct: ['numero_acuerdo'],
+      });
+
+      const numeros = gruposCoincidentes.map((g) => g.numero_acuerdo).filter((n): n is string => !!n);
+      where.numero_acuerdo = { in: numeros };
     }
 
     const skip = (params.page - 1) * params.limit;
@@ -579,8 +610,11 @@ export const obtenerGrupoPorNumeroAcuerdo = async (req: Request, res: Response):
  */
 export const listarSuspendidosParaImpresion = async (_req: Request, res: Response): Promise<void> => {
   try {
+    // Una fila por grupo (titular): la suspensión aplica a todo el acuerdo
+    // por igual, así que listar también a los beneficiarios sería repetir
+    // la misma fila con distinto nombre.
     const acuerdos = await prisma.acuerdoSalud.findMany({
-      where: { estado: 'suspendido' },
+      where: { estado: 'suspendido', beneficiario: { parentesco: { equals: 'titular', mode: 'insensitive' } } },
       include: { beneficiario: { include: { socio: true } } },
       orderBy: { semanas_sin_pago: 'desc' },
     });
@@ -602,6 +636,79 @@ export const listarSuspendidosParaImpresion = async (_req: Request, res: Respons
   } catch (error: any) {
     logger.error('Error al listar suspendidos de salud para impresión:', error);
     res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Error al listar acuerdos suspendidos' } });
+  }
+};
+
+const tipoListadoGruposSchema = z.enum(['activos', 'suspendidos', 'proximos_suspender']);
+
+/** Condición sobre la fila TITULAR que define cada tipo de listado imprimible. */
+function whereTitularPorTipoListado(tipo: z.infer<typeof tipoListadoGruposSchema>): Prisma.AcuerdoSaludWhereInput {
+  const soloTitular = { parentesco: { equals: 'titular', mode: 'insensitive' as const } };
+  switch (tipo) {
+    case 'activos':
+      return { estado: 'activo', beneficiario: soloTitular };
+    case 'suspendidos':
+      return { estado: 'suspendido', beneficiario: soloTitular };
+    case 'proximos_suspender':
+      return {
+        estado: 'activo',
+        semanas_sin_pago: { gte: SEMANAS_ALERTA_PROXIMO_SUSPENDER, lt: SEMANAS_LIMITE_SUSPENSION },
+        beneficiario: soloTitular,
+      };
+  }
+}
+
+/**
+ * GET /api/salud/acuerdos/grupos?tipo=activos|suspendidos|proximos_suspender
+ * Grupos completos (titular + beneficiarios) que cumplen el tipo de listado
+ * pedido, pensado para imprimir una ficha por grupo (no una fila plana por
+ * persona). Sin paginar: estos listados se generan para imprimir de una vez.
+ */
+export const listarGruposParaImpresion = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tipo = tipoListadoGruposSchema.parse(req.query.tipo);
+
+    const titulares = await prisma.acuerdoSalud.findMany({
+      where: whereTitularPorTipoListado(tipo),
+      select: { numero_acuerdo: true },
+      orderBy: { beneficiario: { socio: { apellido: 'asc' } } },
+    });
+
+    const numeros = titulares.map((t) => t.numero_acuerdo).filter((n): n is string => !!n);
+
+    if (numeros.length === 0) {
+      res.json({ success: true, data: [] });
+      return;
+    }
+
+    const rows = (await prisma.acuerdoSalud.findMany({
+      where: { numero_acuerdo: { in: numeros } },
+      include: includeGrupo,
+      orderBy: { created_at: 'asc' },
+    })) as AcuerdoSaludCompleto[];
+
+    const porNumero = new Map<string, AcuerdoSaludCompleto[]>();
+    for (const row of rows) {
+      if (!row.numero_acuerdo) continue;
+      const grupo = porNumero.get(row.numero_acuerdo) ?? [];
+      grupo.push(row);
+      porNumero.set(row.numero_acuerdo, grupo);
+    }
+
+    // El orden de `numeros` ya viene por apellido del titular; se preserva al armar los grupos.
+    const grupos = numeros
+      .map((numero) => porNumero.get(numero))
+      .filter((grupo): grupo is AcuerdoSaludCompleto[] => !!grupo && grupo.length > 0)
+      .map(formatearGrupo);
+
+    res.json({ success: true, data: grupos });
+  } catch (error: any) {
+    logger.error('Error al listar grupos de salud para impresión:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Tipo de listado inválido' } });
+      return;
+    }
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Error al listar los grupos' } });
   }
 };
 
@@ -697,7 +804,7 @@ export const crearGrupoAcuerdo = async (req: Request, res: Response): Promise<vo
         success: false,
         error: {
           code: 'SIN_CUENTA_AHORRO_ACTIVA',
-          message: 'El socio debe tener un acuerdo de ahorro activo para acceder al beneficio de salud',
+          message: `El socio con expediente ${socio.codigo_socio} (cédula ${socio.cedula}) no tiene ninguna cuenta de ahorro activa registrada. Debe tener al menos una cuenta de ahorro activa para acceder al beneficio de salud; verifique en el módulo de Ahorro si existe una cuenta a nombre de este expediente y si está activa.`,
         },
       });
       return;
@@ -1088,7 +1195,10 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const acuerdo = await prisma.acuerdoSalud.findUnique({ where: { id: acuerdoId } });
+    const acuerdo = await prisma.acuerdoSalud.findUnique({
+      where: { id: acuerdoId },
+      include: { beneficiario: { select: { socio_id: true } } },
+    });
     if (!acuerdo) {
       res.status(404).json({ success: false, error: { code: 'ACUERDO_NOT_FOUND', message: 'Acuerdo no encontrado' } });
       return;
@@ -1099,6 +1209,65 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    if (data.estado === 'retirado' && (!data.fecha_retiro || !data.motivo_retiro)) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'fecha_retiro y motivo_retiro son requeridos para retirar el acuerdo' },
+      });
+      return;
+    }
+
+    // El retiro es definitivo (ver guard de arriba: un acuerdo retirado no
+    // vuelve a cambiar de estado), así que no se permite si el socio tiene
+    // cuentas pendientes: semanas sin pagar en este mismo acuerdo de salud,
+    // préstamos activos/en mora, o deuda en su acuerdo de funeraria.
+    if (data.estado === 'retirado') {
+      const socioId = acuerdo.beneficiario.socio_id;
+
+      if (acuerdo.semanas_sin_pago > 0) {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: 'DEUDA_SALUD',
+            message: `No se puede retirar: el acuerdo de salud tiene ${acuerdo.semanas_sin_pago} semana(s) sin pagar.`,
+          },
+        });
+        return;
+      }
+
+      const prestamoPendiente = await prisma.prestamo.findFirst({
+        where: { socio_id: socioId, estado: { in: ['activo', 'moroso'] } },
+      });
+      if (prestamoPendiente) {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: 'PRESTAMO_PENDIENTE',
+            message: `No se puede retirar: el socio tiene un préstamo (${prestamoPendiente.numero_prestamo}) pendiente de pago.`,
+          },
+        });
+        return;
+      }
+
+      const deudaFuneraria = await prisma.acuerdoFuneraria.findFirst({
+        where: { beneficiario: { socio_id: socioId }, estado: { not: 'retirado' }, semanas_sin_pago: { gt: 0 } },
+      });
+      if (deudaFuneraria) {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: 'DEUDA_FUNERARIA',
+            message: `No se puede retirar: el socio tiene ${deudaFuneraria.semanas_sin_pago} semana(s) sin pagar en el acuerdo de funeraria ${deudaFuneraria.numero_acuerdo || ''}.`,
+          },
+        });
+        return;
+      }
+    }
+
+    // Al retirar al titular, todo el grupo (titular + beneficiarios vigentes)
+    // pasa a retirado junto con él: es la misma condición que ya usan
+    // suspender/reactivar, así que se reutiliza el mismo mecanismo de
+    // cascada por numero_acuerdo.
     const grupoWhere: Prisma.AcuerdoSaludWhereInput = acuerdo.numero_acuerdo
       ? { numero_acuerdo: acuerdo.numero_acuerdo, estado: { not: 'retirado' } }
       : { id: acuerdoId };
@@ -1108,6 +1277,10 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
     if (data.estado === 'activo') {
       updateData.fecha_suspension = null;
       updateData.semanas_sin_pago = 0;
+    }
+    if (data.estado === 'retirado') {
+      updateData.fecha_retiro = new Date(data.fecha_retiro!);
+      updateData.motivo_retiro = data.motivo_retiro!;
     }
 
     const resultado = await prisma.acuerdoSalud.updateMany({ where: grupoWhere, data: updateData });
@@ -1315,6 +1488,21 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
 
     if (filas.length !== data.beneficiario_ids.length) {
       res.status(404).json({ success: false, error: { code: 'BENEFICIARIO_NOT_IN_GROUP', message: 'Alguna de las personas seleccionadas no pertenece a este acuerdo de salud' } });
+      return;
+    }
+
+    // Un acuerdo suspendido no debe poder traspasarse a Funeraria: primero
+    // hay que reactivarlo (o el traspaso terminaría copiando personas de un
+    // grupo que en teoría no tiene derecho al servicio en este momento).
+    const suspendidos = filas.filter((f) => f.estado === 'suspendido');
+    if (suspendidos.length > 0) {
+      res.status(409).json({
+        success: false,
+        error: {
+          code: 'ACUERDO_SUSPENDIDO',
+          message: `El acuerdo de salud ${numeroAcuerdo} está suspendido; reactívelo antes de traspasar personas a Funeraria.`,
+        },
+      });
       return;
     }
 

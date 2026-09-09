@@ -173,10 +173,9 @@ export interface ActualizarGrupoData {
   fecha_inicio?: string;
 }
 
-export interface CambiarEstadoGrupoData {
-  estado: 'activo' | 'suspendido';
-  motivo?: string;
-}
+export type CambiarEstadoGrupoData =
+  | { estado: 'activo' | 'suspendido'; motivo?: string }
+  | { estado: 'retirado'; fecha_retiro: string; motivo_retiro: (typeof MOTIVOS_RETIRO_SALUD)[number] };
 
 export interface RetirarBeneficiarioData {
   fecha_retiro: string;
@@ -429,6 +428,33 @@ export const descargarReporteAcuerdos = async (): Promise<void> => {
   link.href = url;
   const fecha = new Date().toISOString().split('T')[0];
   link.setAttribute('download', `reporte-salud-acuerdos-${fecha}.xlsx`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+export type TipoListadoSalud = 'activos' | 'suspendidos' | 'proximos_suspender';
+
+/** Grupos completos (titular + beneficiarios) que cumplen el tipo de listado pedido. */
+export const listarGruposPorTipo = async (tipo: TipoListadoSalud): Promise<ApiResponse<GrupoSalud[]>> => {
+  const response = await apiClient.get('/salud/acuerdos/grupos', { params: { tipo } });
+  return response.data;
+};
+
+/** Descarga el Excel de acuerdos de salud agrupados, filtrado por tipo de listado. */
+export const descargarReporteGrupos = async (tipo: TipoListadoSalud): Promise<void> => {
+  const response = await apiClient.post(
+    '/reportes/salud-grupos',
+    { formato: 'excel', tipo },
+    { responseType: 'blob' }
+  );
+
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  const fecha = new Date().toISOString().split('T')[0];
+  link.setAttribute('download', `reporte-salud-${tipo}-${fecha}.xlsx`);
   document.body.appendChild(link);
   link.click();
   link.remove();

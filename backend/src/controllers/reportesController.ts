@@ -13,6 +13,7 @@ import {
   generarReporteFunerariaSuspendidos,
   generarReporteSaludSuspendidos,
   generarReporteSaludAcuerdos,
+  generarReporteSaludGrupos,
 } from '../services/reportesService';
 
 // ============================================
@@ -43,6 +44,11 @@ const reporteSaludSuspendidosSchema = z.object({
 
 const reporteSaludAcuerdosSchema = z.object({
   formato: z.literal('excel').default('excel'),
+});
+
+const reporteSaludGruposSchema = z.object({
+  formato: z.literal('excel').default('excel'),
+  tipo: z.enum(['activos', 'suspendidos', 'proximos_suspender']),
 });
 
 // ============================================
@@ -266,6 +272,47 @@ export const reporteSaludAcuerdos = async (
 };
 
 /**
+ * POST /api/reportes/salud-grupos
+ * Generar reporte Excel de acuerdos de salud agrupados (titular +
+ * beneficiarios), filtrado por tipo de listado.
+ */
+export const reporteSaludGrupos = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const validacion = reporteSaludGruposSchema.safeParse(req.body);
+
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Datos inválidos',
+          details: validacion.error.errors,
+        },
+      });
+      return;
+    }
+
+    const buffer = await generarReporteSaludGrupos(validacion.data.tipo);
+
+    const fecha = new Date().toISOString().split('T')[0];
+    const filename = `reporte-salud-${validacion.data.tipo}-${fecha}.xlsx`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * GET /api/reportes/tipos
  * Listar tipos de reportes disponibles
  */
@@ -319,6 +366,13 @@ export const listarTiposReportes = async (
         descripcion: 'Listado completo de todos los acuerdos de salud',
         formatos: ['excel'],
         filtros: [],
+      },
+      {
+        id: 'salud-grupos',
+        nombre: 'Reporte de Grupos de Salud',
+        descripcion: 'Listado de acuerdos de salud (titular + beneficiarios) por tipo: activos, suspendidos o próximos a suspender',
+        formatos: ['excel'],
+        filtros: [{ campo: 'tipo', tipo: 'select', opciones: ['activos', 'suspendidos', 'proximos_suspender'] }],
       },
     ],
   });

@@ -477,9 +477,9 @@ model Prestamo {
   // ("Bolivares" / "Divisas") de la CATEGORIA (efectivo, linea blanca, gastos
   // medicos), lo que responde la duda de la reunion: divisa es una modalidad,
   // no una categoria de prestamo.
-  moneda              Moneda         @default(BS)
-  created_at          DateTime       @default(now())
-  updated_at          DateTime       @updatedAt
+  moneda     Moneda   @default(BS)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   // Relaciones
   socio         Socio           @relation("SocioPrestamo", fields: [socio_id], references: [id])
