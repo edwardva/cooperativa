@@ -823,7 +823,7 @@ export default function PrestamosPage() {
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                     Plan de pagos
                   </p>
-                  <div className="max-h-64 overflow-y-auto rounded-lg border border-neutral-200">
+                  <div className="max-h-64 overflow-x-auto overflow-y-auto rounded-lg border border-neutral-200">
                     <table className="min-w-full divide-y divide-neutral-200 text-sm">
                       <thead className="sticky top-0 bg-neutral-50">
                         <tr className="text-xs uppercase tracking-wider text-neutral-500">

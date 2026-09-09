@@ -13,6 +13,15 @@
 
 ---
 
+## 📚 Guías Detalladas
+
+- **[GUIA-RAPIDA.md](./GUIA-RAPIDA.md)** - Guía paso a paso para la migración completa
+- **[GUIA-FERIAS.md](./GUIA-FERIAS.md)** - 📍 Guía completa sobre Ferias/Ubicaciones (LEER PRIMERO)
+- **[INFORME-ANALISIS-MIGRACION.md](./INFORME-ANALISIS-MIGRACION.md)** - Análisis detallado del proceso
+- **[RESULTADO-MIGRACION.md](./RESULTADO-MIGRACION.md)** - Resultados de migraciones anteriores
+
+---
+
 ## 🎯 Preparación
 
 ### 1. Acceso a Base de Datos Antigua

@@ -566,7 +566,7 @@ export const AhorroPage = () => {
 
               {/* Paginación */}
               {reporteTotalPaginas > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-4 border-t">
                   <Button
                     onClick={async () => {
                       if (reportePagina <= 1) return;
@@ -717,7 +717,7 @@ export const AhorroPage = () => {
       {/* ============================================ */}
       {/* HEADER */}
       {/* ============================================ */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Ahorro</h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -1130,8 +1130,8 @@ export const AhorroPage = () => {
 
         {/* Paginación */}
         {!loading && cuentas.length > 0 && (
-          <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="text-sm text-gray-700">
                 Mostrando {(paginaActual - 1) * registrosPorPagina + 1} a{' '}
                 {Math.min(paginaActual * registrosPorPagina, totalRegistros)} de {totalRegistros} cuentas
@@ -1150,7 +1150,7 @@ export const AhorroPage = () => {
                 <option value={100}>100</option>
               </select>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 onClick={() => setPaginaActual(paginaActual - 1)}
                 disabled={paginaActual === 1}
@@ -1158,10 +1158,10 @@ export const AhorroPage = () => {
                 className="flex items-center gap-1"
               >
                 <ChevronLeft className="w-4 h-4" />
-                Anterior
+                <span className="hidden sm:inline">Anterior</span>
               </Button>
-              
-              <div className="flex gap-1">
+
+              <div className="flex flex-wrap gap-1">
                 {Array.from({ length: Math.min(5, totalPaginas) }, (_, i) => {
                   let pageNum;
                   if (totalPaginas <= 5) {
@@ -1193,7 +1193,7 @@ export const AhorroPage = () => {
                 variant="secondary"
                 className="flex items-center gap-1"
               >
-                Siguiente
+                <span className="hidden sm:inline">Siguiente</span>
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
@@ -1357,7 +1357,7 @@ export const AhorroPage = () => {
                       {movimientoDetalleSeleccionado ? (
                         <div className="space-y-3">
                           <h4 className="text-sm font-semibold text-gray-900">Detalle del movimiento</h4>
-                          <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                             <div>
                               <p className="text-gray-500">Fecha</p>
                               <p className="font-medium text-gray-900">

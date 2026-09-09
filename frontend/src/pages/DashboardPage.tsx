@@ -203,22 +203,22 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 rounded-3xl border border-white bg-white/80 p-4 shadow-sm">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">Socios</p>
-              <p className="mt-2 text-2xl font-semibold text-neutral-900">
+          <div className="grid grid-cols-3 gap-2 rounded-3xl border border-white bg-white/80 p-3 shadow-sm sm:gap-3 sm:p-4">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-neutral-500 sm:text-xs sm:tracking-[0.2em]">Socios</p>
+              <p className="mt-2 truncate text-lg font-semibold text-neutral-900 sm:text-2xl">
                 {estadisticas.socios.total.toLocaleString()}
               </p>
             </div>
-            <div className="border-x border-neutral-200 px-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">Préstamos</p>
-              <p className="mt-2 text-2xl font-semibold text-neutral-900">
+            <div className="min-w-0 border-x border-neutral-200 px-2 sm:px-4">
+              <p className="text-[10px] uppercase tracking-wide text-neutral-500 sm:text-xs sm:tracking-[0.2em]">Préstamos</p>
+              <p className="mt-2 truncate text-lg font-semibold text-neutral-900 sm:text-2xl">
                 {formatNumber(estadisticas.prestamos.monto_total_usd)}
               </p>
             </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">Hoy</p>
-              <p className="mt-2 text-2xl font-semibold text-secondary-700">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-neutral-500 sm:text-xs sm:tracking-[0.2em]">Hoy</p>
+              <p className="mt-2 truncate text-lg font-semibold text-secondary-700 sm:text-2xl">
                 {estadisticas.colectas.hoy}
               </p>
             </div>

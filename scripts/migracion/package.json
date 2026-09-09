@@ -13,7 +13,6 @@
     "validate:socios": "tsx 3-validate-socios.ts",
     "validate:ubicaciones": "tsx 0-import-ubicaciones.ts",
     "migrate:rollback": "tsx 4-rollback-socios.ts",
-    "migrate:all": "npm run migrate:socios && npm run validate:socios && npm run migrate:beneficiarios",
     "backfill:funeraria-numero-acuerdo": "tsx 20-backfill-funeraria-numero-acuerdo.ts",
     "migrate:all": "npm run migrate:ubicaciones && npm run migrate:socios && npm run validate:socios && npm run migrate:beneficiarios",
     "migration:report": "tsx generate-report.ts"
