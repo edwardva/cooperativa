@@ -14,8 +14,10 @@
  * todo con un boton. La caja se cierra desde la misma pantalla.
  */
 
+import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ChevronDown,
   Search,
   Wallet,
   Shield,
@@ -74,10 +76,41 @@ const iconoServicio = (tipo: Cobrable['tipo']) => {
 }
 
 const etiquetaServicio = (tipo: Cobrable['tipo']): string =>
-  ({ ahorro: 'Ahorro', funeraria: 'Funeraria', salud: 'Salud', prestamo: 'Prestamo' })[tipo]
+  ({
+    ahorro: 'Ahorro',
+    funeraria: 'Funeraria',
+    salud: 'Salud',
+    prestamo: 'Prestamo',
+  })[tipo]
 
 const money = (valor: number, decimales = 2): string =>
-  valor.toLocaleString('es-VE', { minimumFractionDigits: decimales, maximumFractionDigits: decimales })
+  valor.toLocaleString('es-VE', {
+    minimumFractionDigits: decimales,
+    maximumFractionDigits: decimales,
+  })
+
+function OpcionesColecta({
+  titulo,
+  resumen,
+  children,
+}: {
+  titulo: string
+  resumen: string
+  children: ReactNode
+}) {
+  return (
+    <details className="group rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 [&::-webkit-details-marker]:hidden">
+        <span>
+          <span className="block text-sm font-semibold text-neutral-900">{titulo}</span>
+          <span className="mt-1 block text-xs text-neutral-500">{resumen}</span>
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-neutral-500 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-neutral-100 p-4">{children}</div>
+    </details>
+  )
+}
 
 export default function ColectaPage() {
   const { hasPermission } = usePermissions()
@@ -235,10 +268,15 @@ export default function ColectaPage() {
           semanas,
           ahorro_adicional_usd: parseFloat(adicionalAhorro) || 0,
         })
-        if (vigente && respuesta.success) setPaquete(respuesta.data)
+        if (!respuesta.success) throw new Error('No se pudo calcular el cobro')
+        if (vigente) setPaquete(respuesta.data)
       } catch {
-        // Si falla el calculo se conserva el ultimo desglose valido; el cobro
-        // vuelve a calcularlo en el servidor de todos modos
+        if (vigente) {
+          setPaquete(null)
+          setError(
+            'No se pudo actualizar el total. Cambie las semanas o busque de nuevo al asociado para reintentar.'
+          )
+        }
       } finally {
         if (vigente) setCalculandoPaquete(false)
       }
@@ -284,7 +322,10 @@ export default function ColectaPage() {
 
   const cambiarMonto = (cobrable: Cobrable, valor: string) => {
     const clave = claveCobrable(cobrable)
-    setLineas((prev) => ({ ...prev, [clave]: { ...(prev[clave] ?? { semanas: 1 }), monto_usd: valor } }))
+    setLineas((prev) => ({
+      ...prev,
+      [clave]: { ...(prev[clave] ?? { semanas: 1 }), monto_usd: valor },
+    }))
   }
 
   const adicional = parseFloat(adicionalAhorro) || 0
@@ -312,7 +353,7 @@ export default function ColectaPage() {
   const cantidadLineas = (paquete?.renglones.length ?? 0) + Object.keys(lineas).length
 
   const cobrar = async () => {
-    if (!socio || cantidadLineas === 0) return
+    if (!socio || cantidadLineas === 0 || calculandoPaquete || !paquete || cobrando) return
 
     // El paquete semanal viaja completo: ahorro obligatorio (con el adicional
     // ya sumado) y TODOS los servicios contratados. El backend rechaza un
@@ -332,7 +373,11 @@ export default function ColectaPage() {
       const linea = lineas[claveCobrable(cobrable)]
       const monto = parseFloat(linea?.monto_usd ?? '') || 0
       if (monto > 0) {
-        detalles.push({ servicio: 'prestamo', referencia_id: cobrable.referencia_id, monto_usd: monto })
+        detalles.push({
+          servicio: 'prestamo',
+          referencia_id: cobrable.referencia_id,
+          monto_usd: monto,
+        })
       }
     }
 
@@ -480,7 +525,7 @@ export default function ColectaPage() {
         <div>
           <h1 className="text-3xl font-semibold text-neutral-900">Colecta</h1>
           <p className="mt-1 text-sm text-neutral-600">
-            Busque al socio por cedula o expediente y cobre todos sus servicios de una vez.
+            Cobros y atención al asociado en un solo lugar.
           </p>
         </div>
 
@@ -492,7 +537,9 @@ export default function ColectaPage() {
             </div>
           )}
           <div className="rounded-xl border border-neutral-200 bg-white px-4 py-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">Cobrado hoy</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+              Cobrado hoy
+            </p>
             <p className="text-sm font-semibold text-neutral-900">
               ${money(resumenDia?.total_usd ?? 0)} · {resumenDia?.cantidad ?? 0} operaciones
             </p>
@@ -515,10 +562,14 @@ export default function ColectaPage() {
 
       {/* PESTANAS: cobrar y lo cobrado hoy (con reverso) conviven en la misma pantalla */}
       <div className="flex gap-2 border-b border-neutral-200">
-        {([
+        {[
           { id: 'cobrar' as const, label: 'Cobrar', icon: SearchIcon },
-          { id: 'movimientos' as const, label: 'Movimientos de hoy', icon: ListChecks },
-        ]).map((item) => {
+          {
+            id: 'movimientos' as const,
+            label: 'Movimientos de hoy',
+            icon: ListChecks,
+          },
+        ].map((item) => {
           const activa = pestana === item.id
           return (
             <button
@@ -540,316 +591,339 @@ export default function ColectaPage() {
       {pestana === 'movimientos' && <MovimientosDelDia onCambio={() => void cargarResumen()} />}
 
       {pestana === 'cobrar' && (
-      <>
-      {/* BUSCADOR: el punto de entrada unico */}
-      <Card className="p-5">
-        <div className="flex flex-wrap gap-3">
-          <div className="relative min-w-[280px] flex-1">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-neutral-400" />
-            <input
-              ref={campoBusqueda}
-              value={termino}
-              onChange={(e) => setTermino(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void buscar()
-                if (e.key === 'Escape') limpiar()
-              }}
-              placeholder="Cedula o numero de expediente..."
-              className="w-full rounded-xl border border-neutral-200 bg-white py-3.5 pl-12 pr-4 text-lg outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
-            />
-          </div>
-          <Button onClick={() => void buscar()} disabled={buscando} className="px-6">
-            {buscando ? <Loader2 className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5" />}
-            Buscar
-          </Button>
-          {(socio || candidatos.length > 0 || recibo) && (
-            <Button variant="ghost" onClick={limpiar}>
-              <X className="h-4 w-4" />
-              Limpiar
-            </Button>
-          )}
-        </div>
-        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
-          <span>Ya no hace falta el numero de cuenta.</span>
-          <span className="hidden sm:inline">·</span>
-          <span>
-            <kbd className="rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 font-mono">Enter</kbd>{' '}
-            buscar
-          </span>
-          <span>
-            <kbd className="rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 font-mono">F2</kbd>{' '}
-            volver al buscador
-          </span>
-          <span>
-            <kbd className="rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 font-mono">Ctrl+Enter</kbd>{' '}
-            cobrar
-          </span>
-          <span>
-            <kbd className="rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 font-mono">Esc</kbd>{' '}
-            limpiar
-          </span>
-        </p>
-      </Card>
-
-      {error && (
-        <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
-          <p>{error}</p>
-        </div>
-      )}
-
-      {/* VARIOS EXPEDIENTES CON LA MISMA CEDULA */}
-      {candidatos.length > 0 && (
-        <Card className="p-5">
-          <p className="mb-3 text-sm font-medium text-neutral-700">
-            {candidatos.length} expedientes con esa cedula. Elija cual:
-          </p>
-          <div className="space-y-2">
-            {candidatos.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => seleccionarSocio(c)}
-                className="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3 text-left transition hover:border-primary-400 hover:bg-primary-50/40"
+        <>
+          <ol aria-label="Pasos del cobro" className="grid grid-cols-3 gap-2">
+            {['Buscar asociado', 'Preparar cobro', 'Revisar y cobrar'].map((paso, index) => (
+              <li
+                key={paso}
+                className={`flex items-center gap-2 rounded-xl px-3 py-3 text-xs sm:text-sm ${
+                  (socio ? index > 0 : index === 0)
+                    ? 'bg-primary-50 font-semibold text-primary-800'
+                    : 'bg-neutral-100 text-neutral-500'
+                }`}
               >
-                <div>
-                  <p className="text-sm font-medium text-neutral-900">
-                    {c.apellido}, {c.nombre}
-                  </p>
-                  <p className="text-xs text-neutral-500">
-                    {c.codigo_socio} · {c.estado} · {c.cobrables.length} servicio(s)
-                  </p>
-                </div>
-                <ArrowRight className="h-4 w-4 text-neutral-400" />
-              </button>
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-bold">
+                  {index + 1}
+                </span>
+                {paso}
+              </li>
             ))}
-          </div>
-        </Card>
-      )}
-
-      {/* RECIBO DE LA ULTIMA COLECTA */}
-      {recibo && (
-        <Card className="border-emerald-200 bg-emerald-50/50 p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0 text-emerald-600" />
-              <div>
-                <p className="text-lg font-semibold text-emerald-900">
-                  Colecta #{recibo.id} registrada
-                </p>
-                <p className="mt-1 text-sm text-emerald-800">
-                  {recibo.socio?.apellido}, {recibo.socio?.nombre} · {recibo.socio?.codigo_socio}
-                </p>
-                <p className="mt-2 text-sm text-emerald-700">
-                  {recibo.detalles.length} concepto(s) ·{' '}
-                  <strong>${money(Number(recibo.monto_total_usd))}</strong> ·{' '}
-                  {money(Number(recibo.monto_total_bs))} Bs
-                </p>
+          </ol>
+          {/* BUSCADOR: el punto de entrada unico */}
+          <Card className="p-5">
+            <div className="flex flex-wrap gap-3">
+              <div className="relative min-w-0 basis-64 flex-1">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-neutral-400" />
+                <input
+                  aria-label="Cédula o número de expediente del asociado"
+                  ref={campoBusqueda}
+                  value={termino}
+                  onChange={(e) => setTermino(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void buscar()
+                    if (e.key === 'Escape') limpiar()
+                  }}
+                  placeholder="Cédula o número de expediente"
+                  className="w-full rounded-xl border border-neutral-200 bg-white py-3.5 pl-12 pr-4 text-lg outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                />
               </div>
+              <Button
+                onClick={() => void buscar()}
+                disabled={buscando || !termino.trim() || cobrando}
+                className="px-6"
+              >
+                {buscando ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Search className="h-5 w-5" />
+                )}
+                Buscar
+              </Button>
+              {(socio || candidatos.length > 0 || recibo) && (
+                <Button variant="ghost" onClick={limpiar}>
+                  <X className="h-4 w-4" />
+                  Siguiente asociado
+                </Button>
+              )}
             </div>
-            <Button variant="outline" onClick={() => window.print()}>
-              <Printer className="h-4 w-4" />
-              Imprimir recibo
-            </Button>
-          </div>
-        </Card>
-      )}
+            <p className="mt-2 text-xs text-neutral-500">
+              Presione Enter para buscar · F2 para volver al buscador
+            </p>
+          </Card>
 
-      {/* FICHA DEL SOCIO + COBRABLES */}
-      {socio && (
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-          {/* Columna izquierda: lo cobrable */}
-          <div className="space-y-4 lg:col-span-2">
+          {error && (
+            <div
+              role="alert"
+              className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+            >
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+              <p>{error}</p>
+            </div>
+          )}
+
+          {!socio && !recibo && !buscando && candidatos.length === 0 && !error && (
+            <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 px-6 py-12 text-center">
+              <Search className="mx-auto mb-4 h-8 w-8 text-primary-500" />
+              <h2 className="text-lg font-semibold text-neutral-900">
+                Comience por buscar al asociado
+              </h2>
+              <p className="mx-auto mt-2 max-w-md text-sm text-neutral-500">
+                Consulte sus servicios, indique cuántas semanas desea pagar y revise el total antes
+                de registrar el cobro.
+              </p>
+            </div>
+          )}
+          {/* VARIOS EXPEDIENTES CON LA MISMA CEDULA */}
+          {candidatos.length > 0 && (
             <Card className="p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-semibold text-neutral-900">
-                    {socio.apellido}, {socio.nombre}
-                  </h2>
-                  <p className="mt-1 text-sm text-neutral-500">
-                    Expediente {socio.codigo_socio} · C.I. {socio.cedula}
-                    {socio.ubicacion && ` · ${socio.ubicacion.direccion || socio.ubicacion.codigo}`}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {socio.alertas.socio_retirado && <Badge variant="error">Socio retirado</Badge>}
-                  {socio.alertas.acuerdos_suspendidos > 0 && (
-                    <Badge variant="warning">
-                      {socio.alertas.acuerdos_suspendidos} acuerdo(s) suspendido(s)
-                    </Badge>
-                  )}
-                  {socio.alertas.servicios_a_revisar > 0 && (
-                    <Badge variant="warning">
-                      {socio.alertas.servicios_a_revisar} servicio(s) a revisar
-                    </Badge>
-                  )}
-                  {/* Fianzas: parte de su ahorro esta comprometida (req. 5) */}
-                  {socio.alertas.ahorro_bloqueado_usd > 0 && (
-                    <Badge variant="warning">
-                      ${money(socio.alertas.ahorro_bloqueado_usd)} bloqueado por fianza
-                    </Badge>
-                  )}
-                </div>
+              <p className="mb-3 text-sm font-medium text-neutral-700">
+                {candidatos.length} expedientes con esa cedula. Elija cual:
+              </p>
+              <div className="space-y-2">
+                {candidatos.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => seleccionarSocio(c)}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3 text-left transition hover:border-primary-400 hover:bg-primary-50/40"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-neutral-900">
+                        {c.apellido}, {c.nombre}
+                      </p>
+                      <p className="text-xs text-neutral-500">
+                        {c.codigo_socio} · {c.estado} · {c.cobrables.length} servicio(s)
+                      </p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-neutral-400" />
+                  </button>
+                ))}
               </div>
             </Card>
+          )}
 
-            {/*
+          {/* RECIBO DE LA ULTIMA COLECTA */}
+          {recibo && (
+            <Card className="border-emerald-200 bg-emerald-50/50 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0 text-emerald-600" />
+                  <div>
+                    <p className="text-lg font-semibold text-emerald-900">
+                      Colecta #{recibo.id} registrada
+                    </p>
+                    <p className="mt-1 text-sm text-emerald-800">
+                      {recibo.socio?.apellido}, {recibo.socio?.nombre} ·{' '}
+                      {recibo.socio?.codigo_socio}
+                    </p>
+                    <p className="mt-2 text-sm text-emerald-700">
+                      {recibo.detalles.length} concepto(s) ·{' '}
+                      <strong>${money(Number(recibo.monto_total_usd))}</strong> ·{' '}
+                      {money(Number(recibo.monto_total_bs))} Bs
+                    </p>
+                  </div>
+                </div>
+                <Button variant="outline" onClick={() => window.print()}>
+                  <Printer className="h-4 w-4" />
+                  Imprimir recibo
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {/* FICHA DEL SOCIO + COBRABLES */}
+          {socio && (
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+              {/* Columna izquierda: lo cobrable */}
+              <div className="space-y-4 lg:col-span-2">
+                <Card className="p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-xl font-semibold text-neutral-900">
+                        {socio.apellido}, {socio.nombre}
+                      </h2>
+                      <p className="mt-1 text-sm text-neutral-500">
+                        Expediente {socio.codigo_socio} · C.I. {socio.cedula}
+                        {socio.ubicacion &&
+                          ` · ${socio.ubicacion.direccion || socio.ubicacion.codigo}`}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {socio.alertas.socio_retirado && (
+                        <Badge variant="error">Socio retirado</Badge>
+                      )}
+                      {socio.alertas.acuerdos_suspendidos > 0 && (
+                        <Badge variant="warning">
+                          {socio.alertas.acuerdos_suspendidos} acuerdo(s) suspendido(s)
+                        </Badge>
+                      )}
+                      {socio.alertas.servicios_a_revisar > 0 && (
+                        <Badge variant="warning">
+                          {socio.alertas.servicios_a_revisar} servicio(s) a revisar
+                        </Badge>
+                      )}
+                      {/* Fianzas: parte de su ahorro esta comprometida (req. 5) */}
+                      {socio.alertas.ahorro_bloqueado_usd > 0 && (
+                        <Badge variant="warning">
+                          ${money(socio.alertas.ahorro_bloqueado_usd)} bloqueado por fianza
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+
+                {/*
               Situacion por servicio: hasta cuando esta pagado cada uno, cuando
               pago por ultima vez y cuanto debe. Un resumen por servicio, no una
               fila por semana adeudada (req. 1).
             */}
-            <SituacionSocio
-              servicios={socio.servicios ?? []}
-              semanaActualTexto={semanaActualTexto}
-              tasa={tasa}
-            />
+                <OpcionesColecta
+                  key={`situacion-${socio.id}`}
+                  titulo="Estado y cobertura de los servicios"
+                  resumen={`Última semana pagada: ${socio.ultima_semana_pagada_texto} · ${socio.atraso} semana(s) de atraso`}
+                >
+                  <SituacionSocio
+                    servicios={socio.servicios ?? []}
+                    semanaActualTexto={semanaActualTexto}
+                    tasa={tasa}
+                  />
+                </OpcionesColecta>
 
-            {/* PERIODO Y SEMANAS: el driver de todo el cobro */}
-            <Card className="p-5">
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <label className="text-sm font-medium text-neutral-700">
-                  <span className="mb-1.5 block">Semanas a cobrar *</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={104}
-                    ref={campoSemanas}
-                    value={semanas}
-                    onChange={(e) => setSemanas(Math.max(1, Number(e.target.value) || 1))}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        botonCobrar.current?.focus()
+                {/* PERIODO Y SEMANAS: el driver de todo el cobro */}
+                <Card className="p-5">
+                  <h3 className="text-lg font-semibold text-neutral-900">
+                    ¿Cuántas semanas desea pagar?
+                  </h3>
+                  <p className="mb-4 mt-1 text-sm text-neutral-500">
+                    El ahorro obligatorio y los servicios contratados se calculan juntos.
+                  </p>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="text-sm font-medium text-neutral-700">
+                      <span className="mb-1.5 block">Semanas a cobrar *</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={104}
+                        ref={campoSemanas}
+                        value={semanas}
+                        onChange={(e) => setSemanas(Math.max(1, Number(e.target.value) || 1))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            botonCobrar.current?.focus()
+                          }
+                        }}
+                        className={`${controlClass} text-lg font-bold`}
+                      />
+                    </label>
+                    <Button variant="outline" onClick={() => setSemanas(1)}>
+                      1 semana
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        setSemanas(Math.max(socio.semanas_para_ponerse_al_dia || 1, 1))
                       }
-                    }}
-                    className={`${controlClass} text-lg font-bold`}
-                  />
-                </label>
-                <label className="text-sm font-medium text-neutral-700">
-                  <span className="mb-1.5 block">Semana de cobro</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={53}
-                    value={semanaCobro}
-                    onChange={(e) => setSemanaCobro(Number(e.target.value) || 1)}
-                    className={controlClass}
-                  />
-                </label>
-                <label className="text-sm font-medium text-neutral-700">
-                  <span className="mb-1.5 block">Ano de cobro</span>
-                  <input
-                    type="number"
-                    min={2020}
-                    max={2100}
-                    value={anoCobro}
-                    onChange={(e) => setAnoCobro(Number(e.target.value) || new Date().getFullYear())}
-                    className={controlClass}
-                  />
-                </label>
-                <label className="text-sm font-medium text-neutral-700">
-                  <span className="mb-1.5 block">Referencia</span>
-                  <input
-                    value={referencia}
-                    onChange={(e) => setReferencia(e.target.value)}
-                    placeholder="N° recibo"
-                    className={controlClass}
-                  />
-                </label>
-              </div>
+                    >
+                      Poner al día · {Math.max(socio.semanas_para_ponerse_al_dia || 1, 1)}
+                    </Button>
+                  </div>
+                  <div className="mt-4">
+                    <OpcionesColecta
+                      titulo="Período y referencia del recibo"
+                      resumen={`Semana ${semanaCobro} de ${anoCobro}${referencia ? ` · Ref. ${referencia}` : ' · Referencia opcional'}`}
+                    >
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                        <label className="text-sm font-medium text-neutral-700">
+                          <span className="mb-1.5 block">Semana de cobro</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={53}
+                            value={semanaCobro}
+                            onChange={(e) => setSemanaCobro(Number(e.target.value) || 1)}
+                            className={controlClass}
+                          />
+                        </label>
+                        <label className="text-sm font-medium text-neutral-700">
+                          <span className="mb-1.5 block">Ano de cobro</span>
+                          <input
+                            type="number"
+                            min={2020}
+                            max={2100}
+                            value={anoCobro}
+                            onChange={(e) =>
+                              setAnoCobro(Number(e.target.value) || new Date().getFullYear())
+                            }
+                            className={controlClass}
+                          />
+                        </label>
+                        <label className="text-sm font-medium text-neutral-700">
+                          <span className="mb-1.5 block">Referencia</span>
+                          <input
+                            value={referencia}
+                            onChange={(e) => setReferencia(e.target.value)}
+                            placeholder="N° recibo"
+                            className={controlClass}
+                          />
+                        </label>
+                      </div>
+                    </OpcionesColecta>
+                  </div>
 
-              {/*
-                Los tres indicadores que el sistema actual pone junto al campo
-                de semanas: hasta que semana esta cubierto, cuanto debe y si
-                hay algo suspendido. Van de solo lectura porque son un
-                resultado, no algo que el cajero decida.
-              */}
-              <div className="mt-3 grid grid-cols-3 gap-3">
-                <div className="rounded-lg bg-neutral-50 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">
-                    Ultima semana pagada
+                  <p className="mt-2 text-xs text-neutral-500">
+                    Las semanas multiplican por igual el ahorro y cada servicio contratado. Arranca
+                    en lo que hace falta para ponerlo al dia ({socio.semanas_para_ponerse_al_dia}{' '}
+                    semana
+                    {socio.semanas_para_ponerse_al_dia === 1 ? '' : 's'}).
+                    {tarifas && (
+                      <>
+                        {' '}
+                        Las semanas pendientes se suman a las adelantadas; la politica admite{' '}
+                        {tarifas.max_semanas_adelanto} de adelanto.
+                      </>
+                    )}
                   </p>
-                  <p className="text-sm font-semibold text-neutral-900">
-                    {socio.ultima_semana_pagada_texto}
-                  </p>
-                </div>
-                <div
-                  className={`rounded-lg px-3 py-2 ${
-                    socio.atraso > 0 ? 'bg-amber-50' : 'bg-neutral-50'
-                  }`}
-                >
-                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Atraso</p>
-                  <p
-                    className={`text-sm font-semibold tabular-nums ${
-                      socio.atraso > 0 ? 'text-amber-900' : 'text-neutral-900'
-                    }`}
-                  >
-                    {socio.atraso} semana{socio.atraso === 1 ? '' : 's'}
-                  </p>
-                </div>
-                <div
-                  className={`rounded-lg px-3 py-2 ${
-                    socio.suspendido > 0 ? 'bg-red-50' : 'bg-neutral-50'
-                  }`}
-                >
-                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Suspendido</p>
-                  <p
-                    className={`text-sm font-semibold tabular-nums ${
-                      socio.suspendido > 0 ? 'text-red-800' : 'text-neutral-900'
-                    }`}
-                  >
-                    {socio.suspendido}
-                  </p>
-                </div>
-              </div>
 
-              <p className="mt-2 text-xs text-neutral-500">
-                Las semanas multiplican por igual el ahorro y cada servicio contratado. Arranca en lo
-                que hace falta para ponerlo al dia ({socio.semanas_para_ponerse_al_dia} semana
-                {socio.semanas_para_ponerse_al_dia === 1 ? '' : 's'}).
-                {tarifas && (
-                  <>
-                    {' '}Las semanas pendientes se suman a las adelantadas; la politica admite{' '}
-                    {tarifas.max_semanas_adelanto} de adelanto.
-                  </>
-                )}
-              </p>
+                  {/* Tarifas vigentes, de SOLO LECTURA: se cambian en Parametros */}
+                  {tarifas && (
+                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+                      <span className="font-medium text-neutral-500">Tarifas semanales</span>
+                      <span className="tabular-nums">Ahorro ${money(tarifas.ahorro_usd)}</span>
+                      <span className="tabular-nums">
+                        Funeraria ${money(tarifas.funeraria_usd)}
+                      </span>
+                      <span className="tabular-nums">Salud ${money(tarifas.salud_usd)}</span>
+                      <span className="text-neutral-400">Se configuran en Parametros</span>
+                    </div>
+                  )}
 
-              {/* Tarifas vigentes, de SOLO LECTURA: se cambian en Parametros */}
-              {tarifas && (
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
-                  <span className="font-medium text-neutral-500">Tarifas semanales</span>
-                  <span className="tabular-nums">Ahorro ${money(tarifas.ahorro_usd)}</span>
-                  <span className="tabular-nums">Funeraria ${money(tarifas.funeraria_usd)}</span>
-                  <span className="tabular-nums">Salud ${money(tarifas.salud_usd)}</span>
-                  <span className="text-neutral-400">Se configuran en Parametros</span>
-                </div>
-              )}
+                  {/* Asistencia a asamblea: la caja es donde se ve al socio */}
+                  {asambleas.length > 0 && (
+                    <label className="mt-4 block text-sm font-medium text-neutral-700">
+                      <span className="mb-1.5 block">Asistio a la asamblea</span>
+                      <select
+                        value={asambleaId}
+                        onChange={(e) =>
+                          setAsambleaId(e.target.value === '' ? '' : Number(e.target.value))
+                        }
+                        className={controlClass}
+                      >
+                        <option value="">No registrar asistencia</option>
+                        {asambleas.map((a) => {
+                          const yaAsistio = socio.asambleas_asistidas.includes(a.id)
+                          return (
+                            <option key={a.id} value={a.id} disabled={yaAsistio}>
+                              {a.titulo} · {new Date(a.fecha).toLocaleDateString('es-VE')}
+                              {yaAsistio ? ' (ya registrada)' : ''}
+                            </option>
+                          )
+                        })}
+                      </select>
+                    </label>
+                  )}
+                </Card>
 
-              {/* Asistencia a asamblea: la caja es donde se ve al socio */}
-              {asambleas.length > 0 && (
-                <label className="mt-4 block text-sm font-medium text-neutral-700">
-                  <span className="mb-1.5 block">Asistio a la asamblea</span>
-                  <select
-                    value={asambleaId}
-                    onChange={(e) => setAsambleaId(e.target.value === '' ? '' : Number(e.target.value))}
-                    className={controlClass}
-                  >
-                    <option value="">No registrar asistencia</option>
-                    {asambleas.map((a) => {
-                      const yaAsistio = socio.asambleas_asistidas.includes(a.id)
-                      return (
-                        <option key={a.id} value={a.id} disabled={yaAsistio}>
-                          {a.titulo} · {new Date(a.fecha).toLocaleDateString('es-VE')}
-                          {yaAsistio ? ' (ya registrada)' : ''}
-                        </option>
-                      )
-                    })}
-                  </select>
-                </label>
-              )}
-            </Card>
-
-            {/*
+                {/*
               DESGLOSE DEL COBRO SEMANAL
 
               Ya no hay casillas por servicio. El cliente fue explicito: los
@@ -857,412 +931,460 @@ export default function ColectaPage() {
               y no se puede elegir pagar solo uno. Lo unico que decide el cajero
               es la cantidad de semanas; el importe lo calcula el backend.
             */}
-            <PaqueteSemanalCard paquete={paquete} cargando={calculandoPaquete} semanas={semanas} />
+                <PaqueteSemanalCard
+                  paquete={paquete}
+                  cargando={calculandoPaquete}
+                  semanas={semanas}
+                />
 
-            {/* AHORRO: saldo, ahorro adicional y ultimos movimientos */}
-            {cuentasAhorro.length > 0 && (
-              <Card padding="none" className="overflow-hidden">
-                <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
-                  <Wallet className="h-4 w-4 text-primary-600" />
-                  <h3 className="text-sm font-semibold text-neutral-800">Ahorro</h3>
-                  <span className="text-xs text-neutral-500">({cuentasAhorro.length})</span>
-                </div>
+                {/* AHORRO: saldo, ahorro adicional y ultimos movimientos */}
+                {cuentasAhorro.length > 0 && (
+                  <OpcionesColecta
+                    key={`Ahorro adicional y movimientos-${socio.id}`}
+                    titulo="Ahorro adicional y movimientos"
+                    resumen={` ${cuentasAhorro.length} cuenta(s) · ${adicional > 0 ? `$${money(adicional)} adicional incluido` : 'Opcional: agregar ahorro al cobro'}`}
+                  >
+                    <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
+                      <Wallet className="h-4 w-4 text-primary-600" />
+                      <h3 className="text-sm font-semibold text-neutral-800">Ahorro</h3>
+                      <span className="text-xs text-neutral-500">({cuentasAhorro.length})</span>
+                    </div>
 
-                <div className="flex flex-wrap items-end gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-3">
-                  <label className="text-xs font-medium text-neutral-600">
-                    <span className="mb-1 block">Ahorro adicional (USD)</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      value={adicionalAhorro}
-                      onChange={(e) => setAdicionalAhorro(e.target.value)}
-                      className="w-36 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
-                    />
-                  </label>
-                  <p className="pb-2 text-xs text-neutral-500">
-                    Se suma al ahorro obligatorio de estas {semanas} semana(s). Sin tope de monto.
-                  </p>
-                </div>
+                    <div className="flex flex-wrap items-end gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-3">
+                      <label className="text-xs font-medium text-neutral-600">
+                        <span className="mb-1 block">Ahorro adicional (USD)</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={adicionalAhorro}
+                          onChange={(e) => setAdicionalAhorro(e.target.value)}
+                          className="w-36 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                        />
+                      </label>
+                      <p className="pb-2 text-xs text-neutral-500">
+                        Se suma al ahorro obligatorio de estas {semanas} semana(s). Sin tope de
+                        monto.
+                      </p>
+                    </div>
 
-                <div className="divide-y divide-neutral-100">
-                  {cuentasAhorro.map((cuenta) => (
-                    <div key={claveCobrable(cuenta)} className="px-5 py-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium text-neutral-900">{cuenta.titulo}</p>
-                          <p className="text-xs text-neutral-500">{cuenta.detalle}</p>
-                        </div>
-                        <div className="text-right tabular-nums">
-                          <p className="text-sm font-semibold text-neutral-900">
-                            ${money(cuenta.saldo_usd ?? 0)}
-                          </p>
-                          <p className="text-xs text-neutral-500">{money(cuenta.saldo_bs ?? 0)} Bs</p>
-                          {(cuenta.bloqueado_usd ?? 0) > 0 && (
-                            <p className="mt-1 text-xs text-amber-700">
-                              Disponible ${money(cuenta.disponible_usd ?? 0)} · $
-                              {money(cuenta.bloqueado_usd ?? 0)} en fianza
-                            </p>
-                          )}
-                        </div>
-                      </div>
+                    <div className="divide-y divide-neutral-100">
+                      {cuentasAhorro.map((cuenta) => (
+                        <div key={claveCobrable(cuenta)} className="px-5 py-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-neutral-900">
+                                {cuenta.titulo}
+                              </p>
+                              <p className="text-xs text-neutral-500">{cuenta.detalle}</p>
+                            </div>
+                            <div className="text-right tabular-nums">
+                              <p className="text-sm font-semibold text-neutral-900">
+                                ${money(cuenta.saldo_usd ?? 0)}
+                              </p>
+                              <p className="text-xs text-neutral-500">
+                                {money(cuenta.saldo_bs ?? 0)} Bs
+                              </p>
+                              {(cuenta.bloqueado_usd ?? 0) > 0 && (
+                                <p className="mt-1 text-xs text-amber-700">
+                                  Disponible ${money(cuenta.disponible_usd ?? 0)} · $
+                                  {money(cuenta.bloqueado_usd ?? 0)} en fianza
+                                </p>
+                              )}
+                            </div>
+                          </div>
 
-                      {/*
+                          {/*
                         La libreta, como la lee el personal en el sistema
                         actual: item, fecha, documento, importe y el saldo con
                         el que quedo la cuenta. El cajero digital se marca
                         aparte, que es lo que alli se ve como CAJ_DIG.
                       */}
-                      {(cuenta.movimientos_recientes?.length ?? 0) > 0 && (
-                        <div className="mt-3 overflow-x-auto border-t border-neutral-100 pt-2">
-                          <table className="min-w-full text-xs">
-                            <thead>
-                              <tr className="text-[10px] uppercase tracking-wide text-neutral-400">
-                                <th className="py-1 pr-3 text-left font-medium">Item</th>
-                                <th className="py-1 pr-3 text-left font-medium">Fecha</th>
-                                <th className="py-1 pr-3 text-left font-medium">Doc.</th>
-                                <th className="py-1 pr-3 text-left font-medium">Tipo</th>
-                                <th className="py-1 pr-3 text-right font-medium">Monto Bs</th>
-                                <th className="py-1 text-right font-medium">Saldo Bs</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {cuenta.movimientos_recientes!.map((m) => (
-                                <tr key={m.id} className="border-t border-neutral-50">
-                                  <td className="py-1 pr-3 tabular-nums text-neutral-500">{m.item}</td>
-                                  <td className="whitespace-nowrap py-1 pr-3 text-neutral-600">
-                                    {new Date(m.fecha).toLocaleDateString('es-VE')}
-                                  </td>
-                                  <td className="whitespace-nowrap py-1 pr-3">
-                                    {m.canal === 'digital' ? (
-                                      <span className="rounded bg-primary-50 px-1.5 py-0.5 font-medium text-primary-700">
-                                        CAJ_DIG
-                                      </span>
-                                    ) : (
-                                      <span className="text-neutral-500">{m.documento}</span>
-                                    )}
-                                  </td>
-                                  <td className="py-1 pr-3 text-neutral-600">{m.tipo}</td>
-                                  <td className="py-1 pr-3 text-right tabular-nums font-medium text-neutral-800">
-                                    {money(m.monto_bs)}
-                                  </td>
-                                  <td className="py-1 text-right tabular-nums text-neutral-600">
-                                    {money(m.saldo_bs)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
-
-            {/* PRESTAMOS: abonar es voluntario y va aparte del paquete */}
-            {prestamos.length > 0 && (
-              <Card padding="none" className="overflow-hidden">
-                <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
-                  <DollarSign className="h-4 w-4 text-emerald-600" />
-                  <h3 className="text-sm font-semibold text-neutral-800">Prestamos</h3>
-                  <span className="text-xs text-neutral-500">
-                    ({prestamos.length}) · abono voluntario
-                  </span>
-                </div>
-
-                <div className="divide-y divide-neutral-100">
-                  {prestamos.map((prestamo) => {
-                    const clave = claveCobrable(prestamo)
-                    const linea = lineas[clave]
-                    const marcado = Boolean(linea)
-
-                    return (
-                      <div
-                        key={clave}
-                        className={`px-5 py-4 transition ${marcado ? 'bg-primary-50/40' : ''}`}
-                      >
-                        <div className="flex flex-wrap items-start gap-4">
-                          <input
-                            type="checkbox"
-                            checked={marcado}
-                            onChange={() => alternarLinea(prestamo)}
-                            className="mt-1 h-5 w-5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
-                          />
-
-                          <div className="min-w-[200px] flex-1">
-                            <p className="text-sm font-medium text-neutral-900">
-                              {prestamo.categoria ?? prestamo.titulo}
-                            </p>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-                              <span className="font-mono">{prestamo.numero_pagare ?? '—'}</span>
-                              {/* La moneda va aparte de la categoria: en el
-                                  sistema actual son dos campos distintos, y eso
-                                  resuelve la duda de si "divisa" era un tipo de
-                                  prestamo (no lo es, es la moneda). */}
-                              <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700">
-                                {prestamo.moneda === 'USD' ? 'Divisas' : 'Bolivares'}
-                              </span>
-                              <span>
-                                Otorgado{' '}
-                                {prestamo.fecha_desembolso
-                                  ? new Date(prestamo.fecha_desembolso).toLocaleDateString('es-VE')
-                                  : '—'}
-                              </span>
-                              {/* El dato por el que hoy hay que abrir otra
-                                  pantalla: cuando pago por ultima vez */}
-                              {prestamo.fecha_ultimo_abono ? (
-                                <span className="font-medium text-neutral-700">
-                                  Ultimo abono{' '}
-                                  {new Date(prestamo.fecha_ultimo_abono).toLocaleDateString('es-VE')}
-                                </span>
-                              ) : (
-                                <span className="text-amber-700">Sin abonos</span>
-                              )}
-                            </div>
-
-                            {/* Monto, abonado y saldo en LAS DOS monedas, como
-                                en el sistema actual, y en columnas alineadas
-                                para que no se amontonen ni se corten. */}
-                            <div className="mt-2 overflow-x-auto">
+                          {(cuenta.movimientos_recientes?.length ?? 0) > 0 && (
+                            <div className="mt-3 overflow-x-auto border-t border-neutral-100 pt-2">
                               <table className="min-w-full text-xs">
                                 <thead>
                                   <tr className="text-[10px] uppercase tracking-wide text-neutral-400">
-                                    <th className="py-1 pr-3 text-left font-medium"></th>
-                                    <th className="py-1 pr-4 text-right font-medium">Bs</th>
-                                    <th className="py-1 text-right font-medium">USD</th>
+                                    <th className="py-1 pr-3 text-left font-medium">Item</th>
+                                    <th className="py-1 pr-3 text-left font-medium">Fecha</th>
+                                    <th className="py-1 pr-3 text-left font-medium">Doc.</th>
+                                    <th className="py-1 pr-3 text-left font-medium">Tipo</th>
+                                    <th className="py-1 pr-3 text-right font-medium">Monto Bs</th>
+                                    <th className="py-1 text-right font-medium">Saldo Bs</th>
                                   </tr>
                                 </thead>
-                                <tbody className="tabular-nums">
-                                  <tr>
-                                    <td className="py-0.5 pr-3 text-neutral-500">Monto</td>
-                                    <td className="py-0.5 pr-4 text-right text-neutral-700">
-                                      {money(prestamo.monto_original_bs ?? 0)}
-                                    </td>
-                                    <td className="py-0.5 text-right text-neutral-700">
-                                      {money(prestamo.monto_original_usd ?? 0)}
-                                    </td>
-                                  </tr>
-                                  <tr>
-                                    <td className="py-0.5 pr-3 text-neutral-500">Abonado</td>
-                                    <td className="py-0.5 pr-4 text-right text-neutral-700">
-                                      {money(prestamo.abonado_bs ?? 0)}
-                                    </td>
-                                    <td className="py-0.5 text-right text-neutral-700">
-                                      {money(prestamo.abonado_usd ?? 0)}
-                                    </td>
-                                  </tr>
-                                  <tr className="border-t border-neutral-100">
-                                    <td className="py-0.5 pr-3 font-medium text-neutral-700">Saldo</td>
-                                    <td className="py-0.5 pr-4 text-right font-semibold text-neutral-900">
-                                      {money(prestamo.saldo_bs ?? 0)}
-                                    </td>
-                                    <td className="py-0.5 text-right font-semibold text-neutral-900">
-                                      {money(prestamo.saldo_usd ?? 0)}
-                                    </td>
-                                  </tr>
-                                  {(prestamo.saldo_mora_usd ?? 0) > 0 && (
-                                    <tr>
-                                      <td className="py-0.5 pr-3 text-error-600">Mora</td>
-                                      <td className="py-0.5 pr-4 text-right text-error-600">—</td>
-                                      <td className="py-0.5 text-right font-medium text-error-600">
-                                        {money(prestamo.saldo_mora_usd ?? 0)}
+                                <tbody>
+                                  {cuenta.movimientos_recientes!.map((m) => (
+                                    <tr key={m.id} className="border-t border-neutral-50">
+                                      <td className="py-1 pr-3 tabular-nums text-neutral-500">
+                                        {m.item}
+                                      </td>
+                                      <td className="whitespace-nowrap py-1 pr-3 text-neutral-600">
+                                        {new Date(m.fecha).toLocaleDateString('es-VE')}
+                                      </td>
+                                      <td className="whitespace-nowrap py-1 pr-3">
+                                        {m.canal === 'digital' ? (
+                                          <span className="rounded bg-primary-50 px-1.5 py-0.5 font-medium text-primary-700">
+                                            CAJ_DIG
+                                          </span>
+                                        ) : (
+                                          <span className="text-neutral-500">{m.documento}</span>
+                                        )}
+                                      </td>
+                                      <td className="py-1 pr-3 text-neutral-600">{m.tipo}</td>
+                                      <td className="py-1 pr-3 text-right tabular-nums font-medium text-neutral-800">
+                                        {money(m.monto_bs)}
+                                      </td>
+                                      <td className="py-1 text-right tabular-nums text-neutral-600">
+                                        {money(m.saldo_bs)}
                                       </td>
                                     </tr>
-                                  )}
+                                  ))}
                                 </tbody>
                               </table>
                             </div>
-                          </div>
-
-                          {marcado && (
-                            <div className="flex flex-wrap items-end gap-3">
-                              <label className="text-xs font-medium text-neutral-600">
-                                <span className="mb-1 block">Abono USD</span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min={0}
-                                  value={linea!.monto_usd}
-                                  onChange={(e) => cambiarMonto(prestamo, e.target.value)}
-                                  className="w-32 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
-                                />
-                              </label>
-                              <div className="pb-2 text-xs tabular-nums text-neutral-500">
-                                = {money((parseFloat(linea!.monto_usd) || 0) * (tasa ?? 0))} Bs
-                              </div>
-                            </div>
                           )}
                         </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </Card>
-            )}
+                      ))}
+                    </div>
+                  </OpcionesColecta>
+                )}
 
-            {/* REINTEGROS: solo tienen sentido en acuerdos suspendidos */}
-            {suspendidos.length > 0 && (
-              <Card padding="none" className="overflow-hidden">
-                <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-5 py-3">
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                  <h3 className="text-sm font-semibold text-amber-900">Acuerdos suspendidos</h3>
-                </div>
+                {/* PRESTAMOS: abonar es voluntario y va aparte del paquete */}
+                {prestamos.length > 0 && (
+                  <OpcionesColecta
+                    key={`Abonar a préstamos-${socio.id}`}
+                    titulo="Abonar a préstamos"
+                    resumen={`${prestamos.length} préstamo(s) · ${totalVoluntario > 0 ? `$${money(totalVoluntario)} en abonos incluidos` : 'Seleccione un préstamo para agregar un abono'}`}
+                  >
+                    <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
+                      <DollarSign className="h-4 w-4 text-emerald-600" />
+                      <h3 className="text-sm font-semibold text-neutral-800">Prestamos</h3>
+                      <span className="text-xs text-neutral-500">
+                        ({prestamos.length}) · abono voluntario
+                      </span>
+                    </div>
 
-                <div className="divide-y divide-neutral-100">
-                  {suspendidos.map((cobrable) => {
-                    const clave = claveCobrable(cobrable)
-                    return (
-                      <div key={clave} className="flex flex-wrap items-end gap-3 px-5 py-4">
-                        <div className="min-w-[200px] flex-1">
-                          <p className="text-sm font-medium text-neutral-900">
-                            {etiquetaServicio(cobrable.tipo)} · {cobrable.titulo}
-                          </p>
-                          <p className="text-xs text-neutral-500">{cobrable.detalle}</p>
-                        </div>
-                        <label className="text-xs font-medium text-amber-900">
-                          <span className="mb-1 block">Reintegro (USD)</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min={0}
-                            value={reintegros[clave] ?? ''}
-                            onChange={(e) =>
-                              setReintegros((prev) => ({ ...prev, [clave]: e.target.value }))
-                            }
-                            placeholder="0.00"
-                            className="w-32 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                          />
-                        </label>
-                        <p className="pb-2 text-xs text-amber-800">
-                          Cargo por reactivar. No cubre semanas de atraso.
-                        </p>
-                      </div>
-                    )
-                  })}
-                </div>
-              </Card>
-            )}
-          </div>
+                    <div className="divide-y divide-neutral-100">
+                      {prestamos.map((prestamo) => {
+                        const clave = claveCobrable(prestamo)
+                        const linea = lineas[clave]
+                        const marcado = Boolean(linea)
 
-          {/* Columna derecha: el total, siempre a la vista */}
-          <div className="lg:sticky lg:top-20 lg:self-start">
-            <Card className="p-5">
-              <div className="flex items-center gap-2">
-                <Calculator className="h-5 w-5 text-primary-600" />
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-                  Total a cobrar
-                </h3>
+                        return (
+                          <div
+                            key={clave}
+                            className={`px-5 py-4 transition ${marcado ? 'bg-primary-50/40' : ''}`}
+                          >
+                            <div className="flex flex-wrap items-start gap-4">
+                              <input
+                                type="checkbox"
+                                aria-label={`Agregar abono a ${prestamo.categoria ?? prestamo.titulo}, pagaré ${prestamo.numero_pagare ?? 'sin número'}`}
+                                checked={marcado}
+                                onChange={() => alternarLinea(prestamo)}
+                                className="mt-1 h-5 w-5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                              />
+
+                              <div className="min-w-[200px] flex-1">
+                                <p className="text-sm font-medium text-neutral-900">
+                                  {prestamo.categoria ?? prestamo.titulo}
+                                </p>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+                                  <span className="font-mono">{prestamo.numero_pagare ?? '—'}</span>
+                                  {/* La moneda va aparte de la categoria: en el
+                                  sistema actual son dos campos distintos, y eso
+                                  resuelve la duda de si "divisa" era un tipo de
+                                  prestamo (no lo es, es la moneda). */}
+                                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700">
+                                    {prestamo.moneda === 'USD' ? 'Divisas' : 'Bolivares'}
+                                  </span>
+                                  <span>
+                                    Otorgado{' '}
+                                    {prestamo.fecha_desembolso
+                                      ? new Date(prestamo.fecha_desembolso).toLocaleDateString(
+                                          'es-VE'
+                                        )
+                                      : '—'}
+                                  </span>
+                                  {/* El dato por el que hoy hay que abrir otra
+                                  pantalla: cuando pago por ultima vez */}
+                                  {prestamo.fecha_ultimo_abono ? (
+                                    <span className="font-medium text-neutral-700">
+                                      Ultimo abono{' '}
+                                      {new Date(prestamo.fecha_ultimo_abono).toLocaleDateString(
+                                        'es-VE'
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-700">Sin abonos</span>
+                                  )}
+                                </div>
+
+                                {/* Monto, abonado y saldo en LAS DOS monedas, como
+                                en el sistema actual, y en columnas alineadas
+                                para que no se amontonen ni se corten. */}
+                                <div className="mt-2 overflow-x-auto">
+                                  <table className="min-w-full text-xs">
+                                    <thead>
+                                      <tr className="text-[10px] uppercase tracking-wide text-neutral-400">
+                                        <th className="py-1 pr-3 text-left font-medium"></th>
+                                        <th className="py-1 pr-4 text-right font-medium">Bs</th>
+                                        <th className="py-1 text-right font-medium">USD</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="tabular-nums">
+                                      <tr>
+                                        <td className="py-0.5 pr-3 text-neutral-500">Monto</td>
+                                        <td className="py-0.5 pr-4 text-right text-neutral-700">
+                                          {money(prestamo.monto_original_bs ?? 0)}
+                                        </td>
+                                        <td className="py-0.5 text-right text-neutral-700">
+                                          {money(prestamo.monto_original_usd ?? 0)}
+                                        </td>
+                                      </tr>
+                                      <tr>
+                                        <td className="py-0.5 pr-3 text-neutral-500">Abonado</td>
+                                        <td className="py-0.5 pr-4 text-right text-neutral-700">
+                                          {money(prestamo.abonado_bs ?? 0)}
+                                        </td>
+                                        <td className="py-0.5 text-right text-neutral-700">
+                                          {money(prestamo.abonado_usd ?? 0)}
+                                        </td>
+                                      </tr>
+                                      <tr className="border-t border-neutral-100">
+                                        <td className="py-0.5 pr-3 font-medium text-neutral-700">
+                                          Saldo
+                                        </td>
+                                        <td className="py-0.5 pr-4 text-right font-semibold text-neutral-900">
+                                          {money(prestamo.saldo_bs ?? 0)}
+                                        </td>
+                                        <td className="py-0.5 text-right font-semibold text-neutral-900">
+                                          {money(prestamo.saldo_usd ?? 0)}
+                                        </td>
+                                      </tr>
+                                      {(prestamo.saldo_mora_usd ?? 0) > 0 && (
+                                        <tr>
+                                          <td className="py-0.5 pr-3 text-error-600">Mora</td>
+                                          <td className="py-0.5 pr-4 text-right text-error-600">
+                                            —
+                                          </td>
+                                          <td className="py-0.5 text-right font-medium text-error-600">
+                                            {money(prestamo.saldo_mora_usd ?? 0)}
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              {marcado && (
+                                <div className="flex flex-wrap items-end gap-3">
+                                  <label className="text-xs font-medium text-neutral-600">
+                                    <span className="mb-1 block">Abono USD</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min={0}
+                                      value={linea!.monto_usd}
+                                      onChange={(e) => cambiarMonto(prestamo, e.target.value)}
+                                      className="w-32 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                                    />
+                                  </label>
+                                  <div className="pb-2 text-xs tabular-nums text-neutral-500">
+                                    = {money((parseFloat(linea!.monto_usd) || 0) * (tasa ?? 0))} Bs
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </OpcionesColecta>
+                )}
+
+                {/* REINTEGROS: solo tienen sentido en acuerdos suspendidos */}
+                {suspendidos.length > 0 && (
+                  <Card padding="none" className="overflow-hidden">
+                    <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-5 py-3">
+                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <h3 className="text-sm font-semibold text-amber-900">Acuerdos suspendidos</h3>
+                    </div>
+
+                    <div className="divide-y divide-neutral-100">
+                      {suspendidos.map((cobrable) => {
+                        const clave = claveCobrable(cobrable)
+                        return (
+                          <div key={clave} className="flex flex-wrap items-end gap-3 px-5 py-4">
+                            <div className="min-w-[200px] flex-1">
+                              <p className="text-sm font-medium text-neutral-900">
+                                {etiquetaServicio(cobrable.tipo)} · {cobrable.titulo}
+                              </p>
+                              <p className="text-xs text-neutral-500">{cobrable.detalle}</p>
+                            </div>
+                            <label className="text-xs font-medium text-amber-900">
+                              <span className="mb-1 block">Reintegro (USD)</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min={0}
+                                value={reintegros[clave] ?? ''}
+                                onChange={(e) =>
+                                  setReintegros((prev) => ({
+                                    ...prev,
+                                    [clave]: e.target.value,
+                                  }))
+                                }
+                                placeholder="0.00"
+                                className="w-32 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                              />
+                            </label>
+                            <p className="pb-2 text-xs text-amber-800">
+                              Cargo por reactivar. No cubre semanas de atraso.
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </Card>
+                )}
               </div>
 
-              <p className="mt-4 text-4xl font-bold text-neutral-900">${money(totalUsd)}</p>
-              <p className="mt-1 text-lg text-neutral-600">{money(totalBs)} Bs</p>
-              <p className="mt-1 text-xs text-neutral-500">
-                {cantidadLineas} concepto(s) · {semanas} semana(s) · tasa {money(tasa ?? 0, 4)}
-              </p>
+              {/* Columna derecha: el total, siempre a la vista */}
+              <div className="lg:sticky lg:top-20 lg:self-start">
+                <Card className="p-5">
+                  <div className="flex items-center gap-2">
+                    <Calculator className="h-5 w-5 text-primary-600" />
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+                      Revisar y cobrar
+                    </h3>
+                  </div>
 
-              {/*
+                  <p className="mt-4 break-words text-3xl font-bold tabular-nums text-neutral-900">
+                    ${money(totalUsd)}
+                  </p>
+                  <p className="mt-1 text-lg text-neutral-600">{money(totalBs)} Bs</p>
+                  <p className="mt-1 text-xs text-neutral-500">
+                    {cantidadLineas} concepto(s) · {semanas} semana(s) · tasa {money(tasa ?? 0, 4)}
+                  </p>
+
+                  {/*
                 Desglose por concepto. Los subtotales de ahorro, funeraria y
                 salud salen del paquete que calculo el backend, asi que la
                 pantalla no puede mostrar un numero y cobrar otro.
               */}
-              <div className="mt-4 space-y-2 border-t border-neutral-200 pt-4">
-                {paquete &&
-                  (
-                    [
-                      ['ahorro', paquete.totales.ahorro_usd, paquete.totales.ahorro_bs],
-                      ['funeraria', paquete.totales.funeraria_usd, paquete.totales.funeraria_bs],
-                      ['salud', paquete.totales.salud_usd, paquete.totales.salud_bs],
-                    ] as const
-                  ).map(([tipo, usd, bs]) => {
-                    if (usd === 0) return null
-                    return (
-                      <div key={tipo} className="rounded-lg bg-neutral-50 px-3 py-2">
+                  <div className="mt-4 space-y-2 border-t border-neutral-200 pt-4">
+                    {paquete &&
+                      (
+                        [
+                          ['ahorro', paquete.totales.ahorro_usd, paquete.totales.ahorro_bs],
+                          [
+                            'funeraria',
+                            paquete.totales.funeraria_usd,
+                            paquete.totales.funeraria_bs,
+                          ],
+                          ['salud', paquete.totales.salud_usd, paquete.totales.salud_bs],
+                        ] as const
+                      ).map(([tipo, usd, bs]) => {
+                        if (usd === 0) return null
+                        return (
+                          <div key={tipo} className="rounded-lg bg-neutral-50 px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="flex items-center gap-1.5 text-sm font-medium text-neutral-800">
+                                {iconoServicio(tipo)}
+                                {etiquetaServicio(tipo)}
+                              </span>
+                              <span className="text-sm font-semibold tabular-nums text-neutral-900">
+                                ${money(usd)}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-xs tabular-nums text-neutral-500">
+                              {money(bs)} Bs · {semanas} semana(s)
+                              {tipo === 'ahorro' && adicional > 0
+                                ? ` · incluye $${money(adicional)} adicional`
+                                : ''}
+                            </p>
+                          </div>
+                        )
+                      })}
+
+                    {/* Abonos a prestamo: voluntarios, fuera del paquete semanal */}
+                    {totalVoluntario > 0 && (
+                      <div className="rounded-lg bg-neutral-50 px-3 py-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="flex items-center gap-1.5 text-sm font-medium text-neutral-800">
-                            {iconoServicio(tipo)}
-                            {etiquetaServicio(tipo)}
+                            {iconoServicio('prestamo')}
+                            {etiquetaServicio('prestamo')}
                           </span>
                           <span className="text-sm font-semibold tabular-nums text-neutral-900">
-                            ${money(usd)}
+                            ${money(totalVoluntario)}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-xs tabular-nums text-neutral-500">
-                          {money(bs)} Bs · {semanas} semana(s)
-                          {tipo === 'ahorro' && adicional > 0
-                            ? ` · incluye $${money(adicional)} adicional`
-                            : ''}
+                        <p className="mt-0.5 text-xs text-neutral-500">Abono voluntario</p>
+                      </div>
+                    )}
+
+                    {totalReintegros > 0 && (
+                      <div className="rounded-lg bg-amber-50 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-amber-900">Reintegros</span>
+                          <span className="text-sm font-semibold tabular-nums text-amber-900">
+                            ${money(totalReintegros)}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-amber-700">
+                          Reactivacion de acuerdos suspendidos
                         </p>
                       </div>
-                    )
-                  })}
+                    )}
 
-                {/* Abonos a prestamo: voluntarios, fuera del paquete semanal */}
-                {totalVoluntario > 0 && (
-                  <div className="rounded-lg bg-neutral-50 px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 text-sm font-medium text-neutral-800">
-                        {iconoServicio('prestamo')}
-                        {etiquetaServicio('prestamo')}
-                      </span>
-                      <span className="text-sm font-semibold tabular-nums text-neutral-900">
-                        ${money(totalVoluntario)}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-neutral-500">Abono voluntario</p>
+                    {totalUsd === 0 && (
+                      <p className="text-sm text-neutral-400">Indique las semanas a cobrar</p>
+                    )}
                   </div>
-                )}
 
-                {totalReintegros > 0 && (
-                  <div className="rounded-lg bg-amber-50 px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-amber-900">Reintegros</span>
-                      <span className="text-sm font-semibold tabular-nums text-amber-900">
-                        ${money(totalReintegros)}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-amber-700">Reactivacion de acuerdos suspendidos</p>
-                  </div>
-                )}
+                  <label className="mt-4 block text-xs font-medium text-neutral-600">
+                    <span className="mb-1 block">Observaciones</span>
+                    <textarea
+                      value={observaciones}
+                      onChange={(e) => setObservaciones(e.target.value)}
+                      rows={2}
+                      className={`${controlClass} resize-y`}
+                      placeholder="Opcional"
+                    />
+                  </label>
 
-                {totalUsd === 0 && (
-                  <p className="text-sm text-neutral-400">Indique las semanas a cobrar</p>
-                )}
+                  <Button
+                    ref={botonCobrar}
+                    onClick={() => void cobrar()}
+                    disabled={
+                      !puedeCobrar || totalUsd <= 0 || cobrando || calculandoPaquete || !paquete
+                    }
+                    className="mt-4 w-full justify-center py-3 text-base"
+                  >
+                    {cobrando ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Receipt className="h-5 w-5" />
+                    )}
+                    {cobrando
+                      ? 'Registrando...'
+                      : calculandoPaquete
+                        ? 'Calculando total…'
+                        : `Registrar cobro · $${money(totalUsd)}`}
+                  </Button>
+
+                  {!puedeCobrar && (
+                    <p className="mt-2 text-center text-xs text-neutral-500">
+                      Su usuario no tiene permiso para cobrar
+                    </p>
+                  )}
+                </Card>
               </div>
-
-              <label className="mt-4 block text-xs font-medium text-neutral-600">
-                <span className="mb-1 block">Observaciones</span>
-                <textarea
-                  value={observaciones}
-                  onChange={(e) => setObservaciones(e.target.value)}
-                  rows={2}
-                  className={`${controlClass} resize-y`}
-                  placeholder="Opcional"
-                />
-              </label>
-
-              <Button
-                ref={botonCobrar}
-                onClick={() => void cobrar()}
-                disabled={!puedeCobrar || totalUsd <= 0 || cobrando}
-                className="mt-4 w-full justify-center py-3 text-base"
-              >
-                {cobrando ? <Loader2 className="h-5 w-5 animate-spin" /> : <Receipt className="h-5 w-5" />}
-                {cobrando ? 'Registrando...' : `Cobrar $${money(totalUsd)}`}
-              </Button>
-
-              {!puedeCobrar && (
-                <p className="mt-2 text-center text-xs text-neutral-500">
-                  Su usuario no tiene permiso para cobrar
-                </p>
-              )}
-            </Card>
-          </div>
-        </div>
-      )}
-
-      </>
+            </div>
+          )}
+        </>
       )}
 
       {/* MODAL: CIERRE DE CAJA */}
@@ -1291,14 +1413,30 @@ export default function ColectaPage() {
             <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
               <div className="space-y-2">
                 {[
-                  { label: 'Ahorro', usd: previoCierre.totales.ahorro_usd, bs: previoCierre.totales.ahorro_bs },
-                  { label: 'Funeraria', usd: previoCierre.totales.funeraria_usd, bs: previoCierre.totales.funeraria_bs },
-                  { label: 'Salud', usd: previoCierre.totales.salud_usd, bs: previoCierre.totales.salud_bs },
+                  {
+                    label: 'Ahorro',
+                    usd: previoCierre.totales.ahorro_usd,
+                    bs: previoCierre.totales.ahorro_bs,
+                  },
+                  {
+                    label: 'Funeraria',
+                    usd: previoCierre.totales.funeraria_usd,
+                    bs: previoCierre.totales.funeraria_bs,
+                  },
+                  {
+                    label: 'Salud',
+                    usd: previoCierre.totales.salud_usd,
+                    bs: previoCierre.totales.salud_bs,
+                  },
                 ].map((fila) => (
-                  <div key={fila.label} className="flex items-center justify-between rounded-lg bg-neutral-50 px-4 py-2.5">
+                  <div
+                    key={fila.label}
+                    className="flex items-center justify-between rounded-lg bg-neutral-50 px-4 py-2.5"
+                  >
                     <span className="text-sm text-neutral-700">{fila.label}</span>
                     <span className="text-sm font-medium text-neutral-900">
-                      ${money(fila.usd)} <span className="text-neutral-400">·</span> {money(fila.bs)} Bs
+                      ${money(fila.usd)} <span className="text-neutral-400">·</span>{' '}
+                      {money(fila.bs)} Bs
                     </span>
                   </div>
                 ))}
@@ -1327,7 +1465,10 @@ export default function ColectaPage() {
 
               <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                <p>El cierre no se puede deshacer. Las colectas siguientes contaran para el proximo cierre.</p>
+                <p>
+                  El cierre no se puede deshacer. Las colectas siguientes contaran para el proximo
+                  cierre.
+                </p>
               </div>
             </div>
 
@@ -1336,7 +1477,11 @@ export default function ColectaPage() {
                 Cancelar
               </Button>
               <Button onClick={() => void confirmarCierre()} disabled={cerrando}>
-                {cerrando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                {cerrando ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Lock className="h-4 w-4" />
+                )}
                 Confirmar cierre
               </Button>
             </div>
