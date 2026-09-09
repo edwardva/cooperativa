@@ -12,6 +12,7 @@ import {
   reporteFunerariaSuspendidos,
   reporteSaludSuspendidos,
   reporteSaludAcuerdos,
+  reporteSaludGrupos,
   listarTiposReportes,
 } from '../controllers/reportesController';
 import { authenticate } from '../middleware/authenticate';
@@ -74,6 +75,18 @@ router.post(
   '/salud-acuerdos',
   authorize('reportes', 'export'),
   reporteSaludAcuerdos
+);
+
+/**
+ * POST /api/reportes/salud-grupos
+ * Generar reporte Excel de acuerdos de salud agrupados por tipo (activos,
+ * suspendidos, próximos a suspender)
+ * Permiso: reportes:export
+ */
+router.post(
+  '/salud-grupos',
+  authorize('reportes', 'export'),
+  reporteSaludGrupos
 );
 
 export default router;

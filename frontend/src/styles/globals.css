@@ -80,3 +80,19 @@
     text-wrap: balance;
   }
 }
+
+/*
+ * Documentos imprimibles vía React Portal (ver components/print/): en vez de
+ * ocultar el resto de la app con "visibility: hidden" (que sigue ocupando
+ * espacio en el flujo y hacía que el motor de paginación del navegador
+ * generara una página extra casi en blanco al final, con el título del
+ * documento y la fecha como encabezado/pie nativos del navegador), estos
+ * componentes se montan como hermanos de #root en document.body y esta
+ * regla oculta #root por completo (display:none, sin reservar espacio)
+ * mientras alguno esté activo.
+ */
+@media print {
+  body.print-portal-active #root {
+    display: none !important;
+  }
+}

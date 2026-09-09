@@ -169,18 +169,31 @@ async function importarCuentas(cuentasCSV: CuentaCSV[], tiposPorCodigo: Map<stri
                 continue;
             }
             
-            // 2. Buscar socio por cédula
-            const socio = await prisma.socio.findUnique({
+            // 2. Buscar socio por cédula (no es @unique en el esquema actual:
+            // una misma persona puede tener varios expedientes/socios a lo
+            // largo del tiempo). Si hay varios, se prefiere el expediente
+            // activo en vez de tomar el primero que devuelva la base al azar
+            // (findFirst sin orderBy no da ninguna garantía de cuál es),
+            // para no terminar asociando la cuenta al expediente equivocado.
+            const candidatos = await prisma.socio.findMany({
                 where: { cedula: cuenta.cedula },
             });
-            
-            if (!socio) {
+
+            if (candidatos.length === 0) {
                 stats.socio_no_encontrado++;
                 if (stats.socio_no_encontrado <= 10) {
                     erroresDetallados.push(`Socio no encontrado: ${cuenta.cedula} - ${cuenta.nombre_completo} - ${cuenta.numero_cuenta}`);
                 }
                 stats.errores++;
                 continue;
+            }
+
+            const socio = candidatos.find((s) => s.estado === 'activo') ?? candidatos[0];
+
+            if (candidatos.length > 1) {
+                erroresDetallados.push(
+                    `Cédula ${cuenta.cedula} tiene ${candidatos.length} expedientes (${candidatos.map((s) => s.codigo_socio).join(', ')}); cuenta ${cuenta.numero_cuenta} asignada al expediente ${socio.codigo_socio} (${socio.estado}). Revisar manualmente si no es el correcto.`
+                );
             }
             
             // 3. Verificar si la cuenta ya existe

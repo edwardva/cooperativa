@@ -162,10 +162,9 @@ model Ubicacion {
   created_at DateTime @default(now())
 
   // Relaciones
-  socios      Socio[]
+  socios            Socio[]
   movimientos_salud MovimientoSalud[]
-  socios    Socio[]
-  asambleas Asamblea[]
+  asambleas         Asamblea[]
 
   @@map("ubicaciones")
 }
@@ -338,21 +337,6 @@ model AcuerdoSalud {
   movimientos          MovimientoSalud[]
 
   @@unique([numero_acuerdo, beneficiario_id])
-  id               Int            @id @default(autoincrement())
-  beneficiario_id  Int
-  tipo_acuerdo_id  Int
-  estado           EstadoServicio @default(activo)
-  semanas_sin_pago Int            @default(0)
-  fecha_suspension DateTime?      @db.Date
-  fecha_inicio     DateTime       @default(now()) @db.Date
-  created_at       DateTime       @default(now())
-  updated_at       DateTime       @updatedAt
-
-  // Relaciones
-  beneficiario Beneficiario      @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
-  tipo_acuerdo TipoAcuerdoSalud  @relation(fields: [tipo_acuerdo_id], references: [id])
-  movimientos  MovimientoSalud[]
-
   @@index([beneficiario_id])
   @@index([estado])
   @@index([numero_acuerdo])
@@ -376,19 +360,6 @@ model MovimientoSalud {
   // Relaciones
   acuerdo           AcuerdoSalud   @relation(fields: [acuerdo_id], references: [id])
   ubicacion         Ubicacion?     @relation(fields: [ubicacion_id], references: [id])
-  id               Int      @id @default(autoincrement())
-  acuerdo_id       Int
-  tipo_movimiento  String   @db.VarChar(20) // pago, suspension, reactivacion
-  monto_usd        Decimal  @db.Decimal(10, 2)
-  monto_bs         Decimal  @db.Decimal(10, 2)
-  tasa_cambio      Decimal  @db.Decimal(10, 4)
-  semanas_pagadas  Int?
-  concepto         String?  @db.Text
-  fecha_movimiento DateTime @default(now())
-  created_at       DateTime @default(now())
-
-  // Relaciones
-  acuerdo AcuerdoSalud @relation(fields: [acuerdo_id], references: [id])
 
   @@index([acuerdo_id])
   @@index([fecha_movimiento])

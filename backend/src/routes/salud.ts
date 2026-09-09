@@ -14,6 +14,7 @@ import {
   obtenerAcuerdosPorSocio,
   obtenerGrupoPorNumeroAcuerdo,
   listarSuspendidosParaImpresion,
+  listarGruposParaImpresion,
   obtenerAcuerdo,
   crearGrupoAcuerdo,
   agregarBeneficiarioAGrupo,
@@ -48,6 +49,7 @@ router.get('/estadisticas', authorize('salud', 'read'), obtenerEstadisticas);
 router.get('/acuerdos', authorize('salud', 'read'), listarAcuerdos);
 router.get('/acuerdos/socio/:socioId', authorize('salud', 'read'), obtenerAcuerdosPorSocio);
 router.get('/acuerdos/suspendidos/listado', authorize('salud', 'read'), listarSuspendidosParaImpresion);
+router.get('/acuerdos/grupos', authorize('salud', 'read'), listarGruposParaImpresion);
 router.get('/acuerdos/grupo/:numeroAcuerdo', authorize('salud', 'read'), obtenerGrupoPorNumeroAcuerdo);
 router.get('/acuerdos/:id', authorize('salud', 'read'), obtenerAcuerdo);
 
