@@ -33,6 +33,19 @@ import { iniciarJobCalendarioColecta } from './jobs/calendarioColecta';
 const app: Application = express();
 
 // ============================================
+// PROXY
+// ============================================
+//
+// En produccion nginx hace de proxy y pasa la IP real en `X-Forwarded-For`.
+// Sin esto Express ve siempre 127.0.0.1, y el rate limit cuenta a TODOS los
+// cajeros como una sola IP: los 100 req/15min quedan compartidos por toda la
+// oficina y un dia movido los bloquea a todos a la vez.
+//
+// El valor es 1 (un unico proxy delante), no `true`: confiar en toda la cadena
+// permitiria a cualquiera falsear su IP mandando su propio X-Forwarded-For.
+app.set('trust proxy', 1);
+
+// ============================================
 // MIDDLEWARE DE SEGURIDAD
 // ============================================
 app.use(helmet());
