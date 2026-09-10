@@ -713,7 +713,9 @@ export const AhorroPage = () => {
   ]);
 
   return (
-    <div className="p-6 space-y-6">
+    // El padding lo pone MainLayout (p-4 sm:p-6). Repetirlo aqui dejaba el
+    // contenido con 80px menos de ancho en un telefono.
+    <div className="space-y-6">
       {/* ============================================ */}
       {/* HEADER */}
       {/* ============================================ */}
@@ -724,7 +726,12 @@ export const AhorroPage = () => {
             Gestión de cuentas de ahorro y movimientos
           </p>
         </div>
-        <div className="flex gap-3">
+        {/*
+          Cinco acciones en una sola fila median 730px y forzaban scroll
+          lateral en movil. En pantalla chica van en rejilla de dos columnas,
+          que entra completa y deja cada boton tocable.
+        */}
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:gap-3">
           <Button
             variant="secondary"
             onClick={() => window.print()}

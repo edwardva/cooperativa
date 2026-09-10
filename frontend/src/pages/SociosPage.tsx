@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   UserX,
+  X,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -934,30 +935,43 @@ export const SociosPage = () => {
         </div>
       </section>
 
+      {/*
+        En un telefono el modal ocupa la pantalla completa: con margenes y
+        esquinas redondeadas se pierden ~40px de alto y otros tantos de ancho
+        que hacen falta para el formulario.
+      */}
       {modalAbierto && (
-        <div className="fixed top-0 left-0 right-0 bottom-0 m-0 z-[100] flex items-center justify-center bg-neutral-900/40 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[100] m-0 flex items-stretch justify-center bg-neutral-900/40 backdrop-blur-sm sm:items-center sm:p-4">
           <Card
             padding="none"
-            className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden border-neutral-200"
+            className="flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-none border-neutral-200 sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-2xl"
           >
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 bg-white px-6 py-4">
-              <div>
-                <h2 className="text-2xl font-semibold text-neutral-900">
+            {/*
+              La cabecera se comprime en movil: el titulo baja de tamano, la
+              descripcion se oculta (es de ayuda, no de uso) y "Cerrar" pasa a
+              ser un icono. Antes ocupaba una quinta parte de la pantalla y
+              empujaba los campos fuera de la vista.
+            */}
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-200 bg-white px-4 py-3 sm:px-6 sm:py-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-semibold text-neutral-900 sm:text-2xl">
                   {modoEdicion ? `Editar socio ${socioSeleccionado?.codigo_socio ?? ''}` : 'Nuevo socio'}
                 </h2>
-                <p className="mt-1 text-sm text-neutral-500">
+                <p className="mt-1 hidden text-sm text-neutral-500 sm:block">
                   Completa los datos principales para que aparezcan en listados de ahorro y reportes.
                 </p>
               </div>
               <button
                 onClick={() => setModalAbierto(false)}
-                className="rounded-lg border border-neutral-200 px-3 py-1.5 text-sm text-neutral-600 transition hover:bg-neutral-50"
+                aria-label="Cerrar"
+                className="flex-shrink-0 rounded-lg border border-neutral-200 p-2 text-neutral-600 transition hover:bg-neutral-50 sm:px-3 sm:py-1.5"
               >
-                Cerrar
+                <X className="h-4 w-4 sm:hidden" />
+                <span className="hidden text-sm sm:inline">Cerrar</span>
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
               <div className="grid grid-cols-1 gap-5">
               {/* Fila 1: Datos principales + Foto */}
               <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -1185,18 +1199,30 @@ export const SociosPage = () => {
               </div>
             </div>
 
-            <div className="border-t border-neutral-200 bg-white px-6 py-4">
+            <div className="border-t border-neutral-200 bg-white px-4 py-3 sm:px-6 sm:py-4">
               {errorFormulario && (
                 <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {errorFormulario}
                 </div>
               )}
 
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button variant="ghost" onClick={() => setModalAbierto(false)}>
+              {/*
+                En movil los botones ocupan el ancho completo y se apilan con
+                `flex-col-reverse`, que deja Guardar arriba y Cancelar debajo
+                sin alterar el orden del DOM: en escritorio la fila sigue
+                siendo Cancelar a la izquierda y Guardar a la derecha.
+              */}
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                <Button
+                  variant="ghost"
+                  onClick={() => setModalAbierto(false)}
+                  className="w-full sm:w-auto"
+                >
                   Cancelar
                 </Button>
-                <Button onClick={guardarSocio}>{modoEdicion ? 'Actualizar socio' : 'Guardar socio'}</Button>
+                <Button onClick={guardarSocio} className="w-full sm:w-auto">
+                  {modoEdicion ? 'Actualizar socio' : 'Guardar socio'}
+                </Button>
               </div>
             </div>
           </Card>

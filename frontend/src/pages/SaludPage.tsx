@@ -1345,7 +1345,9 @@ const handleSort = (field: string) => {
   // RENDER
   // ============================================
   return (
-    <div className="p-6 space-y-6">
+    // El padding lo pone MainLayout (p-4 sm:p-6); repetirlo aqui reducia el
+    // ancho util en un telefono.
+    <div className="space-y-6">
       {/* HEADER */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -1507,7 +1509,13 @@ const handleSort = (field: string) => {
       {/* TABS + BÚSQUEDA */}
       <Card className="p-4">
         <div className="flex flex-col md:flex-row md:items-center gap-3">
-          <div className="flex gap-1 rounded-lg bg-neutral-100 p-1">
+          {/*
+              Cuatro pestanas no entran en el ancho de un telefono: median
+              492px. Se deslizan en horizontal, que es el gesto esperado en
+              una tira de filtros, en vez de partirse en dos lineas.
+            */}
+            <div className="-mx-1 overflow-x-auto px-1 md:mx-0 md:px-0">
+              <div className="flex w-max gap-1 rounded-lg bg-neutral-100 p-1 md:w-auto">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -1521,9 +1529,10 @@ const handleSort = (field: string) => {
               >
                 {t.label}
                 {t.count !== undefined && <span className="rounded-full bg-neutral-200/70 px-1.5 text-xs">{t.count}</span>}
-              </button>
-            ))}
-          </div>
+                </button>
+              ))}
+              </div>
+            </div>
 
           <div className="flex-1 min-w-[220px]">
             <div className="relative">
