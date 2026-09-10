@@ -7,7 +7,15 @@
 
 import ExcelJS from 'exceljs';
 import { PrismaClient, Prisma } from '@prisma/client';
-import * as pdfMake from 'pdfmake';
+// `import * as pdfMake` compila a __importStar(), que copia solo las propiedades
+// propias enumerables y pierde setFonts/createPdf: el proceso entra en
+// crash-loop en cuanto se carga este modulo. Con `import = require` se emite un
+// require pelado y el objeto llega intacto.
+//
+// Solo se manifiesta compilado: en local corre con tsx, que resuelve la
+// interoperabilidad de otra forma. Ya tumbo produccion una vez (2026-09-04) y
+// volvio a colarse en un merge, asi que NO cambiar a `import * as`.
+import pdfMake = require('pdfmake');
 import type { TDocumentDefinitions, TableCell, Content } from 'pdfmake/interfaces';
 import * as fs from 'fs';
 import * as path from 'path';
