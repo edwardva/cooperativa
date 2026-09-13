@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   CheckCircle2,
@@ -24,6 +25,9 @@ import * as sociosService from '../services/sociosService'
 import { formatearFecha, normalizarFechaParaInput } from '../utils/formatters'
 import { validarCedula } from '../utils/cedula'
 import { getErrorMessage } from '../services/api'
+import * as personasService from '../services/personasService'
+import type { ResultadoIdentificacion } from '../services/personasService'
+import { useEnterNavigation } from '../hooks/useEnterNavigation'
 
 interface Ubicacion {
   id: number
@@ -143,6 +147,17 @@ const emptyForm = (): SocioFormData => ({
   notas: '',
 })
 
+/** "Ahorrista 00123 (activo) · Trabajador T-000004 (activo, F01)" */
+const resumenExpedientes = (r: ResultadoIdentificacion): string => {
+  const socios = r.persona
+    ? r.persona.socios.map((s) => `Ahorrista ${s.codigo_socio} (${s.estado})`)
+    : r.socios_sin_persona.map((s) => `Ahorrista ${s.codigo_socio} (${s.estado})`)
+  const trabajadores = (r.persona?.trabajadores ?? []).map(
+    (t) => `Trabajador ${t.codigo_trabajador} (${t.estado}${t.feria_actual ? `, ${t.feria_actual.codigo}` : ''})`
+  )
+  return [...socios, ...trabajadores].join(' · ')
+}
+
 export const SociosPage = () => {
   const [socios, setSocios] = useState<Socio[]>([])
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([])
@@ -167,6 +182,10 @@ export const SociosPage = () => {
   const [procesandoRetiro, setProcesandoRetiro] = useState(false)
   const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null)
   const [fotoPreview, setFotoPreview] = useState<string | null>(null)
+  // Fase 2: la cedula se consulta al salir del campo para no duplicar a la persona
+  const [identificacion, setIdentificacion] = useState<ResultadoIdentificacion | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const alEnter = useEnterNavigation()
   
   // Estados de paginación
   const [paginaActual, setPaginaActual] = useState(1)
@@ -367,10 +386,11 @@ export const SociosPage = () => {
     )
   }
 
-  const abrirModalNuevo = () => {
+  const abrirModalNuevo = (cedula = '') => {
     setModoEdicion(false)
     setSocioSeleccionado(null)
-    setFormData(emptyForm())
+    setFormData({ ...emptyForm(), cedula })
+    setIdentificacion(null)
     setFotoPreview(null)
     setErrorFormulario('')
     setModalAbierto(true)
@@ -422,6 +442,49 @@ export const SociosPage = () => {
   const actualizarCampo = (campo: keyof SocioFormData, valor: string | boolean | number | null) => {
     setFormData((prev) => ({ ...prev, [campo]: valor }))
   }
+
+  /**
+   * En un alta, al salir del campo cedula: si la persona ya existe se completan
+   * los campos vacios con sus datos y se muestra que expedientes tiene. Sin
+   * permiso de personas (403) el formulario sigue funcionando como antes.
+   */
+  const consultarCedula = async (cedula = formData.cedula) => {
+    if (modoEdicion) return
+    const revision = validarCedula(cedula)
+    if (!revision.valida) {
+      setIdentificacion(null)
+      return
+    }
+    try {
+      const r = await personasService.buscarPorIdentificacion(revision.cedula)
+      setIdentificacion(r.data)
+      const persona = r.data.persona
+      if (persona) {
+        setFormData((prev) => ({
+          ...prev,
+          nombre: prev.nombre || persona.nombres,
+          apellido: prev.apellido || persona.apellidos,
+          sexo: prev.sexo || persona.sexo || '',
+          fecha_nacimiento: prev.fecha_nacimiento || (persona.fecha_nacimiento?.slice(0, 10) ?? ''),
+          telefono: prev.telefono || persona.telefono || '',
+          email: prev.email || persona.email || '',
+          direccion: prev.direccion || persona.direccion || '',
+        }))
+      }
+    } catch {
+      setIdentificacion(null)
+    }
+  }
+
+  // "Inscribir como ahorrista" desde la ficha del trabajador llega con ?nuevo=1&cedula=
+  useEffect(() => {
+    if (searchParams.get('nuevo') !== '1') return
+    const cedula = searchParams.get('cedula') ?? ''
+    abrirModalNuevo(cedula)
+    void consultarCedula(cedula)
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const manejarCambioFoto = (e: React.ChangeEvent<HTMLInputElement>) => {
     const archivo = e.target.files?.[0]
@@ -502,10 +565,14 @@ export const SociosPage = () => {
       // Se envia normalizada para que "V-12.345.678" y "12345678" no convivan
       const datos = { ...formData, cedula: validarCedula(formData.cedula).cedula }
 
-      if (modoEdicion && socioSeleccionado) {
-        await sociosService.actualizarSocio(socioSeleccionado.id, datos)
-      } else {
-        await sociosService.crearSocio(datos)
+      const respuesta =
+        modoEdicion && socioSeleccionado
+          ? await sociosService.actualizarSocio(socioSeleccionado.id, datos)
+          : await sociosService.crearSocio(datos)
+
+      // Se guardo, pero hay algo que quien atiende tiene que saber
+      if (respuesta.advertencias?.length) {
+        window.alert(`Socio guardado.\n\n${respuesta.advertencias.join('\n\n')}`)
       }
       
       setModalAbierto(false)
@@ -605,7 +672,7 @@ export const SociosPage = () => {
               <Download className="h-4 w-4" />
               Imprimir listado
             </Button>
-            <Button onClick={abrirModalNuevo}>
+            <Button onClick={() => abrirModalNuevo()}>
               <Plus className="h-4 w-4" />
               Nuevo socio
             </Button>
@@ -971,7 +1038,7 @@ export const SociosPage = () => {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5" onKeyDown={alEnter}>
               <div className="grid grid-cols-1 gap-5">
               {/* Fila 1: Datos principales + Foto */}
               <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -993,7 +1060,11 @@ export const SociosPage = () => {
                     <span>Cedula *</span>
                     <input
                       value={formData.cedula}
-                      onChange={(e) => actualizarCampo('cedula', e.target.value.replace(/\D/g, ''))}
+                      onChange={(e) => {
+                        actualizarCampo('cedula', e.target.value.replace(/\D/g, ''))
+                        setIdentificacion(null)
+                      }}
+                      onBlur={() => void consultarCedula()}
                       className={controlClass}
                     />
                   </label>
@@ -1077,6 +1148,23 @@ export const SociosPage = () => {
                     />
                   </label>
                   </div>
+
+                  {identificacion && !modoEdicion && (identificacion.persona || identificacion.socios_sin_persona.length > 0) && (
+                    <div className="space-y-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+                      <p className="font-medium">
+                        {identificacion.persona
+                          ? `Persona ya registrada: ${identificacion.persona.nombres} ${identificacion.persona.apellidos}. Se completan sus datos.`
+                          : 'Esta cedula ya tiene expedientes de socio.'}
+                      </p>
+                      <p>{resumenExpedientes(identificacion)}</p>
+                    </div>
+                  )}
+                  {identificacion && !modoEdicion && identificacion.advertencias_ahorrista.map((aviso) => (
+                    <p key={aviso} className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                      {aviso}
+                    </p>
+                  ))}
                 </div>
 
               {/* Sección de foto - Ocupa 1 columna */}

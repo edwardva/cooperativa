@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { validarCedula } from '../utils/cedula';
 import { registrarAuditoria } from '../services/auditoriaService';
+import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
+import { advertenciasParaAhorrista } from '../services/trabajadoresService';
 
 const prisma = new PrismaClient();
 
@@ -556,46 +558,61 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
     // Convertir foto de base64 a Buffer si se proporciona
     const fotoBuffer = datos.foto ? convertirBase64ABuffer(datos.foto) : null;
 
-    // Crear socio
-    const socio = await prisma.socio.create({
-      data: {
-        codigo_socio: datos.codigo_socio,
-        cedula: datos.cedula,
-        nombre: datos.nombre,
-        apellido: datos.apellido,
-        sexo: datos.sexo,
-        fecha_nacimiento: datos.fecha_nacimiento ? new Date(datos.fecha_nacimiento) : null,
-        direccion: datos.direccion,
-        telefono: datos.telefono,
-        email: datos.email || null,
-        fecha_inscripcion: new Date(datos.fecha_inscripcion),
-        ubicacion_id: datos.ubicacion_id,
-        autorizado_nombre: datos.autorizado_nombre,
-        autorizado_cedula: datos.autorizado_cedula || null,
-        notas: datos.notas,
-        foto_url: datos.foto_url,
-        foto: fotoBuffer,
-        es_delegado: datos.es_delegado || false,
-      },
-      include: {
-        ubicacion: true,
-      },
+    // Socio y persona en la misma transacción (fase 2). La persona se busca por
+    // cédula y se reutiliza; si esa cédula es de alguien con otro nombre no se
+    // vincula y se avisa en la respuesta
+    const { socio, vinculo } = await prisma.$transaction(async (tx) => {
+      const creado = await tx.socio.create({
+        data: {
+          codigo_socio: datos.codigo_socio,
+          cedula: datos.cedula,
+          nombre: datos.nombre,
+          apellido: datos.apellido,
+          sexo: datos.sexo,
+          fecha_nacimiento: datos.fecha_nacimiento ? new Date(datos.fecha_nacimiento) : null,
+          direccion: datos.direccion,
+          telefono: datos.telefono,
+          email: datos.email || null,
+          fecha_inscripcion: new Date(datos.fecha_inscripcion),
+          ubicacion_id: datos.ubicacion_id,
+          autorizado_nombre: datos.autorizado_nombre,
+          autorizado_cedula: datos.autorizado_cedula || null,
+          notas: datos.notas,
+          foto_url: datos.foto_url,
+          foto: fotoBuffer,
+          es_delegado: datos.es_delegado || false,
+        },
+        include: {
+          ubicacion: true,
+        },
+      });
+
+      const vinculo = await vincularPersonaDeSocio(tx, creado, req.user?.userId);
+      const socio = { ...creado, persona_id: vinculo.persona_id };
+
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREAR',
+        modulo: 'socios',
+        registro_id: socio.id,
+        despues: socio,
+      });
+
+      return { socio, vinculo };
     });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREAR',
-      modulo: 'socios',
-      registro_id: socio.id,
-      despues: socio,
-    });
+    // Se avisa, no se bloquea: cédula de otra persona, o trabajador en prueba (HU-04)
+    const advertencias = [
+      ...(vinculo.conflicto ? [vinculo.conflicto] : []),
+      ...(vinculo.persona_id ? await advertenciasParaAhorrista(prisma, vinculo.persona_id) : []),
+    ];
 
     logger.info(`Socio creado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
 
     res.status(201).json({
       success: true,
       data: prepararSocioParaRespuesta(socio),
+      ...(advertencias.length > 0 ? { advertencias } : {}),
     });
   } catch (error) {
     logger.error('Error al crear socio:', error);
@@ -757,23 +774,39 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
       datosActualizacion.foto = convertirBase64ABuffer(datos.foto);
     }
 
-    // Actualizar socio
-    const socio = await prisma.socio.update({
-      where: { id: socioId },
-      data: datosActualizacion,
-      include: {
-        ubicacion: true,
-      },
-    });
+    // Socio y persona en la misma transacción: los datos personales editados
+    // pasan a la persona y a sus otros expedientes ahorristas
+    const { socio, conflicto } = await prisma.$transaction(async (tx) => {
+      const actualizado = await tx.socio.update({
+        where: { id: socioId },
+        data: datosActualizacion,
+        include: {
+          ubicacion: true,
+        },
+      });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'ACTUALIZAR',
-      modulo: 'socios',
-      registro_id: socio.id,
-      antes: socioExistente,
-      despues: socio,
+      let personaId = actualizado.persona_id;
+      let conflicto: string | null = null;
+      if (actualizado.cedula !== socioExistente.cedula || personaId === null) {
+        // Cédula corregida, o socio anterior a la fase 2: se vincula por cédula
+        const vinculo = await vincularPersonaDeSocio(tx, actualizado, req.user?.userId);
+        personaId = vinculo.persona_id;
+        conflicto = vinculo.conflicto;
+      } else {
+        await propagarSocioAPersona(tx, actualizado);
+      }
+
+      const socio = { ...actualizado, persona_id: personaId };
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'ACTUALIZAR',
+        modulo: 'socios',
+        registro_id: socio.id,
+        antes: socioExistente,
+        despues: socio,
+      });
+
+      return { socio, conflicto };
     });
 
     logger.info(`Socio actualizado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -781,6 +814,7 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
     res.json({
       success: true,
       data: prepararSocioParaRespuesta(socio),
+      ...(conflicto ? { advertencias: [conflicto] } : {}),
     });
   } catch (error) {
     logger.error('Error al actualizar socio:', error);

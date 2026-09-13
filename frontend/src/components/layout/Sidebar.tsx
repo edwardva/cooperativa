@@ -20,7 +20,8 @@ import {
   CalendarCheck,
   Calculator,
   Printer,
-  Shield
+  Shield,
+  HardHat
 } from 'lucide-react'
 import logo from '@/logoR.png'
 
@@ -34,6 +35,7 @@ interface NavItem {
 const navigationItems: NavItem[] = [
   { name: 'Dashboard', path: '/dashboard', icon: Home },
   { name: 'Socios', path: '/socios', icon: Users },
+  { name: 'Trabajadores', path: '/trabajadores', icon: HardHat },
   { name: 'Ahorro', path: '/ahorro', icon: Wallet },
   { name: 'Préstamos', path: '/prestamos', icon: DollarSign },
   { name: 'Colecta', path: '/colecta', icon: ClipboardList },

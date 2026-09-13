@@ -59,6 +59,12 @@ export const PARAMETROS_COLECTA = {
     porDefecto: 6,
     descripcion: 'Semanas de atraso que suspenden el servicio de salud',
   },
+  // No es de colecta, pero se siembra y se lee igual. La cooperativa no
+  // confirmó si son meses o días calendario (pendiente 10): son meses.
+  MESES_PRUEBA_TRABAJADOR: {
+    porDefecto: 3,
+    descripcion: 'Meses de prueba antes de que un trabajador pueda inscribirse como ahorrista',
+  },
 } as const;
 
 /**

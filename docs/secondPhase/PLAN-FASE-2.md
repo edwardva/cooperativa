@@ -181,8 +181,8 @@ Ordenadas por riesgo que eliminan.
 | M2 ✅ | Endpoint y botón de **reverso de abono** de préstamo; el schema ya lo soporta | Hoy un abono mal cargado no tiene corrección (RF-PRE-08) | S |
 | M3 ✅ | Servicio central `auditoria.registrar(tx, …)` y reemplazar las 33 escrituras manuales | Operaciones sin auditar por olvido; auditoría fuera de la transacción | S |
 | M4 ✅ | Búsqueda por nombre en colecta | RF-COL-02 | S |
-| M5 | Ferias: `responsable`, `observaciones`, conteo de trabajadores activos | HU-05 | S |
-| M6 | Hook `useEnterNavigation` y aplicarlo a los formularios de alta | HU-22 | S |
+| M5 ✅ | Ferias: `responsable`, `observaciones`, conteo de trabajadores activos | HU-05 | S |
+| M6 🟡 | Hook `useEnterNavigation` y aplicarlo a los formularios de alta | HU-22 | S |
 | M7 | Constraint de cédula (tras crear `Persona`) | Duplicados por altas simultáneas | parte de Sprint A |
 | M8 | Renumerar scripts de migración y agregar columna `legacy_id` / `origen` en tablas migradas | RF-MIG-05, reprocesar rechazados | M |
 | M9 | Pruebas de integración de colecta y reverso contra una BD de test | Hoy nada protege las transacciones ante refactors | M |
@@ -234,7 +234,7 @@ producción, y préstamos va antes que salud masiva porque ya está a medio cami
 
 **Entregable:** decisiones escritas; colecta y abonos sin carrera; auditoría central.
 
-### Sprint A · Persona, trabajador y ferias
+### Sprint A · Persona, trabajador y ferias ✅
 
 - DB: `personas`, `Socio.persona_id`, `socios_trabajadores`, `trabajador_feria`,
   campos nuevos en `ubicaciones`. Backfill con reporte previo.
@@ -245,6 +245,38 @@ producción, y préstamos va antes que salud masiva porque ya está a medio cami
   trabajador con fin de prueba y elegibilidad; modal de traslado; M5, M6.
 - QA: una sola feria activa por trabajador (QA-FIN-06), persona no duplicada por dos
   roles (QA-FIN-07).
+
+**Avance al 12/09/2026: Sprint A hecho (backend, pantallas y pruebas)**
+
+| Parte | Qué quedó |
+|---|---|
+| Datos | Migración `20260913000000_personas_trabajadores`: `personas` (identificación única), `socios.persona_id`, `socios_trabajadores`, `trabajador_feria`, campos nuevos en `ubicaciones`. Índices únicos parciales: una persona no tiene dos expedientes de trabajador sin retirar, y un trabajador tiene una sola feria abierta |
+| API | `/api/personas` (búsqueda, consulta por identificación, ficha, alta, edición) y `/api/trabajadores` (listado con los filtros de RF-FER-06, ficha, alta, edición, `traslado-feria`, `retiro`). Traslado y retiro bloquean el expediente, igual que en M1 |
+| Socios | Alta y edición vinculan el socio a su persona en la misma transacción y copian los datos personales en los dos sentidos. Si la cédula es de alguien con otro nombre, no vinculan y avisan. Si la persona es trabajador en prueba, avisan (HU-04.6) |
+| Pantallas | Nueva **Trabajadores**: listado con filtros, alta que empieza por la identificación, ficha con salud, prueba, historial de ferias y "Inscribir como ahorrista", y modales de traslado y retiro. **Ferias**: el alta, que antes mostraba "en desarrollo", más edición completa, activar y desactivar, y trabajadores activos. **Socios**: al salir del campo cédula muestra si la persona ya existe y completa sus datos |
+| Existentes | `prisma/backfill-personas.ts` crea las personas de los socios actuales. Sin `--aplicar` solo simula y escribe el reporte. Deja para revisión las cédulas inválidas y las que tienen nombres distintos |
+| Pruebas | 12 tests unitarios nuevos (período de prueba y comparación de nombres) y 42 chequeos de punta a punta contra la base local. Incluyen altas y traslados simultáneos, el historial, el conteo por feria y el script de personas |
+
+Supuestos tomados mientras la cooperativa no confirme (sección 20):
+
+- **Prueba (pendiente 10):** meses de calendario, con el parámetro `MESES_PRUEBA_TRABAJADOR` (3 por defecto).
+- **Salud del trabajador (pendiente 11):** se **deriva**; no es una tabla. La tiene el trabajador activo con feria; el suspendido y el retirado no. Las tablas de pago son del Sprint B.
+- **Traslado:** la feria anterior cierra y la nueva abre el mismo día. El Sprint B tiene que decidir a qué feria le toca ese período.
+- **Reingreso:** quien vuelve a trabajar recibe un expediente nuevo; el retirado conserva su historial.
+
+**Pasos para desplegar el Sprint A, en orden**
+
+1. Migraciones con el rol dueño (`postgres`): `20260912000000_abono_prestamo_colecta` y `20260913000000_personas_trabajadores`.
+2. `npx tsx prisma/sincronizar-permisos.ts --aplicar`: agrega los módulos `personas` y `trabajadores` a los roles. Después, reiniciar el backend, porque los permisos se cachean.
+3. `npx tsx prisma/backfill-personas.ts`: simulación. **Revisar el reporte** con la cooperativa antes de seguir.
+4. `npx tsx prisma/backfill-personas.ts --aplicar`.
+
+**Pendiente del Sprint A**
+
+- **Revisar el sistema viejo:** no pude ver si ya registra trabajadores de feria, porque el acceso con las credenciales de los scripts fue bloqueado en esta sesión. Si existen, falta migrarlos (Sprint D).
+- **Revisión visual:** las pantallas nuevas compilan y el build pasa, pero no se probaron en el navegador.
+- **Navegación con Enter (FE-023):** está aplicada en Trabajadores, Ferias y el alta de Socios. Faltan colecta, salud y préstamos.
+- `prisma/seed.ts` no incluye los módulos nuevos; para bases nuevas hay que correr el script de permisos.
 
 ### Sprint B · Pago de salud por feria
 

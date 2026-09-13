@@ -81,6 +81,8 @@ model Socio {
   // a las que puede acceder (req. 7 de la reunion)
   es_trabajador     Boolean     @default(false)
   ubicacion_id      Int?
+  // Identidad de la persona (fase 2). Nulo hasta correr prisma/backfill-personas.ts
+  persona_id        Int?
   foto_url          String?     @db.VarChar(255) // URL antigua (deprecado)
   foto              Bytes? // Foto del socio almacenada como BLOB
   autorizado_nombre String?     @db.VarChar(100) // Persona que autoriza al socio
@@ -92,6 +94,7 @@ model Socio {
 
   // Relaciones
   ubicacion             Ubicacion?           @relation(fields: [ubicacion_id], references: [id])
+  persona               Persona?             @relation(fields: [persona_id], references: [id])
   beneficiarios         Beneficiario[]
   cuentas_ahorro        CuentaAhorro[]
   prestamos             Prestamo[]           @relation("SocioPrestamo")
@@ -105,6 +108,7 @@ model Socio {
   @@index([nombre, apellido])
   @@index([ubicacion_id])
   @@index([estado])
+  @@index([persona_id])
   @@map("socios")
 }
 
@@ -152,6 +156,112 @@ enum Sexo {
 }
 
 // ============================================
+// PERSONAS Y EXPEDIENTES (fase 2)
+// ============================================
+//
+// Persona ≠ expediente. La persona guarda la identidad; cada rol en la
+// cooperativa es un expediente aparte, con sus propios movimientos, fechas y
+// estado. `Socio` sigue siendo el expediente AHORRISTA (no se renombró para no
+// tocar lo que ya está en producción) y `SocioTrabajador` es el expediente de
+// quien trabaja en una feria.
+//
+// OJO: la migración crea dos índices únicos PARCIALES y dos CHECK que Prisma no
+// sabe expresar, así que no figuran aquí. Prisma los ignora al comparar, pero
+// si alguien regenera la migración desde el schema se pierden. Ver
+// 20260913000000_personas_trabajadores.
+
+model Persona {
+  id                    Int                @id @default(autoincrement())
+  tipo_identificacion   TipoIdentificacion @default(V)
+  // Cédula en dígitos (mismo criterio que socios.cedula); pasaporte o RIF tal cual
+  numero_identificacion String             @unique @db.VarChar(20)
+  nombres               String             @db.VarChar(100)
+  apellidos             String             @db.VarChar(100)
+  sexo                  Sexo?
+  fecha_nacimiento      DateTime?          @db.Date
+  telefono              String?            @db.VarChar(100)
+  email                 String?            @db.VarChar(100)
+  direccion             String?            @db.Text
+  estado                EstadoPersona      @default(activo)
+  created_by            Int?
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+
+  // Relaciones
+  socios       Socio[]
+  trabajadores SocioTrabajador[]
+
+  @@index([apellidos, nombres])
+  @@map("personas")
+}
+
+model SocioTrabajador {
+  id                Int              @id @default(autoincrement())
+  persona_id        Int
+  codigo_trabajador String           @unique @db.VarChar(20)
+  // Inicio laboral: de aquí sale el fin del período de prueba
+  fecha_ingreso     DateTime         @db.Date
+  estado            EstadoTrabajador @default(activo)
+  fecha_salida      DateTime?        @db.Date
+  motivo_salida     String?          @db.Text
+  observaciones     String?          @db.Text
+  created_by        Int?
+  created_at        DateTime         @default(now())
+  updated_at        DateTime         @updatedAt
+
+  // Relaciones
+  persona Persona           @relation(fields: [persona_id], references: [id])
+  ferias  TrabajadorFeria[]
+
+  // Parcial en la migración: una persona no tiene dos expedientes sin retirar
+  @@index([persona_id])
+  @@index([estado])
+  @@map("socios_trabajadores")
+}
+
+/// Historial de ferias del trabajador. La asociación actual es la que tiene
+/// `fecha_fin` nula; cambiar de feria la cierra y abre otra, nunca la pisa.
+model TrabajadorFeria {
+  id            Int       @id @default(autoincrement())
+  trabajador_id Int
+  feria_id      Int
+  fecha_inicio  DateTime  @db.Date
+  fecha_fin     DateTime? @db.Date
+  motivo_cambio String?   @db.Text
+  created_by    Int?
+  created_at    DateTime  @default(now())
+
+  // Relaciones
+  trabajador SocioTrabajador @relation(fields: [trabajador_id], references: [id])
+  feria      Ubicacion       @relation(fields: [feria_id], references: [id])
+
+  // Parcial en la migración: una sola asociación abierta por trabajador (QA-FIN-06)
+  @@index([trabajador_id])
+  @@index([feria_id])
+  @@map("trabajador_feria")
+}
+
+enum TipoIdentificacion {
+  V // Venezolano
+  E // Extranjero
+  J // Jurídico (RIF)
+  P // Pasaporte
+}
+
+enum EstadoPersona {
+  activo
+  inactivo
+  fallecido
+}
+
+enum EstadoTrabajador {
+  activo
+  suspendido
+  retirado
+  inactivo
+}
+
+// ============================================
 // UBICACIONES/SUCURSALES
 // ============================================
 
@@ -164,8 +274,14 @@ model Ubicacion {
   estado     Boolean  @default(true)
   created_at DateTime @default(now())
 
+  // Ficha de la feria (RF-FER-01)
+  ubicacion     String? @db.VarChar(150)
+  responsable   String? @db.VarChar(100)
+  observaciones String? @db.Text
+
   // Relaciones
   socios            Socio[]
+  trabajadores      TrabajadorFeria[]
   movimientos_salud MovimientoSalud[]
   asambleas         Asamblea[]
   colectas          Colecta[]

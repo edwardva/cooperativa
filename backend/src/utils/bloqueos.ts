@@ -29,6 +29,18 @@ export const bloquearSocio = async (tx: Prisma.TransactionClient, socioId: numbe
 };
 
 /**
+ * Expediente de trabajador: traslado, retiro y cambios de estado leen la
+ * asociación abierta y la cierran. Dos traslados simultáneos dejaban dos
+ * ferias abiertas (el índice único parcial lo rechaza igual, pero con un 500).
+ */
+export const bloquearTrabajador = async (tx: Prisma.TransactionClient, trabajadorId: number): Promise<void> => {
+  const filas = await tx.$queryRaw<{ id: number }[]>`
+    SELECT id FROM socios_trabajadores WHERE id = ${trabajadorId} FOR UPDATE
+  `;
+  if (filas.length === 0) throw new NotFoundError('Trabajador no encontrado');
+};
+
+/**
  * Varios socios a la vez (deudor y fiadores, integrantes de un grupo). Siempre
  * en orden de id: si dos transacciones bloquean el mismo par en distinto
  * orden, cada una espera a la otra para siempre.

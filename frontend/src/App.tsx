@@ -20,6 +20,7 @@ import AsambleasPage from './pages/AsambleasPage'
 import ColectaPage from './pages/ColectaPage'
 import PrestamosPage from './pages/PrestamosPage'
 import ColectaReportesPage from './pages/ColectaReportesPage'
+import TrabajadoresPage from './pages/TrabajadoresPage'
 
 function App() {
   const initialize = useAuthStore((state) => state.initialize)
@@ -71,6 +72,17 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <FeriasPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/trabajadores"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <TrabajadoresPage />
               </MainLayout>
             </ProtectedRoute>
           }
