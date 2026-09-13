@@ -42,8 +42,19 @@ import {
   type AcuerdoCobrable,
 } from '../services/cobroSemanalService';
 import { obtenerTarifas, tipoCuentaAhorroObligatorio } from '../services/tarifasService';
+import { registrarAuditoria } from '../services/auditoriaService';
+import { bloquearSocio } from '../utils/bloqueos';
+import {
+  asegurarReversoConFiadores,
+  liberarFiadores,
+  sincronizarCuotas,
+} from '../services/abonosPrestamoService';
 
 const prisma = new PrismaClient();
+
+/** Búsqueda por nombre en la caja */
+const MINIMO_LETRAS_NOMBRE = 3;
+const LIMITE_RESULTADOS = 20;
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -229,7 +240,7 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
   try {
     const termino = String(req.query.termino ?? '').trim();
     if (!termino) {
-      throw new BadRequestError('Indique una cédula o un número de expediente');
+      throw new BadRequestError('Indique una cédula, un número de expediente o un nombre');
     }
 
     const [{ tasa }, tarifas, codigoCuentaAhorro] = await Promise.all([
@@ -243,7 +254,8 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
     // numéricos: un término de sólo dígitos puede ser cualquiera de los dos.
     // Por eso se buscan LAS DOS COSAS en vez de decidir por el formato, que
     // dejaba fuera a los expedientes numéricos.
-    const soloDigitos = /^[\dVvEe.\s-]+$/.test(termino);
+    // Tiene que haber al menos un dígito: sin eso "Eve" pasaba por cédula
+    const soloDigitos = /\d/.test(termino) && /^[\dVvEe.\s-]+$/.test(termino);
     const cedulaNormalizada = soloDigitos ? normalizarCedula(termino).cedula : '';
 
     const alternativas: Prisma.SocioWhereInput[] = [{ codigo_socio: termino }];
@@ -254,10 +266,31 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       alternativas.push({ codigo_socio: termino.replace(/^0+/, '') });
     }
 
+    // Por nombre (RF-COL-02): cada palabra tiene que aparecer en el nombre o en
+    // el apellido, así "maria perez" encuentra a "MARIA JOSE PEREZ DIAZ" sin
+    // importar el orden. Mayúsculas da igual; los acentos no.
+    const palabras = soloDigitos ? [] : termino.split(/\s+/).filter((p) => p.length > 0);
+    if (palabras.length > 0) {
+      if (palabras.join('').length < MINIMO_LETRAS_NOMBRE) {
+        throw new BadRequestError(`Escriba al menos ${MINIMO_LETRAS_NOMBRE} letras del nombre`);
+      }
+      alternativas.push({
+        AND: palabras.map((palabra) => ({
+          OR: [
+            { nombre: { contains: palabra, mode: 'insensitive' as const } },
+            { apellido: { contains: palabra, mode: 'insensitive' as const } },
+          ],
+        })),
+      });
+    }
+
     const where: Prisma.SocioWhereInput = { OR: alternativas };
 
     const socios = await prisma.socio.findMany({
       where,
+      // Un apellido común trae cientos: se corta y se pide afinar la búsqueda
+      take: LIMITE_RESULTADOS + 1,
+      orderBy: [{ apellido: 'asc' }, { nombre: 'asc' }],
       include: {
         ubicacion: { select: { id: true, codigo: true, direccion: true } },
         cuentas_ahorro: {
@@ -302,6 +335,9 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         },
       },
     });
+
+    const truncado = socios.length > LIMITE_RESULTADOS;
+    if (truncado) socios.pop();
 
     if (socios.length === 0) {
       // Misma forma que la respuesta con resultados: si no, la pantalla se
@@ -595,6 +631,7 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       success: true,
       data: {
         encontrados,
+        truncado,
         tasa,
         asambleas,
         // Tarifas de SÓLO LECTURA: la pantalla las muestra, no las edita (req. 2)
@@ -752,6 +789,11 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
     }
 
     const resultado = await prisma.$transaction(async (tx) => {
+      // Candado del socio ANTES de leer cuentas, acuerdos y préstamos: otro
+      // cajero cobrando al mismo socio espera aquí, y cuando entra ya ve la
+      // cobertura que dejó este cobro (ver utils/bloqueos.ts)
+      await bloquearSocio(tx, datos.socio_id);
+
       let totalUsd = 0;
 
       // Se valida TODO antes de escribir nada
@@ -908,6 +950,7 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
               aplicado_mora_usd: reparto.mora,
               aplicado_mora_bs: redondear(reparto.mora * tasa),
               concepto: detalle.concepto ?? `Colecta #${colecta.id}`,
+              colecta_id: colecta.id,
             },
           });
 
@@ -931,6 +974,11 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
               ...(saldado ? { estado: 'saldado' as const } : {}),
             },
           });
+
+          // Mismo efecto que el abono directo: antes el cobrado en caja no
+          // marcaba cuotas y saldaba sin devolverles el ahorro a los fiadores
+          await sincronizarCuotas(tx, prestamo.id);
+          if (saldado) await liberarFiadores(tx, prestamo.id, tasa);
         } else {
           const acuerdo = (item as any).acuerdo;
           // Misma precedencia que en el calculo previo: manda la tarifa
@@ -1052,16 +1100,12 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
         });
       }
 
-      await tx.auditLog.create({
-        data: {
-          usuario_id: req.user!.userId,
-          accion: 'COLECTA',
-          modulo: 'colecta',
-          registro_id: colecta.id,
-          datos_despues: { total_usd: totalUsd, detalles: datos.detalles.length } as any,
-          ip_address: req.ip || 'unknown',
-          user_agent: req.get('user-agent') || 'unknown',
-        },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'COLECTA',
+        modulo: 'colecta',
+        registro_id: colecta.id,
+        despues: { total_usd: totalUsd, detalles: datos.detalles.length },
       });
 
       return colecta;
@@ -1355,6 +1399,12 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
     const actual = semanaActual();
 
     await prisma.$transaction(async (tx) => {
+      // Dos reversos simultáneos pasaban los dos el chequeo de arriba y
+      // devolvían la cobertura dos veces. Con el socio bloqueado se relee.
+      await bloquearSocio(tx, colecta.socio_id);
+      const vigente = await tx.colecta.findUnique({ where: { id }, select: { reversada: true } });
+      if (vigente?.reversada) throw new ConflictError('Esta colecta ya fue reversada');
+
       for (const detalle of colecta.detalles) {
         const montoUsd = Number(detalle.monto_usd);
         const montoBs = Number(detalle.monto_bs);
@@ -1395,14 +1445,11 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
           // Se busca el abono de ESTA colecta, no "el último": entremedio puede
           // haber habido otro abono desde el módulo de préstamos.
           const abono = await tx.abonoPrestamo.findFirst({
-            where: {
-              prestamo_id: prestamo.id,
-              reversado: false,
-              concepto: { contains: `Colecta #${colecta.id}` },
-            },
-            orderBy: { fecha_abono: 'desc' },
+            where: { prestamo_id: prestamo.id, colecta_id: colecta.id, reversado: false },
           });
           if (!abono) continue;
+
+          await asegurarReversoConFiadores(tx, prestamo);
 
           await tx.abonoPrestamo.update({
             where: { id: abono.id },
@@ -1444,6 +1491,8 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
               ...(prestamo.estado === 'saldado' ? { estado: 'activo' as const } : {}),
             },
           });
+
+          await sincronizarCuotas(tx, prestamo.id);
         } else if (detalle.servicio === 'funeraria' || detalle.servicio === 'salud') {
           // La cobertura anterior viene GUARDADA en el detalle: se devuelve
           // exactamente adonde estaba. Antes se buscaba "el último movimiento
@@ -1539,17 +1588,13 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
         },
       });
 
-      await tx.auditLog.create({
-        data: {
-          usuario_id: req.user!.userId,
-          accion: 'REVERSAR_COLECTA',
-          modulo: 'colecta',
-          registro_id: colecta.id,
-          datos_antes: { monto_total_usd: colecta.monto_total_usd } as any,
-          datos_despues: { motivo: validacion.data.motivo } as any,
-          ip_address: req.ip || 'unknown',
-          user_agent: req.get('user-agent') || 'unknown',
-        },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'REVERSAR_COLECTA',
+        modulo: 'colecta',
+        registro_id: colecta.id,
+        antes: { monto_total_usd: colecta.monto_total_usd },
+        despues: { motivo: validacion.data.motivo },
       });
     });
 

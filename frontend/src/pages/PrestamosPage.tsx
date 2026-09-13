@@ -24,6 +24,7 @@ import {
   Users,
   Printer,
   Wallet,
+  RotateCcw,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -32,6 +33,7 @@ import { PrintableListado } from '../components/print/PrintableListado'
 import * as prestamosService from '../services/prestamosService'
 import * as sociosService from '../services/sociosService'
 import type {
+  AbonoPrestamo,
   FilaCartera,
   PrestamoDetalle,
   ReporteCartera,
@@ -42,6 +44,7 @@ import type { Socio } from '../services/sociosService'
 import { getErrorMessage } from '../services/api'
 import { formatearFecha } from '../utils/formatters'
 import { usePermissions } from '../store/authStore'
+import { useEnterNavigation } from '../hooks/useEnterNavigation'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
@@ -72,6 +75,8 @@ export default function PrestamosPage() {
   const { hasPermission } = usePermissions()
   const puedeOtorgar = hasPermission('prestamos', 'create')
   const puedeAbonar = hasPermission('prestamos', 'update')
+  const puedeReversar = hasPermission('prestamos', 'delete')
+  const alEnter = useEnterNavigation()
 
   const [vista, setVista] = useState('por_cobrar')
   const [cartera, setCartera] = useState<ReporteCartera | null>(null)
@@ -101,6 +106,11 @@ export default function PrestamosPage() {
   const [modalAbono, setModalAbono] = useState(false)
   const [montoAbono, setMontoAbono] = useState('')
   const [abonando, setAbonando] = useState(false)
+
+  // --- Reverso de abono ---
+  const [abonoAReversar, setAbonoAReversar] = useState<AbonoPrestamo | null>(null)
+  const [motivoReverso, setMotivoReverso] = useState('')
+  const [reversando, setReversando] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -267,6 +277,31 @@ export default function PrestamosPage() {
       window.alert(getErrorMessage(err) || 'Error al registrar el abono')
     } finally {
       setAbonando(false)
+    }
+  }
+
+  const cerrarReverso = () => {
+    setAbonoAReversar(null)
+    setMotivoReverso('')
+  }
+
+  const confirmarReverso = async () => {
+    if (!detalle || !abonoAReversar) return
+    const motivo = motivoReverso.trim()
+    if (motivo.length < 5) return
+
+    setReversando(true)
+    try {
+      const r = await prestamosService.reversarAbono(detalle.id, abonoAReversar.id, motivo)
+      if (!r.success) throw new Error('No fue posible reversar el abono')
+      cerrarReverso()
+      const actualizado = await prestamosService.obtenerPrestamo(detalle.id)
+      if (actualizado.success) setDetalle(actualizado.data)
+      await cargar()
+    } catch (err) {
+      window.alert(getErrorMessage(err) || 'Error al reversar el abono')
+    } finally {
+      setReversando(false)
     }
   }
 
@@ -497,7 +532,7 @@ export default function PrestamosPage() {
               </button>
             </div>
 
-            <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>
               {/* Titular */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
@@ -522,7 +557,7 @@ export default function PrestamosPage() {
                     <input
                       value={cedulaSocio}
                       onChange={(e) => setCedulaSocio(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaSocio, 'titular')}
+                      data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaSocio, 'titular')}
                       placeholder="Cedula del socio"
                       className={controlClass}
                     />
@@ -645,7 +680,7 @@ export default function PrestamosPage() {
                   <input
                     value={cedulaFiador}
                     onChange={(e) => setCedulaFiador(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaFiador, 'fiador')}
+                    data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaFiador, 'fiador')}
                     placeholder="Cedula del fiador"
                     className={controlClass}
                   />
@@ -755,7 +790,7 @@ export default function PrestamosPage() {
             </div>
 
             {detalle && (
-              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>
                 {/* Saldos */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
@@ -871,15 +906,46 @@ export default function PrestamosPage() {
                     </p>
                     <div className="space-y-1.5">
                       {detalle.abonos.map((a) => (
-                        <div key={a.id} className="rounded-lg bg-neutral-50 px-3 py-2 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-neutral-700">{formatearFecha(a.fecha_abono)}</span>
-                            <span className="font-semibold text-neutral-900">${money(a.monto_usd)}</span>
+                        <div
+                          key={a.id}
+                          className={`rounded-lg px-3 py-2 text-sm ${a.reversado ? 'bg-red-50/60' : 'bg-neutral-50'}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-2 text-neutral-700">
+                              {formatearFecha(a.fecha_abono)}
+                              {a.reversado && <Badge variant="error">Reversado</Badge>}
+                            </span>
+                            <span
+                              className={`font-semibold ${a.reversado ? 'text-neutral-400 line-through' : 'text-neutral-900'}`}
+                            >
+                              ${money(a.monto_usd)}
+                            </span>
                           </div>
                           <p className="mt-0.5 text-xs text-neutral-500">
                             mora ${money(a.aplicado_mora_usd)} · interes ${money(a.aplicado_interes_usd)} ·
                             capital ${money(a.aplicado_capital_usd)}
                           </p>
+                          {a.reversado ? (
+                            <p className="mt-1 text-xs text-red-700">
+                              {a.fecha_reverso ? `${formatearFecha(a.fecha_reverso)} · ` : ''}
+                              {a.motivo_reverso}
+                            </p>
+                          ) : a.colecta_id ? (
+                            <p className="mt-1 text-xs text-neutral-500">
+                              Cobrado en la colecta #{a.colecta_id}: se reversa desde la colecta
+                            </p>
+                          ) : (
+                            puedeReversar &&
+                            detalle.estado !== 'cancelado' && (
+                              <button
+                                onClick={() => setAbonoAReversar(a)}
+                                className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-red-700 hover:underline"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" />
+                                Reversar
+                              </button>
+                            )
+                          )}
                         </div>
                       ))}
                     </div>
@@ -900,7 +966,7 @@ export default function PrestamosPage() {
               <p className="mt-1 text-sm text-neutral-500">{detalle.numero_prestamo}</p>
             </div>
 
-            <div className="space-y-4 px-6 py-5">
+            <div className="space-y-4 px-6 py-5" onKeyDown={alEnter}>
               <div className="rounded-lg bg-neutral-50 px-3 py-2.5 text-sm">
                 <div className="flex justify-between">
                   <span className="text-neutral-600">Mora</span>
@@ -966,6 +1032,67 @@ export default function PrestamosPage() {
               <Button onClick={() => void confirmarAbono()} disabled={abonando || !parseFloat(montoAbono)}>
                 {abonando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Confirmar abono
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ================= MODAL: REVERSO DE ABONO ================= */}
+      {abonoAReversar && detalle && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <Card padding="none" className="w-full max-w-md overflow-hidden border-neutral-200">
+            <div className="border-b border-neutral-200 px-6 py-4">
+              <h2 className="text-xl font-semibold text-neutral-900">Reversar abono</h2>
+              <p className="mt-1 text-sm text-neutral-500">
+                {detalle.numero_prestamo} · abono del {formatearFecha(abonoAReversar.fecha_abono)}
+              </p>
+            </div>
+
+            <div className="space-y-4 px-6 py-5" onKeyDown={alEnter}>
+              {/* Impacto antes de confirmar */}
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+                <p className="flex items-start gap-2 font-medium">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  La deuda vuelve a subir ${money(abonoAReversar.monto_usd)}
+                </p>
+                <p className="mt-1 text-xs">
+                  mora +${money(abonoAReversar.aplicado_mora_usd)} · interes +$
+                  {money(abonoAReversar.aplicado_interes_usd)} · capital +$
+                  {money(abonoAReversar.aplicado_capital_usd)}. Las cuotas que este abono cubria vuelven a
+                  quedar pendientes. El abono no se borra: queda marcado como reversado.
+                </p>
+                {detalle.estado === 'saldado' && (
+                  <p className="mt-1 text-xs font-medium">El prestamo esta saldado y volvera a quedar activo.</p>
+                )}
+              </div>
+
+              <label className={labelClass}>
+                <span className="mb-1.5 block">Motivo del reverso</span>
+                <textarea
+                  value={motivoReverso}
+                  onChange={(e) => setMotivoReverso(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  autoFocus
+                  placeholder="Ej.: el monto se cargo dos veces"
+                  className={controlClass}
+                />
+                <span className="mt-1 block text-xs text-neutral-500">Minimo 5 caracteres.</span>
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-neutral-200 px-6 py-4">
+              <Button variant="ghost" onClick={cerrarReverso} disabled={reversando}>
+                Cancelar
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => void confirmarReverso()}
+                disabled={reversando || motivoReverso.trim().length < 5}
+              >
+                {reversando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                Confirmar reverso
               </Button>
             </div>
           </Card>

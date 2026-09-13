@@ -8,25 +8,42 @@
 import type { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
+import { registrarAuditoria } from '../services/auditoriaService';
 
 const prisma = new PrismaClient();
+
+/**
+ * Trabajadores activos de la feria: asociación abierta y expediente activo.
+ * Es el número que pide HU-05 y el que bloquea desactivar la feria.
+ */
+const conteos = {
+  _count: {
+    select: {
+      socios: true,
+      trabajadores: { where: { fecha_fin: null, trabajador: { estado: 'activo' as const } } },
+    },
+  },
+};
+
+const textoOpcional = (max: number) => z.string().trim().max(max).optional().nullable();
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
 // ============================================
 
 const crearUbicacionSchema = z.object({
-  codigo: z.string().min(1).max(10),
-  nombre: z.string().min(1).max(100),
-  direccion: z.string().optional(),
-  telefono: z.string().max(20).optional(),
+  codigo: z.string().trim().min(1, 'El código es obligatorio').max(10),
+  nombre: z.string().trim().min(1, 'El nombre es obligatorio').max(100),
+  ubicacion: textoOpcional(150),
+  direccion: textoOpcional(1000),
+  responsable: textoOpcional(100),
+  telefono: textoOpcional(20),
+  observaciones: textoOpcional(2000),
   estado: z.boolean().default(true),
 });
 
-const actualizarUbicacionSchema = z.object({
-  nombre: z.string().min(1).max(100).optional(),
-  direccion: z.string().optional(),
-  telefono: z.string().max(20).optional(),
+// El código no se cambia: identifica a la feria en reportes e historiales
+const actualizarUbicacionSchema = crearUbicacionSchema.omit({ codigo: true, estado: true }).partial().extend({
   estado: z.boolean().optional(),
 });
 
@@ -46,11 +63,7 @@ export const obtenerUbicaciones = async (
   try {
     const ubicaciones = await prisma.ubicacion.findMany({
       orderBy: { nombre: 'asc' },
-      include: {
-        _count: {
-          select: { socios: true },
-        },
-      },
+      include: conteos,
     });
 
     res.status(200).json({
@@ -114,11 +127,7 @@ export const obtenerUbicacionPorId = async (
 
     const ubicacion = await prisma.ubicacion.findUnique({
       where: { id: parseInt(id, 10) },
-      include: {
-        _count: {
-          select: { socios: true },
-        },
-      },
+      include: conteos,
     });
 
     if (!ubicacion) {
@@ -167,6 +176,14 @@ export const crearUbicacion = async (
 
     const ubicacion = await prisma.ubicacion.create({
       data: validacion.data,
+    });
+
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREAR',
+      modulo: 'ubicaciones',
+      registro_id: ubicacion.id,
+      despues: ubicacion,
     });
 
     res.status(201).json({
@@ -228,6 +245,7 @@ export const actualizarUbicacion = async (
 
     const ubicacionExistente = await prisma.ubicacion.findUnique({
       where: { id: parseInt(id, 10) },
+      include: conteos,
     });
 
     if (!ubicacionExistente) {
@@ -241,9 +259,33 @@ export const actualizarUbicacion = async (
       return;
     }
 
+    // Desactivar con trabajadores adentro los dejaría fuera del cálculo de
+    // salud sin que nadie lo decida: primero se trasladan o se retiran
+    const activos = ubicacionExistente._count.trabajadores;
+    if (validacion.data.estado === false && ubicacionExistente.estado && activos > 0) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'HAS_DEPENDENCIES',
+          message: `La feria ${ubicacionExistente.codigo} tiene ${activos} trabajador(es) activo(s). Trasládelos o retírelos antes de desactivarla.`,
+        },
+      });
+      return;
+    }
+
+    const { _count: _conteo, ...antes } = ubicacionExistente;
     const ubicacion = await prisma.ubicacion.update({
       where: { id: parseInt(id, 10) },
       data: validacion.data,
+    });
+
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR',
+      modulo: 'ubicaciones',
+      registro_id: ubicacion.id,
+      antes,
+      despues: ubicacion,
     });
 
     res.status(200).json({
@@ -281,11 +323,7 @@ export const eliminarUbicacion = async (
 
     const ubicacionExistente = await prisma.ubicacion.findUnique({
       where: { id: parseInt(id, 10) },
-      include: {
-        _count: {
-          select: { socios: true },
-        },
-      },
+      include: conteos,
     });
 
     if (!ubicacionExistente) {
@@ -311,10 +349,28 @@ export const eliminarUbicacion = async (
       return;
     }
 
+    if (ubicacionExistente._count.trabajadores > 0) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'HAS_DEPENDENCIES',
+          message: `No se puede desactivar: tiene ${ubicacionExistente._count.trabajadores} trabajador(es) activo(s)`,
+        },
+      });
+      return;
+    }
+
     // Soft delete - cambiar estado a false
     await prisma.ubicacion.update({
       where: { id: parseInt(id, 10) },
       data: { estado: false },
+    });
+
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'DESACTIVAR',
+      modulo: 'ubicaciones',
+      registro_id: ubicacionExistente.id,
     });
 
     res.status(200).json({

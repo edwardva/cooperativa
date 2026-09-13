@@ -126,7 +126,7 @@ function BuscarPorNumeroInline({
         label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && onBuscar()}
+        data-enter-propio onKeyDown={(e) => e.key === 'Enter' && onBuscar()}
         className="flex-1"
         autoFocus={autoFocus}
       />
@@ -1863,7 +1863,7 @@ const handleSort = (field: string) => {
               value={wizardExpediente}
               onChange={(e) => setWizardExpediente(e.target.value)}
               placeholder="Ej: S001"
-              onKeyDown={(e) => e.key === 'Enter' && void buscarSocioWizard()}
+              data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocioWizard()}
               autoFocus
               helperText="El socio debe ser ahorrista (tener un acuerdo de ahorro activo) para acceder al beneficio de salud."
             />
@@ -2305,7 +2305,7 @@ const handleSort = (field: string) => {
             label="Número de expediente o número de acuerdo"
             value={buscarInput}
             onChange={(e) => setBuscarInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && void ejecutarBusqueda()}
+            data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void ejecutarBusqueda()}
             autoFocus
           />
           <Button onClick={() => void ejecutarBusqueda()} isLoading={buscarBuscando} className="w-full">

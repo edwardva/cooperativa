@@ -16,6 +16,14 @@ import { logger } from '../utils/logger';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { generarPlanPagos, calcularMora, distribuirAbono } from '../utils/amortizacion';
 import { resolverTasa } from '../services/tasaCambioService';
+import { carteraPrestamos } from '../services/carteraService';
+import { registrarAuditoria } from '../services/auditoriaService';
+import { bloquearSocio, bloquearSocios } from '../utils/bloqueos';
+import {
+  asegurarReversoConFiadores,
+  liberarFiadores,
+  sincronizarCuotas,
+} from '../services/abonosPrestamoService';
 
 const prisma = new PrismaClient();
 
@@ -47,6 +55,10 @@ const crearPrestamoSchema = z.object({
 const abonoSchema = z.object({
   monto_usd: z.number().positive('El monto debe ser mayor a cero'),
   concepto: z.string().max(300).optional().nullable(),
+});
+
+const reversarAbonoSchema = z.object({
+  motivo: z.string().trim().min(5, 'Explique el motivo del reverso').max(500),
 });
 
 // ============================================
@@ -303,6 +315,18 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
     const fechaVencimiento = resultado.plan[resultado.plan.length - 1]!.fecha_vencimiento;
 
     const prestamo = await prisma.$transaction(async (tx) => {
+      // Las validaciones de arriba leen sin bloquear. Con deudor y fiadores
+      // bloqueados se repite la que otra operación simultánea puede volver
+      // falsa: que el socio no tenga ya otro préstamo abierto.
+      await bloquearSocios(tx, [datos.socio_id, ...datos.fiadores.map((f) => f.socio_id)]);
+
+      const otroAbierto = await tx.prestamo.findFirst({
+        where: { socio_id: datos.socio_id, estado: { in: ['activo', 'moroso'] } },
+      });
+      if (otroAbierto) {
+        throw new ConflictError(`El socio ya tiene el préstamo ${otroAbierto.numero_prestamo} sin saldar`);
+      }
+
       const creado = await tx.prestamo.create({
         data: {
           socio_id: datos.socio_id,
@@ -372,18 +396,24 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
           });
           porBloquear = redondear(porBloquear - bloquear);
         }
+
+        // Si el ahorro libre bajó entre la validación y este punto, antes se
+        // bloqueaba de menos sin avisar y la garantía quedaba incompleta
+        if (porBloquear > 0) {
+          const s = await tx.socio.findUnique({ where: { id: fiador.socio_id }, select: { codigo_socio: true } });
+          throw new BadRequestError(
+            `El fiador ${s?.codigo_socio ?? fiador.socio_id} ya no tiene ahorro libre suficiente: ` +
+              `faltan $${porBloquear} por garantizar`
+          );
+        }
       }
 
-      await tx.auditLog.create({
-        data: {
-          usuario_id: req.user!.userId,
-          accion: 'CREAR',
-          modulo: 'prestamos',
-          registro_id: creado.id,
-          datos_despues: { numero, monto: datos.monto_usd, plazo: datos.plazo_semanas } as any,
-          ip_address: req.ip || 'unknown',
-          user_agent: req.get('user-agent') || 'unknown',
-        },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREAR',
+        modulo: 'prestamos',
+        registro_id: creado.id,
+        despues: { numero, monto: datos.monto_usd, plazo: datos.plazo_semanas },
       });
 
       return creado;
@@ -498,7 +528,10 @@ export const obtenerPrestamo = async (req: Request, res: Response): Promise<void
 
     const cuotasPagadas = prestamo.plan_pagos.filter((c) => c.estado === 'pagada').length;
     const cuotasVencidas = prestamo.plan_pagos.filter((c) => c.estado === 'vencida').length;
-    const totalAbonado = prestamo.abonos.reduce((a, ab) => a + Number(ab.monto_usd), 0);
+    // Los abonos reversados siguen en la lista, pero ya no cuentan como pagados
+    const totalAbonado = prestamo.abonos
+      .filter((ab) => !ab.reversado)
+      .reduce((a, ab) => a + Number(ab.monto_usd), 0);
 
     res.json({
       success: true,
@@ -553,35 +586,39 @@ export const registrarAbono = async (req: Request, res: Response): Promise<void>
 
     await actualizarMoraYCuotas(id);
 
-    const prestamo = await prisma.prestamo.findUnique({
-      where: { id },
-      include: { plan_pagos: { orderBy: { numero_cuota: 'asc' } } },
-    });
-    if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
-    if (prestamo.estado === 'saldado') throw new ConflictError('El préstamo ya está saldado');
-    if (prestamo.estado === 'cancelado') throw new ConflictError('El préstamo está cancelado');
+    const existe = await prisma.prestamo.findUnique({ where: { id }, select: { socio_id: true } });
+    if (!existe) throw new NotFoundError('Préstamo no encontrado');
 
     const monto = redondear(validacion.data.monto_usd);
     const tasa = await obtenerTasaActual();
 
-    const reparto = distribuirAbono(
-      monto,
-      Number(prestamo.saldo_mora_usd),
-      Number(prestamo.saldo_interes_usd),
-      Number(prestamo.saldo_capital_usd)
-    );
-
-    if (reparto.sobrante > 0) {
-      throw new BadRequestError(
-        `El abono excede la deuda en $${reparto.sobrante}. La deuda total es $${redondear(
-          Number(prestamo.saldo_mora_usd) +
-            Number(prestamo.saldo_interes_usd) +
-            Number(prestamo.saldo_capital_usd)
-        )}`
-      );
-    }
-
     const resultado = await prisma.$transaction(async (tx) => {
+      // El préstamo se lee DESPUÉS de bloquear al socio. Leído antes, dos abonos
+      // simultáneos partían del mismo saldo y uno de los dos se perdía.
+      await bloquearSocio(tx, existe.socio_id);
+
+      const prestamo = await tx.prestamo.findUnique({ where: { id } });
+      if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
+      if (prestamo.estado === 'saldado') throw new ConflictError('El préstamo ya está saldado');
+      if (prestamo.estado === 'cancelado') throw new ConflictError('El préstamo está cancelado');
+
+      const reparto = distribuirAbono(
+        monto,
+        Number(prestamo.saldo_mora_usd),
+        Number(prestamo.saldo_interes_usd),
+        Number(prestamo.saldo_capital_usd)
+      );
+
+      if (reparto.sobrante > 0) {
+        throw new BadRequestError(
+          `El abono excede la deuda en $${reparto.sobrante}. La deuda total es $${redondear(
+            Number(prestamo.saldo_mora_usd) +
+              Number(prestamo.saldo_interes_usd) +
+              Number(prestamo.saldo_capital_usd)
+          )}`
+        );
+      }
+
       const abono = await tx.abonoPrestamo.create({
         data: {
           prestamo_id: id,
@@ -603,19 +640,6 @@ export const registrarAbono = async (req: Request, res: Response): Promise<void>
       const nuevaMora = redondear(Number(prestamo.saldo_mora_usd) - reparto.mora);
       const saldado = nuevoCapital <= 0 && nuevoInteres <= 0 && nuevaMora <= 0;
 
-      // Se marcan como pagadas tantas cuotas como cubra lo abonado
-      let restante = redondear(reparto.capital + reparto.interes);
-      const pendientes = prestamo.plan_pagos.filter((c) => c.estado !== 'pagada');
-      for (const cuota of pendientes) {
-        const totalCuota = Number(cuota.monto_total_usd);
-        if (restante + 0.009 < totalCuota) break;
-        await tx.planPago.update({
-          where: { id: cuota.id },
-          data: { estado: 'pagada', fecha_pago: new Date() },
-        });
-        restante = redondear(restante - totalCuota);
-      }
-
       await tx.prestamo.update({
         where: { id },
         data: {
@@ -625,65 +649,154 @@ export const registrarAbono = async (req: Request, res: Response): Promise<void>
           saldo_interes_bs: redondear(Math.max(nuevoInteres, 0) * tasa),
           saldo_mora_usd: Math.max(nuevaMora, 0),
           saldo_mora_bs: redondear(Math.max(nuevaMora, 0) * tasa),
+          fecha_ultimo_abono: new Date(),
           ...(saldado ? { estado: 'saldado' as const } : {}),
         },
       });
 
-      // Al saldarse, los fiadores recuperan su ahorro bloqueado
-      if (saldado) {
-        const fiadores = await tx.fiador.findMany({ where: { prestamo_id: id, estado: 'activo' } });
-        for (const fiador of fiadores) {
-          let porLiberar = Number(fiador.monto_bloqueado_usd);
-          const cuentas = await tx.cuentaAhorro.findMany({
-            where: { socio_id: fiador.socio_id, monto_bloqueado_usd: { gt: 0 } },
-          });
-          for (const cuenta of cuentas) {
-            if (porLiberar <= 0) break;
-            const liberar = Math.min(Number(cuenta.monto_bloqueado_usd), porLiberar);
-            const restanteBloqueado = redondear(Number(cuenta.monto_bloqueado_usd) - liberar);
-            await tx.cuentaAhorro.update({
-              where: { id: cuenta.id },
-              data: {
-                monto_bloqueado_usd: restanteBloqueado,
-                monto_bloqueado_bs: redondear(restanteBloqueado * tasa),
-              },
-            });
-            porLiberar = redondear(porLiberar - liberar);
-          }
+      const { cuotas_pagadas } = await sincronizarCuotas(tx, id);
+      if (saldado) await liberarFiadores(tx, id, tasa);
 
-          await tx.fiador.update({
-            where: { id: fiador.id },
-            data: { estado: 'liberado', fecha_liberacion: new Date() },
-          });
-        }
-      }
-
-      await tx.auditLog.create({
-        data: {
-          usuario_id: req.user!.userId,
-          accion: 'ABONO_PRESTAMO',
-          modulo: 'prestamos',
-          registro_id: id,
-          datos_despues: { monto, reparto, saldado } as any,
-          ip_address: req.ip || 'unknown',
-          user_agent: req.get('user-agent') || 'unknown',
-        },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'ABONO_PRESTAMO',
+        modulo: 'prestamos',
+        registro_id: id,
+        despues: { abono_id: abono.id, monto, reparto, saldado, cuotas_pagadas },
       });
 
-      return { abono, saldado };
+      return { abono, reparto, saldado, numero: prestamo.numero_prestamo };
     });
 
     logger.info(
-      `Abono de $${monto} al préstamo ${prestamo.numero_prestamo}` +
+      `Abono de $${monto} al préstamo ${resultado.numero}` +
         (resultado.saldado ? ' — SALDADO, fiadores liberados' : '')
     );
 
     res.status(201).json({
       success: true,
-      data: { abono: resultado.abono, reparto, saldado: resultado.saldado },
+      data: { abono: resultado.abono, reparto: resultado.reparto, saldado: resultado.saldado },
     });
   } catch (error) {
     responderError(res, error, 'Error al registrar el abono');
+  }
+};
+
+/**
+ * POST /api/prestamos/:id/abonos/:abonoId/reversar
+ *
+ * Corrige un abono mal cargado (RF-PRE-08). No se borra: queda marcado con
+ * motivo, fecha y usuario, y la deuda vuelve a lo que era — capital, interés y
+ * mora por separado, con lo que ese abono había aplicado a cada uno.
+ *
+ * Se rechazan dos casos:
+ *  - Abonos cobrados en colecta. Se reversan reversando la colecta, que es lo
+ *    que entró en caja; reversados sueltos, el cierre de caja quedaría mintiendo.
+ *  - Préstamos saldados cuyos fiadores ya recuperaron el ahorro.
+ */
+export const reversarAbono = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    const abonoId = parseInt(String(req.params.abonoId), 10);
+    if (isNaN(id) || isNaN(abonoId)) throw new BadRequestError('ID inválido');
+
+    const validacion = reversarAbonoSchema.safeParse(req.body);
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Datos inválidos', details: validacion.error.errors },
+      });
+      return;
+    }
+    const { motivo } = validacion.data;
+
+    const existe = await prisma.prestamo.findUnique({ where: { id }, select: { socio_id: true } });
+    if (!existe) throw new NotFoundError('Préstamo no encontrado');
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      await bloquearSocio(tx, existe.socio_id);
+
+      const [prestamo, abono] = [
+        await tx.prestamo.findUnique({ where: { id } }),
+        await tx.abonoPrestamo.findUnique({ where: { id: abonoId } }),
+      ];
+      if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
+      if (!abono || abono.prestamo_id !== id) throw new NotFoundError('El abono no pertenece a este préstamo');
+      if (abono.reversado) throw new ConflictError('Este abono ya fue reversado');
+      if (abono.colecta_id) {
+        throw new ConflictError(
+          `Este abono se cobró en la colecta #${abono.colecta_id}. Reverse esa colecta: ` +
+            'el dinero entró por caja y el cierre tiene que reflejar el reverso.'
+        );
+      }
+      if (prestamo.estado === 'cancelado') throw new ConflictError('El préstamo está cancelado');
+      await asegurarReversoConFiadores(tx, prestamo);
+
+      await tx.abonoPrestamo.update({
+        where: { id: abonoId },
+        data: {
+          reversado: true,
+          fecha_reverso: new Date(),
+          motivo_reverso: motivo,
+          reversado_por: req.user!.userId,
+        },
+      });
+
+      const tasa = Number(abono.tasa_cambio);
+      const capital = redondear(Number(prestamo.saldo_capital_usd) + Number(abono.aplicado_capital_usd));
+      const interes = redondear(Number(prestamo.saldo_interes_usd) + Number(abono.aplicado_interes_usd));
+      const mora = redondear(Number(prestamo.saldo_mora_usd) + Number(abono.aplicado_mora_usd));
+
+      // Fecha del último abono: la del abono vigente anterior, si queda alguno
+      const anterior = await tx.abonoPrestamo.findFirst({
+        where: { prestamo_id: id, reversado: false },
+        orderBy: { fecha_abono: 'desc' },
+        select: { fecha_abono: true },
+      });
+
+      await tx.prestamo.update({
+        where: { id },
+        data: {
+          saldo_capital_usd: capital,
+          saldo_capital_bs: redondear(capital * tasa),
+          saldo_interes_usd: interes,
+          saldo_interes_bs: redondear(interes * tasa),
+          saldo_mora_usd: mora,
+          saldo_mora_bs: redondear(mora * tasa),
+          fecha_ultimo_abono: anterior?.fecha_abono ?? null,
+          ...(prestamo.estado === 'saldado' ? { estado: 'activo' as const } : {}),
+        },
+      });
+
+      const { cuotas_pagadas } = await sincronizarCuotas(tx, id);
+
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'REVERSAR_ABONO',
+        modulo: 'prestamos',
+        registro_id: id,
+        antes: {
+          abono_id: abono.id,
+          monto_usd: abono.monto_usd,
+          estado: prestamo.estado,
+          saldo_capital_usd: prestamo.saldo_capital_usd,
+          saldo_interes_usd: prestamo.saldo_interes_usd,
+          saldo_mora_usd: prestamo.saldo_mora_usd,
+        },
+        despues: { motivo, saldo_capital_usd: capital, saldo_interes_usd: interes, saldo_mora_usd: mora, cuotas_pagadas },
+      });
+
+      return { numero: prestamo.numero_prestamo, monto: Number(abono.monto_usd) };
+    });
+
+    // La mora depende de la fecha y de qué cuotas quedaron vencidas: con las
+    // cuotas ya desmarcadas se recalcula, igual que al consultar el préstamo
+    await actualizarMoraYCuotas(id);
+
+    logger.info(`Abono ${abonoId} de $${resultado.monto} al préstamo ${resultado.numero} reversado: ${motivo}`);
+    res.json({ success: true, data: { id: abonoId, reversado: true } });
+  } catch (error) {
+    responderError(res, error, 'Error al reversar el abono');
   }
 };
 
@@ -699,67 +812,7 @@ export const registrarAbono = async (req: Request, res: Response): Promise<void>
  */
 export const reporteCartera = async (req: Request, res: Response): Promise<void> => {
   try {
-    const vista = String(req.query.vista ?? 'por_cobrar');
-
-    const filtros: Record<string, Prisma.PrestamoWhereInput> = {
-      por_cobrar: { estado: { in: ['activo', 'moroso'] } },
-      morosos: { estado: 'moroso' },
-      cobrados: { estado: 'saldado' },
-      emitidos: {},
-    };
-
-    const where = filtros[vista] ?? filtros.por_cobrar!;
-
-    const prestamos = await prisma.prestamo.findMany({
-      where,
-      orderBy: { fecha_desembolso: 'desc' },
-      include: {
-        socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true, telefono: true } },
-        tipo_prestamo: { select: { codigo: true, nombre: true } },
-        plan_pagos: { select: { estado: true } },
-      },
-    });
-
-    const filas = prestamos.map((p) => {
-      const vencidas = p.plan_pagos.filter((c) => c.estado === 'vencida').length;
-      const pagadas = p.plan_pagos.filter((c) => c.estado === 'pagada').length;
-      return {
-        id: p.id,
-        numero_prestamo: p.numero_prestamo,
-        codigo_socio: p.socio.codigo_socio,
-        cedula: p.socio.cedula,
-        socio: `${p.socio.apellido}, ${p.socio.nombre}`,
-        telefono: p.socio.telefono,
-        tipo: p.tipo_prestamo.nombre,
-        monto_original_usd: Number(p.monto_original_usd),
-        saldo_capital_usd: Number(p.saldo_capital_usd),
-        saldo_interes_usd: Number(p.saldo_interes_usd),
-        saldo_mora_usd: Number(p.saldo_mora_usd),
-        deuda_total_usd: redondear(
-          Number(p.saldo_capital_usd) + Number(p.saldo_interes_usd) + Number(p.saldo_mora_usd)
-        ),
-        cuotas_pagadas: pagadas,
-        cuotas_vencidas: vencidas,
-        cuotas_totales: p.plan_pagos.length,
-        estado: p.estado,
-        fecha_desembolso: p.fecha_desembolso,
-        fecha_vencimiento: p.fecha_vencimiento,
-      };
-    });
-
-    res.json({
-      success: true,
-      data: {
-        vista,
-        filas,
-        resumen: {
-          cantidad: filas.length,
-          otorgado_usd: redondear(filas.reduce((a, f) => a + f.monto_original_usd, 0)),
-          por_cobrar_usd: redondear(filas.reduce((a, f) => a + f.deuda_total_usd, 0)),
-          mora_usd: redondear(filas.reduce((a, f) => a + f.saldo_mora_usd, 0)),
-        },
-      },
-    });
+    res.json({ success: true, data: await carteraPrestamos(String(req.query.vista ?? 'por_cobrar')) });
   } catch (error) {
     responderError(res, error, 'Error al generar el reporte de cartera');
   }

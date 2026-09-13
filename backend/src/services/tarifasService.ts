@@ -59,6 +59,18 @@ export const PARAMETROS_COLECTA = {
     porDefecto: 6,
     descripcion: 'Semanas de atraso que suspenden el servicio de salud',
   },
+  // No es de colecta, pero se siembra y se lee igual. La cooperativa no
+  // confirmó si son meses o días calendario (pendiente 10): son meses.
+  MESES_PRUEBA_TRABAJADOR: {
+    porDefecto: 3,
+    descripcion: 'Meses de prueba antes de que un trabajador pueda inscribirse como ahorrista',
+  },
+  // La cooperativa no confirmó el valor (pendiente 1). En 0 no se puede
+  // registrar ningún pago de salud por feria: mejor eso que inventar un monto.
+  TARIFA_SALUD_TRABAJADOR_USD: {
+    porDefecto: 0,
+    descripcion: 'Salud por trabajador y período que paga la feria, en USD (0 = sin configurar)',
+  },
 } as const;
 
 /**
@@ -70,6 +82,23 @@ export const PARAMETROS_COLECTA = {
  */
 export const CLAVE_TIPO_CUENTA_AHORRO = 'TIPO_CUENTA_AHORRO_OBLIGATORIO';
 const TIPO_CUENTA_AHORRO_POR_DEFECTO = '01';
+
+/**
+ * Periodicidad del pago de salud por feria: 'mensual' o 'semanal'. La
+ * cooperativa no la confirmó (pendiente 2); mensual es el mínimo que pide el
+ * requerimiento. Cada período guardado lleva su tipo, así que cambiarla no
+ * altera los pagos ya hechos.
+ */
+export const CLAVE_PERIODICIDAD_SALUD_FERIA = 'PERIODICIDAD_SALUD_FERIA';
+
+export async function periodicidadSaludFeria(): Promise<'mensual' | 'semanal'> {
+  try {
+    const p = await prisma.parametroSistema.findUnique({ where: { clave: CLAVE_PERIODICIDAD_SALUD_FERIA } });
+    return p?.valor?.trim().toLowerCase() === 'semanal' ? 'semanal' : 'mensual';
+  } catch {
+    return 'mensual';
+  }
+}
 
 /** Código del tipo de cuenta donde cae el ahorro obligatorio. */
 export async function tipoCuentaAhorroObligatorio(): Promise<string> {
@@ -191,6 +220,17 @@ export async function sembrarParametrosColecta(): Promise<void> {
       clave: CLAVE_TIPO_CUENTA_AHORRO,
       valor: TIPO_CUENTA_AHORRO_POR_DEFECTO,
       descripcion: 'Código del tipo de cuenta que recibe el ahorro obligatorio de la colecta',
+      tipo_dato: 'string',
+    },
+  });
+
+  await prisma.parametroSistema.upsert({
+    where: { clave: CLAVE_PERIODICIDAD_SALUD_FERIA },
+    update: {},
+    create: {
+      clave: CLAVE_PERIODICIDAD_SALUD_FERIA,
+      valor: 'mensual',
+      descripcion: "Periodicidad del pago de salud por feria: 'mensual' o 'semanal'",
       tipo_dato: 'string',
     },
   });

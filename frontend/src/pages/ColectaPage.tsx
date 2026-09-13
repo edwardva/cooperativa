@@ -53,6 +53,7 @@ import type {
 } from '../services/colectaService'
 import { getErrorMessage } from '../services/api'
 import { usePermissions } from '../store/authStore'
+import { useEnterNavigation } from '../hooks/useEnterNavigation'
 import { MovimientosDelDia } from '../components/colecta/MovimientosDelDia'
 import { SituacionSocio } from '../components/colecta/SituacionSocio'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
@@ -127,6 +128,11 @@ export default function ColectaPage() {
   const [error, setError] = useState('')
   const [tasa, setTasa] = useState<number | null>(null)
   const [candidatos, setCandidatos] = useState<SocioColecta[]>([])
+  // Solo para los modales: la pantalla de cobro tiene su propio flujo de teclado
+  // (Enter busca, Ctrl+Enter cobra, F2 vuelve al buscador)
+  const alEnter = useEnterNavigation()
+  // La busqueda por nombre se corta en 20 resultados
+  const [truncado, setTruncado] = useState(false)
   const [socio, setSocio] = useState<SocioColecta | null>(null)
 
   // --- Driver del cobro: las semanas multiplican los tres servicios ---
@@ -188,6 +194,7 @@ export default function ColectaPage() {
     setBuscando(true)
     setError('')
     setCandidatos([])
+    setTruncado(false)
     setSocio(null)
     setLineas({})
     setRecibo(null)
@@ -202,6 +209,7 @@ export default function ColectaPage() {
       setTarifas(respuesta.data.tarifas ?? null)
       setSemanaActualTexto(respuesta.data.semana_actual_texto ?? '')
       const hallados = respuesta.data.encontrados
+      setTruncado(respuesta.data.truncado ?? false)
 
       if (hallados.length === 0) {
         setError(`No se encontro ningun socio con "${valor}"`)
@@ -615,7 +623,7 @@ export default function ColectaPage() {
               <div className="relative min-w-0 basis-64 flex-1">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-neutral-400" />
                 <input
-                  aria-label="Cédula o número de expediente del asociado"
+                  aria-label="Cédula, número de expediente o nombre del asociado"
                   ref={campoBusqueda}
                   value={termino}
                   onChange={(e) => setTermino(e.target.value)}
@@ -623,7 +631,7 @@ export default function ColectaPage() {
                     if (e.key === 'Enter') void buscar()
                     if (e.key === 'Escape') limpiar()
                   }}
-                  placeholder="Cédula o número de expediente"
+                  placeholder="Cédula, expediente o nombre"
                   className="w-full rounded-xl border border-neutral-200 bg-white py-3.5 pl-12 pr-4 text-lg outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                 />
               </div>
@@ -673,11 +681,13 @@ export default function ColectaPage() {
               </p>
             </div>
           )}
-          {/* VARIOS EXPEDIENTES CON LA MISMA CEDULA */}
+          {/* VARIOS RESULTADOS: expedientes con la misma cedula o busqueda por nombre */}
           {candidatos.length > 0 && (
             <Card className="p-5">
               <p className="mb-3 text-sm font-medium text-neutral-700">
-                {candidatos.length} expedientes con esa cedula. Elija cual:
+                {truncado
+                  ? `Hay mas de ${candidatos.length} coincidencias y se muestran las primeras. Agregue otro nombre o apellido, o busque por cedula.`
+                  : `${candidatos.length} coincidencias. Elija cual:`}
               </p>
               <div className="space-y-2">
                 {candidatos.map((c) => (
@@ -691,7 +701,7 @@ export default function ColectaPage() {
                         {c.apellido}, {c.nombre}
                       </p>
                       <p className="text-xs text-neutral-500">
-                        {c.codigo_socio} · {c.estado} · {c.cobrables.length} servicio(s)
+                        {c.codigo_socio} · CI {c.cedula} · {c.estado} · {c.cobrables.length} servicio(s)
                       </p>
                     </div>
                     <ArrowRight className="h-4 w-4 text-neutral-400" />
@@ -1410,7 +1420,7 @@ export default function ColectaPage() {
               </button>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>
               <div className="space-y-2">
                 {[
                   {

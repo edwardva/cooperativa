@@ -13,6 +13,7 @@ import type { Request, Response } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { registrarAuditoria } from '../services/auditoriaService';
 
 const prisma = new PrismaClient();
 
@@ -757,14 +758,12 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: (req as any).user?.userId || 1,
-        accion: 'CREATE',
-        modulo: 'funeraria',
-        registro_id: nuevoAcuerdo.id,
-        datos_despues: `Acuerdo ${nuevoAcuerdo.numero_acuerdo} creado: ${nuevoAcuerdo.id} - Socio: ${socio.nombre} ${socio.apellido}` as any,
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREATE',
+      modulo: 'funeraria',
+      registro_id: nuevoAcuerdo.id,
+      despues: `Acuerdo ${nuevoAcuerdo.numero_acuerdo} creado: ${nuevoAcuerdo.id} - Socio: ${socio.nombre} ${socio.apellido}`,
     });
 
     res.status(201).json({
@@ -897,15 +896,13 @@ export const actualizarAcuerdo = async (req: Request, res: Response): Promise<vo
       },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: (req as any).user?.userId || 1,
-        accion: 'UPDATE',
-        modulo: 'funeraria',
-        registro_id: acuerdoId,
-        datos_antes: acuerdoExistente as any,
-        datos_despues: acuerdoActualizado as any,
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'UPDATE',
+      modulo: 'funeraria',
+      registro_id: acuerdoId,
+      antes: acuerdoExistente,
+      despues: acuerdoActualizado,
     });
 
     res.json({
@@ -1001,14 +998,12 @@ export const eliminarAcuerdo = async (req: Request, res: Response): Promise<void
       where: { id: acuerdoId },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: (req as any).user?.userId || 1,
-        accion: 'DELETE',
-        modulo: 'funeraria',
-        registro_id: acuerdoId,
-        datos_antes: acuerdo as any,
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'DELETE',
+      modulo: 'funeraria',
+      registro_id: acuerdoId,
+      antes: acuerdo,
     });
 
     res.json({
@@ -1112,14 +1107,12 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: (req as any).user?.userId || 1,
-        accion: 'UPDATE',
-        modulo: 'funeraria',
-        registro_id: acuerdoId,
-        datos_despues: `Estado cambiado: ${acuerdoExistente.estado} → ${data.estado}. Acuerdo: ${acuerdoId}. Motivo: ${data.motivo || 'No especificado'}` as any,
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'UPDATE',
+      modulo: 'funeraria',
+      registro_id: acuerdoId,
+      despues: `Estado cambiado: ${acuerdoExistente.estado} → ${data.estado}. Acuerdo: ${acuerdoId}. Motivo: ${data.motivo || 'No especificado'}`,
     });
 
     res.json({
@@ -1200,13 +1193,11 @@ export const verificarSuspensionesAutomaticas = async (req: Request, res: Respon
         suspendidos.push(acuerdo.id);
 
         // Audit log
-        await prisma.auditLog.create({
-          data: {
-            usuario_id: (req as any).user?.userId || 1,
-            accion: 'UPDATE',
-            modulo: 'funeraria',
-            datos_despues: `Suspensión automática: Acuerdo ${acuerdo.id}, ${acuerdo.semanas_sin_pago} semanas sin pago` as any,
-          },
+        await registrarAuditoria(prisma, {
+          req,
+          accion: 'UPDATE',
+          modulo: 'funeraria',
+          despues: `Suspensión automática: Acuerdo ${acuerdo.id}, ${acuerdo.semanas_sin_pago} semanas sin pago`,
         });
 
         logger.info(`Acuerdo ${acuerdo.id} suspendido automáticamente (${acuerdo.semanas_sin_pago} semanas)`);

@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import { useEnterNavigation } from '../hooks/useEnterNavigation';
 import { createPortal } from 'react-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -1974,6 +1975,8 @@ interface ModalAperturaCuentaProps {
 }
 
 const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) => {
+  // Enter pasa de campo y ya no envía el formulario por accidente (RF-USA-03)
+  const alEnter = useEnterNavigation();
   // Estados del formulario
   const [cedula, setCedula] = useState('');
   const [sociosEncontrados, setSociosEncontrados] = useState<any[]>([]);
@@ -2132,7 +2135,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} onKeyDown={alEnter} className="space-y-6">
           {/* Paso 1: Buscar Socio */}
           <div className="space-y-4">
             <h3 className="font-semibold text-gray-900">1. Buscar Socio</h3>

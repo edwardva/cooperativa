@@ -20,7 +20,10 @@ import {
   CalendarCheck,
   Calculator,
   Printer,
-  Shield
+  Shield,
+  HardHat,
+  Contact,
+  ScrollText
 } from 'lucide-react'
 import logo from '@/logoR.png'
 
@@ -34,12 +37,15 @@ interface NavItem {
 const navigationItems: NavItem[] = [
   { name: 'Dashboard', path: '/dashboard', icon: Home },
   { name: 'Socios', path: '/socios', icon: Users },
+  { name: 'Personas', path: '/personas', icon: Contact },
+  { name: 'Trabajadores', path: '/trabajadores', icon: HardHat },
   { name: 'Ahorro', path: '/ahorro', icon: Wallet },
   { name: 'Préstamos', path: '/prestamos', icon: DollarSign },
   { name: 'Colecta', path: '/colecta', icon: ClipboardList },
   { name: 'Reportes Colecta', path: '/colecta/reportes', icon: Calculator },
   { name: 'Funeraria', path: '/funeraria', icon: Shield },
   { name: 'Salud', path: '/salud', icon: HeartPulse },
+  { name: 'Salud por Feria', path: '/salud/pago-feria', icon: HeartPulse },
   { name: 'Bóveda', path: '/boveda', icon: Briefcase },
   { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck },
   { name: 'Reportes', path: '/reportes', icon: FileDown },
@@ -49,6 +55,7 @@ const navigationItems: NavItem[] = [
   { name: 'Tipos de Cuenta', path: '/tipos-cuenta', icon: CreditCard },
   { name: 'Tipos de Préstamo', path: '/tipos-prestamo', icon: FileText },
   { name: 'Parámetros', path: '/parametros', icon: Settings },
+  { name: 'Auditoría', path: '/auditoria', icon: ScrollText },
 ]
 
 interface SidebarProps {

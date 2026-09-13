@@ -1,287 +1,321 @@
-import { useState } from 'react';
-import { Card } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
-import { FileDown, FileSpreadsheet, Users, DollarSign } from 'lucide-react';
+/**
+ * ============================================
+ * PAGE: REPORTES
+ * ============================================
+ * RF-REP-01 a 08. Cada reporte se ve en pantalla y se exporta a Excel o PDF
+ * con los mismos datos y totales: los tres salen del mismo generador.
+ */
 
-// TODO: Mover a types/index.ts cuando integremos con API
-interface TipoReporte {
-  id: string;
-  nombre: string;
-  descripcion: string;
-  icono: React.ReactNode;
-  formatos: string[];
+import { useEffect, useState } from 'react'
+import { AlertTriangle, CalendarRange, DollarSign, Eye, FileSpreadsheet, FileText, HardHat, HeartPulse, ListChecks, Loader2, Wallet } from 'lucide-react'
+import { Card } from '../components/ui/Card'
+import { Button } from '../components/ui/Button'
+import { getErrorMessage } from '../services/api'
+import { usePermissions } from '../store/authStore'
+import { useEnterNavigation } from '../hooks/useEnterNavigation'
+import * as reportesService from '../services/reportesService'
+import * as feriasService from '../services/feriasService'
+import type { ClaveReporte, Reporte } from '../services/reportesService'
+import type { Ubicacion } from '../services/feriasService'
+
+interface Campo {
+  nombre: string
+  etiqueta: string
+  tipo: 'texto' | 'fecha' | 'numero' | 'select' | 'feria'
+  opciones?: { valor: string; texto: string }[]
+  ayuda?: string
 }
 
+interface Definicion {
+  clave: ClaveReporte
+  titulo: string
+  descripcion: string
+  icono: React.ElementType
+  campos: Campo[]
+  inicial: Record<string, string>
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+const hoy = new Date()
+const hoyISO = `${hoy.getFullYear()}-${pad(hoy.getMonth() + 1)}-${pad(hoy.getDate())}`
+const inicioMes = `${hoyISO.slice(0, 8)}01`
+
+const TIPO_PERIODO: Campo = {
+  nombre: 'tipo', etiqueta: 'Periodicidad', tipo: 'select',
+  opciones: [{ valor: 'mensual', texto: 'Mensual' }, { valor: 'semanal', texto: 'Semanal' }],
+}
+
+const REPORTES: Definicion[] = [
+  {
+    clave: 'ferias-pendientes',
+    titulo: 'Ferias pendientes de pago de salud',
+    descripcion: 'Que ferias pagaron la salud del periodo, cuales deben y cuanto.',
+    icono: HeartPulse,
+    campos: [TIPO_PERIODO, { nombre: 'anio', etiqueta: 'Año', tipo: 'numero' }, { nombre: 'numero', etiqueta: 'Mes o semana', tipo: 'numero' }],
+    inicial: { tipo: 'mensual', anio: String(hoy.getFullYear()), numero: String(hoy.getMonth() + 1) },
+  },
+  {
+    clave: 'pagos-salud',
+    titulo: 'Pagos de salud por feria',
+    descripcion: 'Un renglon por trabajador pagado, con feria, periodo, estado y referencia.',
+    icono: ListChecks,
+    campos: [
+      { nombre: 'feria_id', etiqueta: 'Feria', tipo: 'feria' },
+      TIPO_PERIODO,
+      { nombre: 'anio', etiqueta: 'Año', tipo: 'numero' },
+      { nombre: 'numero', etiqueta: 'Mes o semana', tipo: 'numero', ayuda: 'Vacio: todo el año' },
+      { nombre: 'estado', etiqueta: 'Estado', tipo: 'select', opciones: [{ valor: '', texto: 'Todos' }, { valor: 'vigente', texto: 'Pagados' }, { valor: 'anulado', texto: 'Anulados' }] },
+      { nombre: 'desde', etiqueta: 'Pagado desde', tipo: 'fecha' },
+      { nombre: 'hasta', etiqueta: 'Pagado hasta', tipo: 'fecha' },
+      { nombre: 'trabajador', etiqueta: 'Trabajador', tipo: 'texto', ayuda: 'Codigo, cedula o apellido' },
+    ],
+    inicial: { tipo: 'mensual', anio: String(hoy.getFullYear()) },
+  },
+  {
+    clave: 'trabajadores-feria',
+    titulo: 'Trabajadores por feria',
+    descripcion: 'Activos, suspendidos, inactivos y retirados de cada feria, y cuantos tienen salud.',
+    icono: HardHat,
+    campos: [{ nombre: 'feria_id', etiqueta: 'Feria', tipo: 'feria' }],
+    inicial: {},
+  },
+  {
+    clave: 'cartera-prestamos',
+    titulo: 'Cartera de prestamos',
+    descripcion: 'Prestamos activos, vencidos o pagados, con saldo por cobrar y cuotas pendientes.',
+    icono: DollarSign,
+    campos: [{
+      nombre: 'vista', etiqueta: 'Cartera', tipo: 'select',
+      opciones: [
+        { valor: 'por_cobrar', texto: 'Por cobrar' },
+        { valor: 'morosos', texto: 'Morosos (vencidos)' },
+        { valor: 'cobrados', texto: 'Cobrados' },
+        { valor: 'emitidos', texto: 'Todos los emitidos' },
+      ],
+    }],
+    inicial: { vista: 'por_cobrar' },
+  },
+  {
+    clave: 'semanas-adelantadas',
+    titulo: 'Semanas pagadas por adelantado',
+    descripcion: 'Cobros que dejaron servicios cubiertos por delante de la semana en curso.',
+    icono: CalendarRange,
+    campos: [
+      { nombre: 'desde', etiqueta: 'Cobrado desde', tipo: 'fecha' },
+      { nombre: 'hasta', etiqueta: 'Cobrado hasta', tipo: 'fecha' },
+      { nombre: 'socio', etiqueta: 'Socio', tipo: 'texto', ayuda: 'Expediente, cedula o apellido' },
+    ],
+    inicial: { desde: inicioMes, hasta: hoyISO },
+  },
+  {
+    clave: 'colectas',
+    titulo: 'Colectas',
+    descripcion: 'Colectas por fecha, socio o semana cobrada, con totales y reversos.',
+    icono: Wallet,
+    campos: [
+      { nombre: 'desde', etiqueta: 'Desde', tipo: 'fecha' },
+      { nombre: 'hasta', etiqueta: 'Hasta', tipo: 'fecha' },
+      { nombre: 'socio', etiqueta: 'Socio', tipo: 'texto', ayuda: 'Expediente, cedula o apellido' },
+      { nombre: 'anio', etiqueta: 'Año cobrado', tipo: 'numero' },
+      { nombre: 'semana', etiqueta: 'Semana cobrada', tipo: 'numero' },
+      { nombre: 'estado', etiqueta: 'Estado', tipo: 'select', opciones: [{ valor: '', texto: 'Todas' }, { valor: 'vigentes', texto: 'Vigentes' }, { valor: 'reversadas', texto: 'Reversadas' }] },
+    ],
+    inicial: { desde: inicioMes, hasta: hoyISO },
+  },
+]
+
+/** La vista previa muestra hasta aca; Excel y PDF llevan todo */
+const MAXIMO_EN_PANTALLA = 500
+
+const controlClass =
+  'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
+const labelClass = 'block text-sm font-medium text-neutral-700'
+
+const celda = (v: string | number | null) =>
+  typeof v === 'number' && !Number.isInteger(v)
+    ? v.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : v ?? ''
+
 export const ReportesPage = () => {
-  const [tipoSeleccionado, setTipoSeleccionado] = useState<string>('');
-  const [formato, setFormato] = useState<'pdf' | 'excel'>('excel');
-  const [generando, setGenerando] = useState(false);
+  const { hasPermission } = usePermissions()
+  const puedeExportar = hasPermission('reportes', 'export')
+  const alEnter = useEnterNavigation()
 
-  // TODO: Obtener de API (GET /api/reportes/tipos)
-  const tiposReporte: TipoReporte[] = [
-    {
-      id: 'socios',
-      nombre: 'Reporte de Socios',
-      descripcion: 'Listado completo de socios con filtros por ubicación y estado',
-      icono: <Users className="w-6 h-6 text-blue-600" />,
-      formatos: ['pdf', 'excel'],
-    },
-    {
-      id: 'prestamos',
-      nombre: 'Reporte de Préstamos',
-      descripcion: 'Listado de préstamos con estado, tipo y rangos de fecha',
-      icono: <DollarSign className="w-6 h-6 text-green-600" />,
-      formatos: ['pdf', 'excel'],
-    },
-  ];
+  const [seleccion, setSeleccion] = useState<ClaveReporte>('ferias-pendientes')
+  const [valores, setValores] = useState<Record<ClaveReporte, Record<string, string>>>(
+    () => Object.fromEntries(REPORTES.map((r) => [r.clave, r.inicial])) as Record<ClaveReporte, Record<string, string>>
+  )
+  const [ferias, setFerias] = useState<Ubicacion[]>([])
+  const [reporte, setReporte] = useState<Reporte | null>(null)
+  const [trabajando, setTrabajando] = useState<'ver' | 'excel' | 'pdf' | null>(null)
+  const [error, setError] = useState('')
 
-  const handleGenerar = async () => {
-    if (!tipoSeleccionado) {
-      alert('Por favor seleccione un tipo de reporte');
-      return;
-    }
+  const definicion = REPORTES.find((r) => r.clave === seleccion)!
+  const params = valores[seleccion]
 
-    setGenerando(true);
+  useEffect(() => {
+    feriasService.obtenerUbicaciones().then((r) => r.success && r.data && setFerias(r.data)).catch(() => undefined)
+  }, [])
 
+  const elegir = (clave: ClaveReporte) => {
+    setSeleccion(clave)
+    setReporte(null)
+    setError('')
+  }
+
+  const cambiar = (nombre: string, valor: string) =>
+    setValores((v) => ({ ...v, [seleccion]: { ...v[seleccion], [nombre]: valor } }))
+
+  const ver = async () => {
+    setTrabajando('ver')
+    setError('')
     try {
-      // TODO: Implementar llamada a API
-      const endpoint = `/api/reportes/${tipoSeleccionado}`;
-      console.log(`Generando reporte: ${endpoint}`, { formato });
-
-      // Simulación de generación
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      alert(`Reporte generado exitosamente en formato ${formato.toUpperCase()}`);
-    } catch (error) {
-      console.error('Error generando reporte:', error);
-      alert('Error al generar el reporte');
+      setReporte(await reportesService.verReporte(seleccion, params))
+    } catch (err) {
+      setReporte(null)
+      setError(getErrorMessage(err) || 'No fue posible generar el reporte')
     } finally {
-      setGenerando(false);
+      setTrabajando(null)
     }
-  };
+  }
+
+  const exportar = async (formato: 'excel' | 'pdf') => {
+    setTrabajando(formato)
+    setError('')
+    try {
+      await reportesService.exportarReporte(seleccion, formato, params)
+    } catch (err) {
+      setError(getErrorMessage(err) || 'No fue posible exportar el reporte')
+    } finally {
+      setTrabajando(null)
+    }
+  }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
+    <div className="space-y-6 p-4 sm:p-6">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Generador de Reportes</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Genere reportes en PDF o Excel con filtros personalizados
+        <h1 className="text-2xl font-semibold text-neutral-900">Reportes</h1>
+        <p className="mt-1 text-sm text-neutral-500">
+          Vea el reporte en pantalla y exportelo a Excel o PDF con los mismos datos y totales.
         </p>
       </div>
 
-      {/* Selección de Tipo de Reporte */}
-      <Card className="p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Tipo de Reporte</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {tiposReporte.map((tipo) => (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {REPORTES.map((r) => {
+          const Icono = r.icono
+          return (
             <button
-              key={tipo.id}
-              onClick={() => setTipoSeleccionado(tipo.id)}
-              className={`p-4 border-2 rounded-lg text-left transition-all ${
-                tipoSeleccionado === tipo.id
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300'
-              }`}
+              key={r.clave}
+              onClick={() => elegir(r.clave)}
+              className={`rounded-xl border-2 p-4 text-left transition ${seleccion === r.clave ? 'border-primary-500 bg-primary-50/50' : 'border-neutral-200 bg-white hover:border-neutral-300'}`}
             >
               <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 mt-1">{tipo.icono}</div>
-                <div className="flex-1">
-                  <h3 className="font-medium text-gray-900">{tipo.nombre}</h3>
-                  <p className="text-sm text-gray-600 mt-1">{tipo.descripcion}</p>
-                  <div className="flex gap-2 mt-2">
-                    {tipo.formatos.map((fmt) => (
-                      <span
-                        key={fmt}
-                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800"
-                      >
-                        {fmt.toUpperCase()}
-                      </span>
-                    ))}
-                  </div>
+                <Icono className="mt-0.5 h-5 w-5 flex-shrink-0 text-primary-600" />
+                <div>
+                  <p className="font-medium text-neutral-900">{r.titulo}</p>
+                  <p className="mt-1 text-sm text-neutral-600">{r.descripcion}</p>
                 </div>
               </div>
             </button>
-          ))}
+          )
+        })}
+      </div>
+
+      <Card className="p-5">
+        <p className="mb-4 text-sm font-semibold text-neutral-800">{definicion.titulo}</p>
+        {definicion.campos.length > 0 && (
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" onKeyDown={alEnter}>
+            {definicion.campos.map((c) => (
+              <label key={c.nombre} className={labelClass}>
+                <span className="mb-1.5 block">{c.etiqueta}</span>
+                {c.tipo === 'select' ? (
+                  <select value={params[c.nombre] ?? ''} onChange={(e) => cambiar(c.nombre, e.target.value)} className={controlClass}>
+                    {c.opciones!.map((o) => <option key={o.valor} value={o.valor}>{o.texto}</option>)}
+                  </select>
+                ) : c.tipo === 'feria' ? (
+                  <select value={params[c.nombre] ?? ''} onChange={(e) => cambiar(c.nombre, e.target.value)} className={controlClass}>
+                    <option value="">Todas</option>
+                    {ferias.map((f) => <option key={f.id} value={f.id}>{f.codigo}{f.nombre && f.nombre !== f.codigo ? ` · ${f.nombre}` : ''}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    type={c.tipo === 'fecha' ? 'date' : c.tipo === 'numero' ? 'number' : 'text'}
+                    value={params[c.nombre] ?? ''}
+                    onChange={(e) => cambiar(c.nombre, e.target.value)}
+                    className={controlClass}
+                  />
+                )}
+                {c.ayuda && <span className="mt-1 block text-xs font-normal text-neutral-500">{c.ayuda}</span>}
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => void ver()} disabled={trabajando !== null}>
+            {trabajando === 'ver' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+            Ver en pantalla
+          </Button>
+          {puedeExportar && (
+            <>
+              <Button variant="outline" onClick={() => void exportar('excel')} disabled={trabajando !== null}>
+                {trabajando === 'excel' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                Excel
+              </Button>
+              <Button variant="outline" onClick={() => void exportar('pdf')} disabled={trabajando !== null}>
+                {trabajando === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                PDF
+              </Button>
+            </>
+          )}
         </div>
       </Card>
 
-      {/* Configuración del Reporte */}
-      {tipoSeleccionado && (
-        <Card className="p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Configuración</h2>
-          
-          {/* Formato */}
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Formato de Salida
-              </label>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <button
-                  onClick={() => setFormato('pdf')}
-                  className={`p-4 border-2 rounded-lg flex items-center justify-center gap-2 transition-all ${
-                    formato === 'pdf'
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                  disabled={generando}
-                >
-                  <FileDown className="w-5 h-5" />
-                  <span className="font-medium">PDF</span>
-                  <span className="text-xs text-orange-600 bg-orange-100 px-2 py-0.5 rounded">
-                    Beta
-                  </span>
-                </button>
-                <button
-                  onClick={() => setFormato('excel')}
-                  className={`p-4 border-2 rounded-lg flex items-center justify-center gap-2 transition-all ${
-                    formato === 'excel'
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                  disabled={generando}
-                >
-                  <FileSpreadsheet className="w-5 h-5" />
-                  <span className="font-medium">Excel</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Filtros por tipo de reporte */}
-            {tipoSeleccionado === 'socios' && (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Ubicación
-                  </label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="">Todas</option>
-                    <option value="MATRIZ">MATRIZ</option>
-                    <option value="SUC01">SUC01</option>
-                    <option value="SUC02">SUC02</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Estado
-                  </label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="todos">Todos</option>
-                    <option value="activo">Activos</option>
-                    <option value="inactivo">Inactivos</option>
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {tipoSeleccionado === 'prestamos' && (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Tipo de Préstamo
-                  </label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="">Todos</option>
-                    <option value="PERSONAL">Personal</option>
-                    <option value="EMERGENCIA">Emergencia</option>
-                    <option value="VEHICULO">Vehículo</option>
-                    <option value="VIVIENDA">Vivienda</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Estado
-                  </label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="todos">Todos</option>
-                    <option value="activo">Activos</option>
-                    <option value="saldado">Saldados</option>
-                    <option value="mora">En Mora</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Fecha Desde
-                  </label>
-                  <input
-                    type="date"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Fecha Hasta
-                  </label>
-                  <input
-                    type="date"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
+      {error && (
+        <div role="alert" className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+          <p>{error}</p>
+        </div>
       )}
 
-      {/* Botón de Generar */}
-      {tipoSeleccionado && (
-        <Card className="p-6">
-          <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-            <div>
-              <p className="text-sm text-gray-600">
-                Se generará un archivo{' '}
-                <span className="font-medium text-gray-900">
-                  {formato === 'pdf' ? 'PDF' : 'Excel'}
-                </span>{' '}
-                con el reporte seleccionado
-              </p>
-              {formato === 'pdf' && (
-                <p className="text-xs text-orange-600 mt-1">
-                  ⚠️ La generación de PDF está en desarrollo. Se generará Excel temporalmente.
-                </p>
-              )}
-            </div>
-            <Button
-              onClick={handleGenerar}
-              disabled={generando}
-              className="flex items-center gap-2"
-            >
-              {generando ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-on-accent border-t-transparent rounded-full animate-spin" />
-                  Generando...
-                </>
-              ) : (
-                <>
-                  <FileDown className="w-4 h-4" />
-                  Generar Reporte
-                </>
-              )}
-            </Button>
+      {reporte && (
+        <div className="space-y-4">
+          <div>
+            <p className="text-lg font-semibold text-neutral-900">{reporte.titulo}</p>
+            {reporte.subtitulo && <p className="text-sm text-neutral-500">{reporte.subtitulo}</p>}
           </div>
-        </Card>
-      )}
-
-      {/* Nota informativa */}
-      {!tipoSeleccionado && (
-        <Card className="p-6 bg-blue-50 border-blue-200">
-          <div className="flex gap-3">
-            <div className="flex-shrink-0">
-              <FileDown className="w-6 h-6 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-blue-900">
-                Seleccione un tipo de reporte para comenzar
-              </h3>
-              <p className="text-sm text-blue-700 mt-1">
-                Los reportes se pueden generar en formato PDF o Excel con filtros personalizados.
-                Seleccione un tipo de reporte arriba para configurar los parámetros.
-              </p>
-            </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            {reporte.totales.map((t) => (
+              <Card key={t.etiqueta} className="p-4">
+                <p className="text-xs uppercase tracking-wide text-neutral-500">{t.etiqueta}</p>
+                <p className="mt-1 text-lg font-semibold text-neutral-900">{celda(t.valor)}</p>
+              </Card>
+            ))}
           </div>
-        </Card>
+          <Card padding="none">
+            <div className="max-h-[32rem] overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
+                  <tr>{reporte.columnas.map((c) => <th key={c} className="whitespace-nowrap px-3 py-2">{c}</th>)}</tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {reporte.filas.length === 0 ? (
+                    <tr><td colSpan={reporte.columnas.length} className="px-3 py-8 text-center text-neutral-500">Sin datos con estos filtros</td></tr>
+                  ) : (
+                    reporte.filas.slice(0, MAXIMO_EN_PANTALLA).map((fila, i) => (
+                      <tr key={i}>{fila.map((v, j) => <td key={j} className="whitespace-nowrap px-3 py-2">{celda(v)}</td>)}</tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {reporte.filas.length > MAXIMO_EN_PANTALLA && (
+              <p className="border-t border-neutral-200 px-4 py-3 text-sm text-neutral-600">
+                Se muestran {MAXIMO_EN_PANTALLA} de {reporte.filas.length} filas. Excel y PDF incluyen todas.
+              </p>
+            )}
+          </Card>
+        </div>
       )}
     </div>
-  );
-};
+  )
+}

@@ -20,6 +20,11 @@ import AsambleasPage from './pages/AsambleasPage'
 import ColectaPage from './pages/ColectaPage'
 import PrestamosPage from './pages/PrestamosPage'
 import ColectaReportesPage from './pages/ColectaReportesPage'
+import TrabajadoresPage from './pages/TrabajadoresPage'
+import SaludFeriaPage from './pages/SaludFeriaPage'
+import PersonasPage from './pages/PersonasPage'
+import PersonaFichaPage from './pages/PersonaFichaPage'
+import AuditoriaPage from './pages/AuditoriaPage'
 
 function App() {
   const initialize = useAuthStore((state) => state.initialize)
@@ -71,6 +76,61 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <FeriasPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/personas"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <PersonasPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/personas/:id"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <PersonaFichaPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/auditoria"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <AuditoriaPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/salud/pago-feria"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <SaludFeriaPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/trabajadores"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <TrabajadoresPage />
               </MainLayout>
             </ProtectedRoute>
           }

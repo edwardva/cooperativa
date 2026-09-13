@@ -168,6 +168,8 @@ interface PaginatedResponse<T> {
 interface SingleResponse<T> {
   success: boolean
   data: T
+  /** Se guardo, pero hay algo que avisar: cedula de otra persona, trabajador en prueba */
+  advertencias?: string[]
 }
 
 /**

@@ -14,6 +14,8 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { ConflictError, BadRequestError } from '../middleware/errorHandler';
+import { registrarAuditoria } from '../services/auditoriaService';
+import { bloquearSocio } from '../utils/bloqueos';
 
 const prisma = new PrismaClient();
 
@@ -585,16 +587,12 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
       }
 
       // Audit log
-      await tx.auditLog.create({
-        data: {
-          usuario_id: req.user!.userId,
-          accion: 'CREAR',
-          modulo: 'ahorro',
-          registro_id: cuenta.id,
-          datos_despues: cuenta as any,
-          ip_address: req.ip || 'unknown',
-          user_agent: req.get('user-agent') || 'unknown',
-        },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREAR',
+        modulo: 'ahorro',
+        registro_id: cuenta.id,
+        despues: cuenta,
       });
 
       return cuenta;
@@ -714,17 +712,13 @@ export const cambiarEstadoCuenta = async (req: Request, res: Response): Promise<
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ACTUALIZAR',
-        modulo: 'ahorro',
-        registro_id: cuentaId,
-        datos_antes: cuenta as any,
-        datos_despues: cuentaActualizada as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR',
+      modulo: 'ahorro',
+      registro_id: cuentaId,
+      antes: cuenta,
+      despues: cuentaActualizada,
     });
 
     res.json({
@@ -807,8 +801,22 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
 
     // Registrar movimiento en transacción
     const resultado = await prisma.$transaction(async (tx) => {
+      // El saldo se relee con el socio bloqueado. El leído arriba puede estar
+      // viejo si entre medio entró otro depósito, retiro o colecta del mismo
+      // socio: uno de los dos se perdía, y un retiro se validaba contra un
+      // saldo que ya no existía (ver utils/bloqueos.ts)
+      await bloquearSocio(tx, cuenta.socio_id);
+      const vigente = await tx.cuentaAhorro.findUniqueOrThrow({ where: { id: datos.cuenta_id } });
+
+      if (datos.tipo_movimiento === 'retiro') {
+        const disponible = Number(vigente.saldo_usd) - Number(vigente.monto_bloqueado_usd);
+        if (datos.monto_usd > disponible) {
+          throw new BadRequestError(`Saldo disponible insuficiente. Disponible: $${disponible.toFixed(2)}`);
+        }
+      }
+
       // Calcular nuevo saldo
-      const saldoAnteriorUsd = Number(cuenta.saldo_usd);
+      const saldoAnteriorUsd = Number(vigente.saldo_usd);
       const nuevoSaldoUsd =
         datos.tipo_movimiento === 'deposito'
           ? saldoAnteriorUsd + datos.monto_usd
@@ -817,8 +825,8 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
       const montoBs = datos.monto_usd * tasaCambio;
       const nuevoSaldoBs =
         datos.tipo_movimiento === 'deposito'
-          ? Number(cuenta.saldo_bs) + montoBs
-          : Number(cuenta.saldo_bs) - montoBs;
+          ? Number(vigente.saldo_bs) + montoBs
+          : Number(vigente.saldo_bs) - montoBs;
 
       // Crear movimiento
       const movimiento = await tx.movimientoAhorro.create({
@@ -857,19 +865,15 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
       });
 
       // Audit log
-      await tx.auditLog.create({
-        data: {
-          usuario_id: req.user!.userId,
-          accion: 'CREAR',
-          modulo: 'movimientos_ahorro',
-          registro_id: movimiento.id,
-          datos_despues: {
-            movimiento,
-            cuenta: cuentaActualizada.numero_cuenta,
-            socio: `${cuentaActualizada.socio.codigo_socio} - ${cuentaActualizada.socio.nombre} ${cuentaActualizada.socio.apellido}`,
-          } as any,
-          ip_address: req.ip || 'unknown',
-          user_agent: req.get('user-agent') || 'unknown',
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREAR',
+        modulo: 'movimientos_ahorro',
+        registro_id: movimiento.id,
+        despues: {
+          movimiento,
+          cuenta: cuentaActualizada.numero_cuenta,
+          socio: `${cuentaActualizada.socio.codigo_socio} - ${cuentaActualizada.socio.nombre} ${cuentaActualizada.socio.apellido}`,
         },
       });
 
@@ -894,6 +898,14 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
           message: 'Datos de entrada inválidos',
           details: error.errors,
         },
+      });
+      return;
+    }
+
+    if (error instanceof BadRequestError) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'SALDO_INSUFICIENTE', message: error.message },
       });
       return;
     }
@@ -1113,19 +1125,15 @@ export const recalcularSaldos = async (req: Request, res: Response): Promise<voi
     }
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ACTUALIZAR',
-        modulo: 'ahorro',
-        registro_id: null,
-        datos_despues: {
-          accion: 'recalculo_masivo',
-          tasa_aplicada: tasaCambio,
-          cuentas_actualizadas: actualizadas,
-        } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR',
+      modulo: 'ahorro',
+      registro_id: null,
+      despues: {
+        accion: 'recalculo_masivo',
+        tasa_aplicada: tasaCambio,
+        cuentas_actualizadas: actualizadas,
       },
     });
 

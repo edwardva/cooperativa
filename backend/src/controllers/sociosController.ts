@@ -3,6 +3,9 @@ import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { validarCedula } from '../utils/cedula';
+import { registrarAuditoria } from '../services/auditoriaService';
+import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
+import { advertenciasParaAhorrista } from '../services/trabajadoresService';
 
 const prisma = new PrismaClient();
 
@@ -555,50 +558,61 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
     // Convertir foto de base64 a Buffer si se proporciona
     const fotoBuffer = datos.foto ? convertirBase64ABuffer(datos.foto) : null;
 
-    // Crear socio
-    const socio = await prisma.socio.create({
-      data: {
-        codigo_socio: datos.codigo_socio,
-        cedula: datos.cedula,
-        nombre: datos.nombre,
-        apellido: datos.apellido,
-        sexo: datos.sexo,
-        fecha_nacimiento: datos.fecha_nacimiento ? new Date(datos.fecha_nacimiento) : null,
-        direccion: datos.direccion,
-        telefono: datos.telefono,
-        email: datos.email || null,
-        fecha_inscripcion: new Date(datos.fecha_inscripcion),
-        ubicacion_id: datos.ubicacion_id,
-        autorizado_nombre: datos.autorizado_nombre,
-        autorizado_cedula: datos.autorizado_cedula || null,
-        notas: datos.notas,
-        foto_url: datos.foto_url,
-        foto: fotoBuffer,
-        es_delegado: datos.es_delegado || false,
-      },
-      include: {
-        ubicacion: true,
-      },
-    });
+    // Socio y persona en la misma transacción (fase 2). La persona se busca por
+    // cédula y se reutiliza; si esa cédula es de alguien con otro nombre no se
+    // vincula y se avisa en la respuesta
+    const { socio, vinculo } = await prisma.$transaction(async (tx) => {
+      const creado = await tx.socio.create({
+        data: {
+          codigo_socio: datos.codigo_socio,
+          cedula: datos.cedula,
+          nombre: datos.nombre,
+          apellido: datos.apellido,
+          sexo: datos.sexo,
+          fecha_nacimiento: datos.fecha_nacimiento ? new Date(datos.fecha_nacimiento) : null,
+          direccion: datos.direccion,
+          telefono: datos.telefono,
+          email: datos.email || null,
+          fecha_inscripcion: new Date(datos.fecha_inscripcion),
+          ubicacion_id: datos.ubicacion_id,
+          autorizado_nombre: datos.autorizado_nombre,
+          autorizado_cedula: datos.autorizado_cedula || null,
+          notas: datos.notas,
+          foto_url: datos.foto_url,
+          foto: fotoBuffer,
+          es_delegado: datos.es_delegado || false,
+        },
+        include: {
+          ubicacion: true,
+        },
+      });
 
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
+      const vinculo = await vincularPersonaDeSocio(tx, creado, req.user?.userId);
+      const socio = { ...creado, persona_id: vinculo.persona_id };
+
+      await registrarAuditoria(tx, {
+        req,
         accion: 'CREAR',
         modulo: 'socios',
         registro_id: socio.id,
-        datos_despues: socio as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+        despues: socio,
+      });
+
+      return { socio, vinculo };
     });
+
+    // Se avisa, no se bloquea: cédula de otra persona, o trabajador en prueba (HU-04)
+    const advertencias = [
+      ...(vinculo.conflicto ? [vinculo.conflicto] : []),
+      ...(vinculo.persona_id ? await advertenciasParaAhorrista(prisma, vinculo.persona_id) : []),
+    ];
 
     logger.info(`Socio creado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
 
     res.status(201).json({
       success: true,
       data: prepararSocioParaRespuesta(socio),
+      ...(advertencias.length > 0 ? { advertencias } : {}),
     });
   } catch (error) {
     logger.error('Error al crear socio:', error);
@@ -760,27 +774,39 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
       datosActualizacion.foto = convertirBase64ABuffer(datos.foto);
     }
 
-    // Actualizar socio
-    const socio = await prisma.socio.update({
-      where: { id: socioId },
-      data: datosActualizacion,
-      include: {
-        ubicacion: true,
-      },
-    });
+    // Socio y persona en la misma transacción: los datos personales editados
+    // pasan a la persona y a sus otros expedientes ahorristas
+    const { socio, conflicto } = await prisma.$transaction(async (tx) => {
+      const actualizado = await tx.socio.update({
+        where: { id: socioId },
+        data: datosActualizacion,
+        include: {
+          ubicacion: true,
+        },
+      });
 
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
+      let personaId = actualizado.persona_id;
+      let conflicto: string | null = null;
+      if (actualizado.cedula !== socioExistente.cedula || personaId === null) {
+        // Cédula corregida, o socio anterior a la fase 2: se vincula por cédula
+        const vinculo = await vincularPersonaDeSocio(tx, actualizado, req.user?.userId);
+        personaId = vinculo.persona_id;
+        conflicto = vinculo.conflicto;
+      } else {
+        await propagarSocioAPersona(tx, actualizado);
+      }
+
+      const socio = { ...actualizado, persona_id: personaId };
+      await registrarAuditoria(tx, {
+        req,
         accion: 'ACTUALIZAR',
         modulo: 'socios',
         registro_id: socio.id,
-        datos_antes: socioExistente as any,
-        datos_despues: socio as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+        antes: socioExistente,
+        despues: socio,
+      });
+
+      return { socio, conflicto };
     });
 
     logger.info(`Socio actualizado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -788,6 +814,7 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
     res.json({
       success: true,
       data: prepararSocioParaRespuesta(socio),
+      ...(conflicto ? { advertencias: [conflicto] } : {}),
     });
   } catch (error) {
     logger.error('Error al actualizar socio:', error);
@@ -857,17 +884,13 @@ export const actualizarCodigoSocial = async (req: Request, res: Response): Promi
       data: { codigo_social: codigoSocial },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ACTUALIZAR_COD_SOCIAL',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: { codigo_social: socioExistente.codigo_social } as any,
-        datos_despues: { codigo_social: socio.codigo_social } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR_COD_SOCIAL',
+      modulo: 'socios',
+      registro_id: socio.id,
+      antes: { codigo_social: socioExistente.codigo_social },
+      despues: { codigo_social: socio.codigo_social },
     });
 
     logger.info(`Código social actualizado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -980,17 +1003,13 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
       },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'RETIRAR',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: socio as any,
-        datos_despues: socioActualizado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'RETIRAR',
+      modulo: 'socios',
+      registro_id: socio.id,
+      antes: socio,
+      despues: socioActualizado,
     });
 
     logger.info(`Socio retirado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -1268,17 +1287,13 @@ export const traspasarSocio = async (req: Request, res: Response): Promise<void>
       return actualizado;
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'TRASPASO',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: socio as any,
-        datos_despues: socioActualizado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'TRASPASO',
+      modulo: 'socios',
+      registro_id: socio.id,
+      antes: socio,
+      despues: socioActualizado,
     });
 
     logger.info(
@@ -1465,16 +1480,12 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREAR',
-        modulo: 'beneficiarios',
-        registro_id: beneficiario.id,
-        datos_despues: beneficiario as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREAR',
+      modulo: 'beneficiarios',
+      registro_id: beneficiario.id,
+      despues: beneficiario,
     });
 
     logger.info(`Beneficiario agregado: ${beneficiario.nombre} ${beneficiario.apellido} al socio ${socio.codigo_socio}`);
@@ -1586,17 +1597,13 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ACTUALIZAR',
-        modulo: 'beneficiarios',
-        registro_id: beneficiario.id,
-        datos_antes: beneficiarioExistente as any,
-        datos_despues: beneficiario as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR',
+      modulo: 'beneficiarios',
+      registro_id: beneficiario.id,
+      antes: beneficiarioExistente,
+      despues: beneficiario,
     });
 
     logger.info(`Beneficiario actualizado: ${beneficiario.nombre} ${beneficiario.apellido}`);
@@ -1692,17 +1699,13 @@ export const eliminarBeneficiario = async (req: Request, res: Response): Promise
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ELIMINAR',
-        modulo: 'beneficiarios',
-        registro_id: beneficiario.id,
-        datos_antes: beneficiario as any,
-        datos_despues: beneficiarioActualizado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ELIMINAR',
+      modulo: 'beneficiarios',
+      registro_id: beneficiario.id,
+      antes: beneficiario,
+      despues: beneficiarioActualizado,
     });
 
     logger.info(`Beneficiario eliminado (soft delete): ${beneficiario.nombre} ${beneficiario.apellido}`);

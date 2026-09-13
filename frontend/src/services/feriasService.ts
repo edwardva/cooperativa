@@ -11,29 +11,33 @@ export interface Ubicacion {
   id: number;
   codigo: string;
   nombre: string;
+  ubicacion?: string | null;
   direccion?: string | null;
+  responsable?: string | null;
   telefono?: string | null;
+  observaciones?: string | null;
   estado: boolean;
   created_at: string;
   _count?: {
     socios: number;
+    /** Trabajadores activos con la feria como feria actual */
+    trabajadores?: number;
   };
 }
 
 export interface CrearUbicacionDTO {
   codigo: string;
   nombre: string;
-  direccion?: string;
-  telefono?: string;
+  ubicacion?: string | null;
+  direccion?: string | null;
+  responsable?: string | null;
+  telefono?: string | null;
+  observaciones?: string | null;
   estado?: boolean;
 }
 
-export interface ActualizarUbicacionDTO {
-  nombre?: string;
-  direccion?: string;
-  telefono?: string;
-  estado?: boolean;
-}
+/** El codigo no se cambia: identifica a la feria en reportes e historiales */
+export type ActualizarUbicacionDTO = Partial<Omit<CrearUbicacionDTO, 'codigo'>>;
 
 export interface ApiResponse<T> {
   success: boolean;
