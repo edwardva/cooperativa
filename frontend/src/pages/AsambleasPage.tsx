@@ -45,6 +45,7 @@ import type { Socio, Ubicacion } from '../services/sociosService'
 import { getErrorMessage } from '../services/api'
 import { formatearFecha } from '../utils/formatters'
 import { usePermissions } from '../store/authStore'
+import { useEnterNavigation } from '../hooks/useEnterNavigation'
 
 type Pestana = 'asambleas' | 'inasistentes'
 
@@ -76,6 +77,7 @@ const nombreFeria = (ubicacion: { direccion: string | null; nombre?: string; cod
   ubicacion ? ubicacion.direccion || ubicacion.nombre || ubicacion.codigo : 'General'
 
 export default function AsambleasPage() {
+  const alEnter = useEnterNavigation()
   const { hasPermission } = usePermissions()
   const puedeEscribir = hasPermission('asambleas', 'create')
   const puedeEliminar = hasPermission('asambleas', 'delete')
@@ -692,7 +694,7 @@ export default function AsambleasPage() {
               </button>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>
               <label className={labelClass}>
                 <span>Título *</span>
                 <input

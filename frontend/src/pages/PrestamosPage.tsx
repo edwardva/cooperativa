@@ -44,6 +44,7 @@ import type { Socio } from '../services/sociosService'
 import { getErrorMessage } from '../services/api'
 import { formatearFecha } from '../utils/formatters'
 import { usePermissions } from '../store/authStore'
+import { useEnterNavigation } from '../hooks/useEnterNavigation'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
@@ -75,6 +76,7 @@ export default function PrestamosPage() {
   const puedeOtorgar = hasPermission('prestamos', 'create')
   const puedeAbonar = hasPermission('prestamos', 'update')
   const puedeReversar = hasPermission('prestamos', 'delete')
+  const alEnter = useEnterNavigation()
 
   const [vista, setVista] = useState('por_cobrar')
   const [cartera, setCartera] = useState<ReporteCartera | null>(null)
@@ -530,7 +532,7 @@ export default function PrestamosPage() {
               </button>
             </div>
 
-            <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>
               {/* Titular */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
@@ -555,7 +557,7 @@ export default function PrestamosPage() {
                     <input
                       value={cedulaSocio}
                       onChange={(e) => setCedulaSocio(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaSocio, 'titular')}
+                      data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaSocio, 'titular')}
                       placeholder="Cedula del socio"
                       className={controlClass}
                     />
@@ -678,7 +680,7 @@ export default function PrestamosPage() {
                   <input
                     value={cedulaFiador}
                     onChange={(e) => setCedulaFiador(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaFiador, 'fiador')}
+                    data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocio(cedulaFiador, 'fiador')}
                     placeholder="Cedula del fiador"
                     className={controlClass}
                   />
@@ -788,7 +790,7 @@ export default function PrestamosPage() {
             </div>
 
             {detalle && (
-              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>
                 {/* Saldos */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
@@ -964,7 +966,7 @@ export default function PrestamosPage() {
               <p className="mt-1 text-sm text-neutral-500">{detalle.numero_prestamo}</p>
             </div>
 
-            <div className="space-y-4 px-6 py-5">
+            <div className="space-y-4 px-6 py-5" onKeyDown={alEnter}>
               <div className="rounded-lg bg-neutral-50 px-3 py-2.5 text-sm">
                 <div className="flex justify-between">
                   <span className="text-neutral-600">Mora</span>
@@ -1047,7 +1049,7 @@ export default function PrestamosPage() {
               </p>
             </div>
 
-            <div className="space-y-4 px-6 py-5">
+            <div className="space-y-4 px-6 py-5" onKeyDown={alEnter}>
               {/* Impacto antes de confirmar */}
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
                 <p className="flex items-start gap-2 font-medium">

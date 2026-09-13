@@ -182,7 +182,7 @@ Ordenadas por riesgo que eliminan.
 | M3 ✅ | Servicio central `auditoria.registrar(tx, …)` y reemplazar las 33 escrituras manuales | Operaciones sin auditar por olvido; auditoría fuera de la transacción | S |
 | M4 ✅ | Búsqueda por nombre en colecta | RF-COL-02 | S |
 | M5 ✅ | Ferias: `responsable`, `observaciones`, conteo de trabajadores activos | HU-05 | S |
-| M6 🟡 | Hook `useEnterNavigation` y aplicarlo a los formularios de alta | HU-22 | S |
+| M6 ✅ | Hook `useEnterNavigation` y aplicarlo a los formularios de alta | HU-22 | S |
 | M7 | Constraint de cédula (tras crear `Persona`) | Duplicados por altas simultáneas | parte de Sprint A |
 | M8 | Renumerar scripts de migración y agregar columna `legacy_id` / `origen` en tablas migradas | RF-MIG-05, reprocesar rechazados | M |
 | M9 | Pruebas de integración de colecta y reverso contra una BD de test | Hoy nada protege las transacciones ante refactors | M |
@@ -275,7 +275,7 @@ Supuestos tomados mientras la cooperativa no confirme (sección 20):
 
 - **Revisar el sistema viejo:** no pude ver si ya registra trabajadores de feria, porque el acceso con las credenciales de los scripts fue bloqueado en esta sesión. Si existen, falta migrarlos (Sprint D).
 - **Revisión visual:** las pantallas nuevas compilan y el build pasa, pero no se probaron en el navegador.
-- **Navegación con Enter (FE-023):** está aplicada en Trabajadores, Ferias y el alta de Socios. Faltan colecta, salud y préstamos.
+- ✅ **Navegación con Enter (FE-023):** aplicada en todos los `Modal` y `Drawer` del sistema, lo que cubre Salud, Funeraria y los demás que los usan. También en los modales propios de Préstamos, Asambleas y el cierre de caja, en el alta de Socios y Trabajadores, en Ferias y en la apertura de cuenta de Ahorro, donde Enter ya no envía el formulario por accidente. Los buscadores con Enter propio llevan `data-enter-propio`. La pantalla de cobro de Colecta conserva su flujo de teclado (Enter busca, Ctrl+Enter cobra, F2 vuelve), que ya es más rápido que ir campo por campo.
 - `prisma/seed.ts` no incluye los módulos nuevos; para bases nuevas hay que correr el script de permisos.
 
 ### Sprint B · Pago de salud por feria ✅

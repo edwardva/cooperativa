@@ -53,6 +53,7 @@ import type {
 } from '../services/colectaService'
 import { getErrorMessage } from '../services/api'
 import { usePermissions } from '../store/authStore'
+import { useEnterNavigation } from '../hooks/useEnterNavigation'
 import { MovimientosDelDia } from '../components/colecta/MovimientosDelDia'
 import { SituacionSocio } from '../components/colecta/SituacionSocio'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
@@ -127,6 +128,9 @@ export default function ColectaPage() {
   const [error, setError] = useState('')
   const [tasa, setTasa] = useState<number | null>(null)
   const [candidatos, setCandidatos] = useState<SocioColecta[]>([])
+  // Solo para los modales: la pantalla de cobro tiene su propio flujo de teclado
+  // (Enter busca, Ctrl+Enter cobra, F2 vuelve al buscador)
+  const alEnter = useEnterNavigation()
   // La busqueda por nombre se corta en 20 resultados
   const [truncado, setTruncado] = useState(false)
   const [socio, setSocio] = useState<SocioColecta | null>(null)
@@ -1416,7 +1420,7 @@ export default function ColectaPage() {
               </button>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>
               <div className="space-y-2">
                 {[
                   {

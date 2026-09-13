@@ -1643,7 +1643,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               value={wizardCedula}
               onChange={(e) => setWizardCedula(e.target.value)}
               placeholder="Ej: 012345678"
-              onKeyDown={(e) => e.key === 'Enter' && void buscarSocioWizard()}
+              data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocioWizard()}
               autoFocus
             />
             <Button onClick={() => void buscarSocioWizard()} isLoading={wizardBuscando} className="w-full">
@@ -1781,7 +1781,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               value={traspasoExpediente}
               onChange={(e) => setTraspasoExpediente(e.target.value)}
               placeholder="Ej: 117556"
-              onKeyDown={(e) => e.key === 'Enter' && void buscarSocioTraspaso()}
+              data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocioTraspaso()}
               autoFocus
             />
             <Button onClick={() => void buscarSocioTraspaso()} isLoading={traspasoBuscando} className="w-full">
@@ -2012,7 +2012,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               value={socialesCodigo}
               onChange={(e) => setSocialesCodigo(e.target.value)}
               placeholder="Ingresa el código de programas sociales"
-              onKeyDown={(e) => e.key === 'Enter' && void guardarCodigoSocial()}
+              data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void guardarCodigoSocial()}
               autoFocus
             />
 

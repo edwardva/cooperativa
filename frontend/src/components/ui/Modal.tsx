@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { Card } from './Card'
+import { useEnterNavigation } from '../../hooks/useEnterNavigation'
 
 export interface ModalProps {
   open: boolean
@@ -21,6 +22,8 @@ const sizeStyles: Record<NonNullable<ModalProps['size']>, string> = {
 }
 
 export const Modal = ({ open, onClose, title, description, size = 'md', children, footer }: ModalProps) => {
+  // Todo formulario dentro de un modal pasa de campo con Enter (RF-USA-01)
+  const alEnter = useEnterNavigation()
   if (!open) return null
 
   return (
@@ -44,7 +47,7 @@ export const Modal = ({ open, onClose, title, description, size = 'md', children
           </div>
         )}
 
-        {children}
+        <div onKeyDown={alEnter}>{children}</div>
 
         {footer && <div className="mt-6 flex justify-end gap-3 border-t border-neutral-200 pt-4">{footer}</div>}
       </Card>

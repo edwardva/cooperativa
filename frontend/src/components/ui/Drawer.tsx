@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { clsx } from 'clsx'
+import { useEnterNavigation } from '../../hooks/useEnterNavigation'
 
 export interface DrawerProps {
   open: boolean
@@ -19,6 +20,7 @@ const widthStyles: Record<NonNullable<DrawerProps['width']>, string> = {
 }
 
 export const Drawer = ({ open, onClose, title, description, width = 'lg', children, footer }: DrawerProps) => {
+  const alEnter = useEnterNavigation()
   if (!open) return null
 
   return (
@@ -50,7 +52,7 @@ export const Drawer = ({ open, onClose, title, description, width = 'lg', childr
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+        <div className="flex-1 overflow-y-auto px-6 py-5" onKeyDown={alEnter}>{children}</div>
 
         {footer && (
           <div className="flex flex-wrap justify-end gap-3 border-t border-neutral-200 bg-neutral-50/60 px-6 py-4">
