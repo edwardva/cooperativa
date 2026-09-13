@@ -36,6 +36,8 @@ import { validarCedula } from '../utils/cedula'
 import * as trabajadoresService from '../services/trabajadoresService'
 import * as personasService from '../services/personasService'
 import * as feriasService from '../services/feriasService'
+import * as saludFeriaService from '../services/saludFeriaService'
+import type { PagoDeTrabajador } from '../services/saludFeriaService'
 import { TIPOS_IDENTIFICACION } from '../services/personasService'
 import type { EstadoTrabajador, Trabajador, TrabajadorDetalle } from '../services/trabajadoresService'
 import type { ResultadoIdentificacion, TipoIdentificacion } from '../services/personasService'
@@ -102,6 +104,7 @@ export default function TrabajadoresPage() {
   const { hasPermission } = usePermissions()
   const puedeCrear = hasPermission('trabajadores', 'create')
   const puedeEditar = hasPermission('trabajadores', 'update')
+  const puedeVerSalud = hasPermission('salud_feria', 'read')
   const alEnter = useEnterNavigation()
 
   // --- Listado ---
@@ -123,6 +126,20 @@ export default function TrabajadoresPage() {
   // --- Ficha ---
   const [detalle, setDetalle] = useState<TrabajadorDetalle | null>(null)
   const [cargandoDetalle, setCargandoDetalle] = useState(false)
+  const [pagosSalud, setPagosSalud] = useState<PagoDeTrabajador[] | null>(null)
+
+  // Historial de salud pagada por la feria (RF-SAL-14, por trabajador)
+  const detalleId = detalle?.id
+  useEffect(() => {
+    setPagosSalud(null)
+    if (!detalleId || !puedeVerSalud) return
+    let vigente = true
+    void saludFeriaService
+      .historialTrabajador(detalleId)
+      .then((r) => { if (vigente) setPagosSalud(r.data) })
+      .catch(() => { if (vigente) setPagosSalud(null) })
+    return () => { vigente = false }
+  }, [detalleId, puedeVerSalud])
 
   // --- Alta ---
   const [altaAbierta, setAltaAbierta] = useState(false)
@@ -648,6 +665,43 @@ export default function TrabajadoresPage() {
                 </Button>
               )}
             </section>
+
+            {/* Pagos de salud recibidos de la feria */}
+            {pagosSalud && (
+              <section>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  Salud pagada por la feria
+                </p>
+                {pagosSalud.length === 0 ? (
+                  <p className="text-sm text-neutral-500">Todavia no hay pagos de salud registrados.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-neutral-200">
+                    <table className="w-full text-sm">
+                      <thead className="bg-neutral-50 text-left text-xs text-neutral-500">
+                        <tr>
+                          <th className="px-3 py-2">Periodo</th>
+                          <th className="px-3 py-2">Feria</th>
+                          <th className="px-3 py-2">Pagado el</th>
+                          <th className="px-3 py-2 text-right">Monto</th>
+                          <th className="px-3 py-2">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-100">
+                        {pagosSalud.map((p) => (
+                          <tr key={p.id}>
+                            <td className="px-3 py-2">{p.periodo.etiqueta}</td>
+                            <td className="px-3 py-2">{p.feria.codigo}</td>
+                            <td className="px-3 py-2">{dia(p.pago.fecha_pago)}</td>
+                            <td className="px-3 py-2 text-right">${Number(p.monto_usd).toFixed(2)}</td>
+                            <td className="px-3 py-2">{p.estado === 'vigente' ? <Badge variant="success">Pagado</Badge> : <Badge variant="error">Anulado</Badge>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* Historial de ferias (RF-FER-04) */}
             <section>

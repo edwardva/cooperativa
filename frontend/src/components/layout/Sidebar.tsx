@@ -42,6 +42,7 @@ const navigationItems: NavItem[] = [
   { name: 'Reportes Colecta', path: '/colecta/reportes', icon: Calculator },
   { name: 'Funeraria', path: '/funeraria', icon: Shield },
   { name: 'Salud', path: '/salud', icon: HeartPulse },
+  { name: 'Salud por Feria', path: '/salud/pago-feria', icon: HeartPulse },
   { name: 'Bóveda', path: '/boveda', icon: Briefcase },
   { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck },
   { name: 'Reportes', path: '/reportes', icon: FileDown },

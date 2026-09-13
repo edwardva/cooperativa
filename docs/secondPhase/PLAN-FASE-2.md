@@ -278,7 +278,7 @@ Supuestos tomados mientras la cooperativa no confirme (sección 20):
 - **Navegación con Enter (FE-023):** está aplicada en Trabajadores, Ferias y el alta de Socios. Faltan colecta, salud y préstamos.
 - `prisma/seed.ts` no incluye los módulos nuevos; para bases nuevas hay que correr el script de permisos.
 
-### Sprint B · Pago de salud por feria
+### Sprint B · Pago de salud por feria ✅
 
 - DB: `pagos_salud_feria`, `pagos_salud_trabajador`, índice único parcial.
 - BE: deuda por feria y período, pago masivo transaccional, detalle, anulación con motivo
@@ -287,6 +287,29 @@ Supuestos tomados mientras la cooperativa no confirme (sección 20):
   historial por feria/trabajador/período/referencia.
 - QA: fallo forzado en el trabajador N → cero registros (QA-009); suma de detalles =
   encabezado (QA-FIN-01); dos usuarios pagando a la vez.
+
+**Avance al 13/09/2026: Sprint B hecho (backend, pantalla y pruebas)**
+
+| Parte | Qué quedó |
+|---|---|
+| Datos | Migración `20260914000000_pago_salud_feria`: `periodos_salud` (cada período lleva su tipo, mensual o semanal), `pagos_salud_feria` (encabezado con tarifa, tasa, esperado, recibido, método, referencia, usuario y anulación) y `pagos_salud_trabajador` (un renglón por trabajador, con la feria de ese período guardada, RN-14). Un índice único parcial impide dos renglones vigentes del mismo trabajador y período (RN-10) |
+| API | `/api/salud-feria`: configuración, deuda por feria y período (HU-07), registro del pago masivo (HU-08/09), detalle (HU-10), historial con filtros por feria, período, estado, referencia y trabajador (RF-SAL-14), historial por trabajador, anulación con motivo (RF-SAL-15) y ferias pendientes (HU-19) |
+| Integridad | El pago bloquea la feria, **recalcula la deuda** y la compara con lo que el usuario confirmó; si cambió, rechaza y la pantalla muestra la real (BE-009). Encabezado y renglones van en una sola transacción |
+| Pantalla | **Pago de Salud por Feria**, con tres pestañas. *Registrar*: feria y período, resumen, tabla por trabajador, datos del pago y confirmación con "Está por registrar X pagos individuales por Y". *Ferias pendientes*: estado de cada feria en el período, imprimible. *Historial*: filtros y detalle con quién registró, si la suma cuadra y anulación. La ficha del trabajador muestra su salud pagada |
+| Pruebas | 9 tests unitarios de períodos (meses, semanas ISO, traslados) y 36 chequeos de punta a punta. Incluyen el **fallo forzado en el trabajador N con un trigger temporal** (QA-009: no queda encabezado ni nadie pagado), dos pagos simultáneos, anular y volver a pagar, y un traslado cargado después del pago |
+
+Supuestos, mientras la cooperativa no confirme:
+
+- **Periodicidad (pendiente 2):** parámetro `PERIODICIDAD_SALUD_FERIA`, mensual por defecto. Cambiarla no toca los pagos hechos.
+- **Monto por trabajador (pendiente 1):** parámetro `TARIFA_SALUD_TRABAJADOR_USD`. **Arranca en 0 y con 0 no se registra ningún pago**; hay que cargarlo antes de usar el módulo.
+- **Traslado a mitad de período:** paga la feria de la última asignación dentro del período, así nadie aparece en dos ferias ni en ninguna. Un pago ya hecho conserva su feria aunque después se cargue un traslado.
+- **Quién debe:** los activos, y los retirados en los períodos que trabajaron. Suspendidos e inactivos no generan deuda, igual que en la ficha.
+- **Pagos parciales (pendiente 8):** no hay. Un pago cubre a todos los pendientes. Si el monto recibido difiere del esperado, se registra solo confirmando la diferencia, que queda en la auditoría.
+- **Períodos futuros:** no se registran pagos adelantados.
+
+**Para desplegar:** la migración con el rol `postgres`, `sincronizar-permisos.ts --aplicar` (agrega `salud_feria`: el cajero registra y consulta, el analista consulta y solo el administrador anula), y cargar los dos parámetros.
+
+**Pendiente:** exportar las ferias pendientes a Excel y PDF (hoy se imprimen), que va con los reportes del Sprint E, y la revisión visual de la pantalla.
 
 ### Sprint C · Préstamos completos
 

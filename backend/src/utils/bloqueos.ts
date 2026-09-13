@@ -41,6 +41,17 @@ export const bloquearTrabajador = async (tx: Prisma.TransactionClient, trabajado
 };
 
 /**
+ * Feria: el pago de salud calcula quién debe y lo marca pagado. Dos usuarios
+ * registrando el pago de la misma feria a la vez calculaban la misma deuda.
+ */
+export const bloquearFeria = async (tx: Prisma.TransactionClient, feriaId: number): Promise<void> => {
+  const filas = await tx.$queryRaw<{ id: number }[]>`
+    SELECT id FROM ubicaciones WHERE id = ${feriaId} FOR UPDATE
+  `;
+  if (filas.length === 0) throw new NotFoundError('Feria no encontrada');
+};
+
+/**
  * Varios socios a la vez (deudor y fiadores, integrantes de un grupo). Siempre
  * en orden de id: si dos transacciones bloquean el mismo par en distinto
  * orden, cada una espera a la otra para siempre.
