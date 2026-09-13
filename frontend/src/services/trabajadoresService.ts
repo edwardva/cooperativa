@@ -15,6 +15,7 @@ export interface FeriaResumen {
   id: number
   codigo: string
   nombre: string
+  direccion: string | null
 }
 
 export interface FeriaActual extends FeriaResumen {

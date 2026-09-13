@@ -41,6 +41,9 @@ type Pestana = 'registrar' | 'pendientes' | 'historial'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
+
+// Mismo diseño de combo que el formulario de Socios
+const selectClass = `${controlClass} appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10`
 const labelClass = 'block text-sm font-medium text-neutral-700'
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -62,8 +65,9 @@ const dia = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split('-
 const money = (v: number | string | null | undefined) =>
   Number(v ?? 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const redondear = (v: number) => Math.round(v * 100) / 100
-const nombreFeria = (f: { codigo: string; nombre: string }) =>
-  f.nombre && f.nombre !== f.codigo ? `${f.codigo} · ${f.nombre}` : f.codigo
+/** Las ferias se nombran por su dirección, igual que en el resto del sistema */
+const nombreFeria = (f: { codigo: string; nombre: string; direccion?: string | null }) =>
+  f.direccion?.trim() || f.nombre || f.codigo
 
 const badgeEstadoFeria = (estado: string) => {
   if (estado === 'pagada') return <Badge variant="success">Pagada</Badge>
@@ -271,7 +275,7 @@ export default function SaludFeriaPage() {
       })
       setConfirmando(false)
       setAviso(
-        `Pago registrado: ${r.data.cantidad_trabajadores} trabajador(es) de ${r.data.feria.codigo} en ${r.data.periodo.etiqueta}.`
+        `Pago registrado: ${r.data.cantidad_trabajadores} trabajador(es) de ${nombreFeria(r.data.feria)} en ${r.data.periodo.etiqueta}.`
       )
       setPago((p) => ({ ...p, referencia: '', observaciones: '' }))
       await cargarDeuda()
@@ -318,7 +322,7 @@ export default function SaludFeriaPage() {
       {tipo === 'mensual' ? (
         <label className={labelClass}>
           <span className="mb-1.5 block">Mes</span>
-          <select value={numero} onChange={(e) => setNumero(Number(e.target.value))} disabled={!config} className={controlClass}>
+          <select value={numero} onChange={(e) => setNumero(Number(e.target.value))} disabled={!config} className={selectClass}>
             {MESES.map((m, i) => (
               <option key={m} value={i + 1}>{m}</option>
             ))}
@@ -396,7 +400,7 @@ export default function SaludFeriaPage() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" onKeyDown={alEnter}>
               <label className={labelClass}>
                 <span className="mb-1.5 block">Feria *</span>
-                <select value={feriaId} onChange={(e) => setFeriaId(e.target.value)} className={controlClass} autoFocus>
+                <select value={feriaId} onChange={(e) => setFeriaId(e.target.value)} className={selectClass} autoFocus>
                   <option value="">Seleccione la feria</option>
                   {ferias.map((f) => (
                     <option key={f.id} value={f.id}>{nombreFeria(f)}{f.estado ? '' : ' (inactiva)'}</option>
@@ -463,7 +467,7 @@ export default function SaludFeriaPage() {
                               {f.estado_trabajador === 'retirado' && <span className="ml-2 text-xs text-neutral-500">(retirado)</span>}
                             </td>
                             <td className="px-4 py-2 font-mono">{f.codigo_trabajador}</td>
-                            <td className="px-4 py-2">{deuda.feria.codigo}</td>
+                            <td className="px-4 py-2">{nombreFeria(deuda.feria)}</td>
                             <td className="px-4 py-2 text-right">${money(f.monto_usd)}</td>
                             <td className="px-4 py-2">{deuda.periodo.etiqueta}</td>
                             <td className="px-4 py-2">
@@ -493,7 +497,7 @@ export default function SaludFeriaPage() {
                     </label>
                     <label className={labelClass}>
                       <span className="mb-1.5 block">Moneda</span>
-                      <select value={pago.moneda} onChange={(e) => setPago({ ...pago, moneda: e.target.value as 'BS' | 'USD' })} className={controlClass}>
+                      <select value={pago.moneda} onChange={(e) => setPago({ ...pago, moneda: e.target.value as 'BS' | 'USD' })} className={selectClass}>
                         <option value="BS">Bolivares</option>
                         <option value="USD">Dolares</option>
                       </select>
@@ -504,7 +508,7 @@ export default function SaludFeriaPage() {
                     </label>
                     <label className={labelClass}>
                       <span className="mb-1.5 block">Metodo *</span>
-                      <select value={pago.metodo_pago} onChange={(e) => setPago({ ...pago, metodo_pago: e.target.value })} className={controlClass}>
+                      <select value={pago.metodo_pago} onChange={(e) => setPago({ ...pago, metodo_pago: e.target.value })} className={selectClass}>
                         {(config?.metodos_pago ?? Object.keys(METODOS)).map((m) => (
                           <option key={m} value={m}>{METODOS[m] ?? m}</option>
                         ))}
@@ -650,14 +654,14 @@ export default function SaludFeriaPage() {
             >
               <label className={labelClass}>
                 <span className="mb-1.5 block">Feria</span>
-                <select value={filtros.feria_id} onChange={(e) => setFiltros({ ...filtros, feria_id: e.target.value })} className={controlClass}>
+                <select value={filtros.feria_id} onChange={(e) => setFiltros({ ...filtros, feria_id: e.target.value })} className={selectClass}>
                   <option value="">Todas</option>
                   {ferias.map((f) => <option key={f.id} value={f.id}>{nombreFeria(f)}</option>)}
                 </select>
               </label>
               <label className={labelClass}>
                 <span className="mb-1.5 block">Estado</span>
-                <select value={filtros.estado} onChange={(e) => setFiltros({ ...filtros, estado: e.target.value })} className={controlClass}>
+                <select value={filtros.estado} onChange={(e) => setFiltros({ ...filtros, estado: e.target.value })} className={selectClass}>
                   <option value="">Todos</option>
                   <option value="vigente">Vigentes</option>
                   <option value="anulado">Anulados</option>
@@ -768,7 +772,7 @@ export default function SaludFeriaPage() {
       <Drawer
         open={!!detallePago}
         onClose={() => { setDetallePago(null); setAnulacion(null) }}
-        title={detallePago ? `Pago #${detallePago.id} · ${detallePago.feria.codigo}` : ''}
+        title={detallePago ? `Pago #${detallePago.id} · ${nombreFeria(detallePago.feria)}` : ''}
         description={detallePago ? `${detallePago.periodo.etiqueta} · pagado el ${dia(detallePago.fecha_pago)}` : undefined}
         width="xl"
         footer={

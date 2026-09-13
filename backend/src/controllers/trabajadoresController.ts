@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { normalizarIdentificacion } from '../services/personasService';
-import { formatearTrabajador, includeTrabajador, mesesDePrueba } from '../services/trabajadoresService';
+import { etiquetaFeria, formatearTrabajador, includeTrabajador, mesesDePrueba } from '../services/trabajadoresService';
 import { datosPersona, personaSchema } from './personasController';
 import { bloquearTrabajador } from '../utils/bloqueos';
 import { fechaDia, hoyDia, textoDia } from '../utils/fechaDia';
@@ -84,7 +84,7 @@ const noFutura = (fecha: Date, campo: string): void => {
 const feriaActiva = async (tx: Prisma.TransactionClient, feriaId: number) => {
   const feria = await tx.ubicacion.findUnique({ where: { id: feriaId } });
   if (!feria) throw new NotFoundError('Feria no encontrada');
-  if (!feria.estado) throw new BadRequestError(`La feria ${feria.codigo} está inactiva`);
+  if (!feria.estado) throw new BadRequestError(`La feria ${etiquetaFeria(feria)} está inactiva`);
   return feria;
 };
 
@@ -410,11 +410,11 @@ export const trasladarTrabajador = async (req: Request, res: Response): Promise<
       });
 
       if (actual?.feria_id === destino.id) {
-        throw new BadRequestError(`El trabajador ya está en la feria ${destino.codigo}`);
+        throw new BadRequestError(`El trabajador ya está en la feria ${etiquetaFeria(destino)}`);
       }
       if (actual && fecha < actual.fecha_inicio) {
         throw new BadRequestError(
-          `La fecha del traslado no puede ser anterior a su ingreso en ${actual.feria.codigo} ` +
+          `La fecha del traslado no puede ser anterior a su ingreso en ${etiquetaFeria(actual.feria)} ` +
             `(${textoDia(actual.fecha_inicio)})`
         );
       }

@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -46,6 +46,9 @@ import type { Ubicacion } from '../services/feriasService'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100 read-only:bg-neutral-50 read-only:text-neutral-600 disabled:bg-neutral-50'
+
+// Mismo diseño de combo que el formulario de Socios
+const selectClass = `${controlClass} appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10`
 
 const labelClass = 'block text-sm font-medium text-neutral-700'
 
@@ -82,8 +85,9 @@ const badgePrueba = (t: Trabajador) =>
     <Badge variant="warning">Hasta {dia(t.prueba.fin_prueba)}</Badge>
   )
 
-const nombreFeria = (f: { codigo: string; nombre: string }) =>
-  f.nombre && f.nombre !== f.codigo ? `${f.codigo} · ${f.nombre}` : f.codigo
+/** Las ferias se nombran por su dirección, igual que en el resto del sistema */
+const nombreFeria = (f: { codigo: string; nombre: string; direccion?: string | null }) =>
+  f.direccion?.trim() || f.nombre || f.codigo
 
 const formularioVacio = () => ({
   tipo_identificacion: 'V' as TipoIdentificacion,
@@ -107,6 +111,7 @@ export default function TrabajadoresPage() {
   const puedeEditar = hasPermission('trabajadores', 'update')
   const puedeVerSalud = hasPermission('salud_feria', 'read')
   const alEnter = useEnterNavigation()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   // --- Listado ---
   const [ferias, setFerias] = useState<Ubicacion[]>([])
@@ -238,12 +243,14 @@ export default function TrabajadoresPage() {
     if (campo === 'numero_identificacion' || campo === 'tipo_identificacion') setIdentificacion(null)
   }
 
-  const consultarIdentificacion = async () => {
-    const numero = form.numero_identificacion.trim()
-    if (!numero || identificacion) return
+  /** Con `numeroDirecto` consulta esa cédula aunque el formulario todavía no la tenga (alta abierta desde Socios) */
+  const consultarIdentificacion = async (numeroDirecto?: string) => {
+    const numero = (numeroDirecto ?? form.numero_identificacion).trim()
+    if (!numero || (identificacion && numeroDirecto === undefined)) return
     setErrorAlta('')
 
-    if (form.tipo_identificacion === 'V' || form.tipo_identificacion === 'E') {
+    const tipo = numeroDirecto === undefined ? form.tipo_identificacion : 'V'
+    if (tipo === 'V' || tipo === 'E') {
       const revision = validarCedula(numero)
       if (!revision.valida) {
         setErrorAlta(revision.error ?? 'Cedula invalida')
@@ -253,7 +260,7 @@ export default function TrabajadoresPage() {
 
     setBuscandoId(true)
     try {
-      const r = await personasService.buscarPorIdentificacion(numero, form.tipo_identificacion)
+      const r = await personasService.buscarPorIdentificacion(numero, tipo)
       setIdentificacion(r.data)
       const persona = r.data.persona
       const socio = r.data.socios_sin_persona[0]
@@ -284,6 +291,17 @@ export default function TrabajadoresPage() {
       setBuscandoId(false)
     }
   }
+
+  // "Registrar como trabajador" desde Socios o desde la ficha llega con ?nuevo=1&cedula=
+  useEffect(() => {
+    if (searchParams.get('nuevo') !== '1') return
+    const cedula = searchParams.get('cedula') ?? ''
+    abrirAlta()
+    setForm((f) => ({ ...f, numero_identificacion: cedula }))
+    if (cedula) void consultarIdentificacion(cedula)
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const personaExistente = identificacion?.persona ?? null
   const trabajadorVigente = personaExistente?.trabajadores.find((t) => t.estado !== 'retirado') ?? null
@@ -335,7 +353,7 @@ export default function TrabajadoresPage() {
       })
       setAltaAbierta(false)
       setAviso(
-        `Trabajador ${r.data.codigo_trabajador} registrado en ${r.data.feria_actual?.codigo ?? 'su feria'}. ` +
+        `Trabajador ${r.data.codigo_trabajador} registrado en ${r.data.feria_actual ? nombreFeria(r.data.feria_actual) : 'su feria'}. ` +
           'El servicio de salud quedo asignado por la feria.'
       )
       setDetalle(r.data)
@@ -364,7 +382,7 @@ export default function TrabajadoresPage() {
       })
       setTraslado(null)
       setDetalle(r.data)
-      setAviso(`${r.data.codigo_trabajador} trasladado a ${r.data.feria_actual?.codigo}. Los pagos anteriores conservan su feria.`)
+      setAviso(`${r.data.codigo_trabajador} trasladado a ${r.data.feria_actual ? nombreFeria(r.data.feria_actual) : 'la nueva feria'}. Los pagos anteriores conservan su feria.`)
       await cargar()
     } catch (err) {
       setErrorOperacion(getErrorMessage(err) || 'No fue posible registrar el traslado')
@@ -464,7 +482,7 @@ export default function TrabajadoresPage() {
             <select
               value={feriaFiltro}
               onChange={(e) => { setFeriaFiltro(e.target.value); setPagina(1) }}
-              className={controlClass}
+              className={selectClass}
             >
               <option value="">Todas</option>
               {ferias.map((f) => (
@@ -479,7 +497,7 @@ export default function TrabajadoresPage() {
             <select
               value={estadoFiltro}
               onChange={(e) => { setEstadoFiltro(e.target.value); setPagina(1) }}
-              className={controlClass}
+              className={selectClass}
             >
               <option value="">Todos</option>
               {ESTADOS.map((e) => (
@@ -609,11 +627,11 @@ export default function TrabajadoresPage() {
         {detalle && (
           <div className="space-y-5">
             <button
-              onClick={() => navigate(`/personas/${detalle.persona.id}`)}
+              onClick={() => navigate(`/ficha/${detalle.persona.id}`)}
               className="flex items-center gap-1.5 text-sm font-medium text-primary-700 hover:underline"
             >
               <Contact className="h-4 w-4" />
-              Ver ficha integral de la persona
+              Ver ficha completa
             </button>
 
             {/* Expediente laboral */}
@@ -707,7 +725,7 @@ export default function TrabajadoresPage() {
                         {pagosSalud.map((p) => (
                           <tr key={p.id}>
                             <td className="px-3 py-2">{p.periodo.etiqueta}</td>
-                            <td className="px-3 py-2">{p.feria.codigo}</td>
+                            <td className="px-3 py-2">{nombreFeria(p.feria)}</td>
                             <td className="px-3 py-2">{dia(p.pago.fecha_pago)}</td>
                             <td className="px-3 py-2 text-right">${Number(p.monto_usd).toFixed(2)}</td>
                             <td className="px-3 py-2">{p.estado === 'vigente' ? <Badge variant="success">Pagado</Badge> : <Badge variant="error">Anulado</Badge>}</td>
@@ -776,7 +794,7 @@ export default function TrabajadoresPage() {
                   <select
                     value={form.tipo_identificacion}
                     onChange={(e) => cambiarCampo('tipo_identificacion', e.target.value)}
-                    className={controlClass}
+                    className={selectClass}
                   >
                     {TIPOS_IDENTIFICACION.map((t) => (
                       <option key={t.value} value={t.value}>{t.label}</option>
@@ -803,7 +821,7 @@ export default function TrabajadoresPage() {
                   <div className={`rounded-lg border px-4 py-3 text-sm ${trabajadorVigente ? 'border-red-200 bg-red-50 text-red-800' : 'border-sky-200 bg-sky-50 text-sky-900'}`}>
                     <p className="font-medium">
                       {trabajadorVigente
-                        ? `Ya es trabajador: ${trabajadorVigente.codigo_trabajador} en ${trabajadorVigente.feria_actual?.codigo ?? 'sin feria'} (${trabajadorVigente.estado}).`
+                        ? `Ya es trabajador: ${trabajadorVigente.codigo_trabajador} en ${trabajadorVigente.feria_actual ? nombreFeria(trabajadorVigente.feria_actual) : 'sin feria'} (${trabajadorVigente.estado}).`
                         : 'Persona ya registrada: se reutilizan sus datos.'}
                     </p>
                     {personaExistente.socios.length > 0 && (
@@ -834,7 +852,7 @@ export default function TrabajadoresPage() {
                 </label>
                 <label className={labelClass}>
                   <span className="mb-1.5 block">Sexo</span>
-                  <select value={form.sexo} onChange={(e) => cambiarCampo('sexo', e.target.value)} disabled={!!personaExistente} className={controlClass}>
+                  <select value={form.sexo} onChange={(e) => cambiarCampo('sexo', e.target.value)} disabled={!!personaExistente} className={selectClass}>
                     <option value="">Sin indicar</option>
                     <option value="F">Femenino</option>
                     <option value="M">Masculino</option>
@@ -857,7 +875,7 @@ export default function TrabajadoresPage() {
               <div className="grid grid-cols-1 gap-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4 sm:grid-cols-2">
                 <label className={`${labelClass} sm:col-span-2`}>
                   <span className="mb-1.5 block">Feria donde trabaja *</span>
-                  <select value={form.feria_id} onChange={(e) => cambiarCampo('feria_id', e.target.value)} className={controlClass}>
+                  <select value={form.feria_id} onChange={(e) => cambiarCampo('feria_id', e.target.value)} className={selectClass}>
                     <option value="">Seleccione la feria</option>
                     {feriasActivas.map((f) => (
                       <option key={f.id} value={f.id}>{nombreFeria(f)}</option>
@@ -916,7 +934,7 @@ export default function TrabajadoresPage() {
             <div className="space-y-4 px-6 py-5" onKeyDown={alEnter}>
               <label className={labelClass}>
                 <span className="mb-1.5 block">Nueva feria *</span>
-                <select value={traslado.feria_id} onChange={(e) => setTraslado({ ...traslado, feria_id: e.target.value })} autoFocus className={controlClass}>
+                <select value={traslado.feria_id} onChange={(e) => setTraslado({ ...traslado, feria_id: e.target.value })} autoFocus className={selectClass}>
                   <option value="">Seleccione la feria</option>
                   {feriasActivas.filter((f) => f.id !== detalle.feria_actual?.id).map((f) => (
                     <option key={f.id} value={f.id}>{nombreFeria(f)}</option>

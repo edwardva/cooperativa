@@ -11,6 +11,8 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Contact, Loader2 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
+import { Button } from '../components/ui/Button'
+import { usePermissions } from '../store/authStore'
 import { Badge } from '../components/ui/Badge'
 import { getErrorMessage } from '../services/api'
 import * as personasService from '../services/personasService'
@@ -33,6 +35,10 @@ const PESTANAS: { id: Pestana; texto: string }[] = [
 const dia = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—')
 /** Marcas de tiempo: en la hora local */
 const momento = (iso: string) => new Date(iso).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })
+/** Las ferias se nombran por su dirección, igual que en el resto del sistema */
+const nombreFeria = (f: { codigo: string; nombre: string; direccion?: string | null }) =>
+  f.direccion?.trim() || f.nombre || f.codigo
+
 const money = (v: number | string | null | undefined) =>
   Number(v ?? 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -70,6 +76,7 @@ const Aviso = ({ children }: { children: React.ReactNode }) => (
 export default function PersonaFichaPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { hasPermission } = usePermissions()
   const [ficha, setFicha] = useState<FichaPersona | null>(null)
   const [error, setError] = useState('')
   const [pestana, setPestana] = useState<Pestana>('general')
@@ -89,6 +96,10 @@ export default function PersonaFichaPage() {
   if (!ficha) return <div className="p-10"><Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" /></div>
 
   const { persona, trabajadores, ahorristas } = ficha
+  // Un ahorrista que todavía no trabaja en ninguna feria se registra desde aquí
+  const cedula = ['V', 'E'].includes(persona.tipo_identificacion) ? persona.numero_identificacion : null
+  const puedeRegistrarTrabajador =
+    !!cedula && hasPermission('trabajadores', 'create') && trabajadores.every((t) => t.estado === 'retirado')
   const sinAhorrista = <Aviso>La persona no tiene expediente de ahorrista.</Aviso>
   const sinTrabajador = <Aviso>La persona no tiene expediente de trabajador de feria.</Aviso>
 
@@ -148,10 +159,15 @@ export default function PersonaFichaPage() {
               {trabajadores.length === 0 ? <p className="text-sm text-neutral-500">No es trabajador.</p> : trabajadores.map((t) => (
                 <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-1 text-sm">
                   <span className="font-mono">{t.codigo_trabajador}</span>
-                  <span>{t.feria_actual ? t.feria_actual.codigo : 'sin feria'}</span>
+                  <span>{t.feria_actual ? nombreFeria(t.feria_actual) : 'sin feria'}</span>
                   {badgeEstado(t.estado)}
                 </div>
               ))}
+              {puedeRegistrarTrabajador && (
+                <Button size="sm" variant="outline" className="mt-3" onClick={() => navigate(`/trabajadores?nuevo=1&cedula=${encodeURIComponent(cedula!)}`)}>
+                  Registrar como trabajador
+                </Button>
+              )}
             </Card>
             <Card className="p-5">
               <p className="mb-3 text-sm font-semibold text-neutral-800">Como ahorrista</p>
@@ -177,14 +193,14 @@ export default function PersonaFichaPage() {
                 <Dato titulo="Codigo">{t.codigo_trabajador}</Dato>
                 <Dato titulo="Estado">{badgeEstado(t.estado)}</Dato>
                 <Dato titulo="Ingreso">{dia(t.fecha_ingreso)}</Dato>
-                <Dato titulo="Feria actual">{t.feria_actual ? `${t.feria_actual.codigo} desde ${dia(t.feria_actual.desde)}` : '—'}</Dato>
+                <Dato titulo="Feria actual">{t.feria_actual ? `${nombreFeria(t.feria_actual)} desde ${dia(t.feria_actual.desde)}` : '—'}</Dato>
                 <Dato titulo="Prueba">{t.prueba.cumplida ? `Cumplida el ${dia(t.prueba.fin_prueba)}` : `Hasta ${dia(t.prueba.fin_prueba)}`}</Dato>
                 {t.fecha_salida && <Dato titulo="Salida">{dia(t.fecha_salida)} · {t.motivo_salida}</Dato>}
               </div>
               <Tabla columnas={['Feria', 'Desde', 'Hasta', 'Motivo']} vacio={t.ferias.length === 0}>
                 {t.ferias.map((f) => (
                   <tr key={f.id}>
-                    <td className="px-3 py-2">{f.feria.codigo} · {f.feria.nombre}</td>
+                    <td className="px-3 py-2">{nombreFeria(f.feria)}</td>
                     <td className="px-3 py-2">{dia(f.fecha_inicio)}</td>
                     <td className="px-3 py-2">{f.fecha_fin ? dia(f.fecha_fin) : <Badge variant="success">Actual</Badge>}</td>
                     <td className="px-3 py-2 text-neutral-600">{f.motivo_cambio ?? '—'}</td>
@@ -209,7 +225,7 @@ export default function PersonaFichaPage() {
                   {t.pagos_salud.map((p) => (
                     <tr key={p.id}>
                       <td className="px-3 py-2">{p.periodo}</td>
-                      <td className="px-3 py-2">{p.feria.codigo}</td>
+                      <td className="px-3 py-2">{nombreFeria(p.feria)}</td>
                       <td className="px-3 py-2">{dia(p.pago.fecha_pago)}</td>
                       <td className="px-3 py-2">{p.pago.referencia ?? '—'}</td>
                       <td className="px-3 py-2">${money(p.monto_usd)}</td>

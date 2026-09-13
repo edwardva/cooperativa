@@ -758,6 +758,15 @@ export default function ColectaPage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {socio.trabajador && (
+                        <span
+                          className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700"
+                          title="La misma persona tiene expediente de trabajador de feria"
+                        >
+                          Trabajador {socio.trabajador.codigo}
+                          {socio.trabajador.feria ? ` · ${socio.trabajador.feria}` : ''}
+                        </span>
+                      )}
                       {socio.alertas.socio_retirado && (
                         <Badge variant="error">Socio retirado</Badge>
                       )}

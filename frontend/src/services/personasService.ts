@@ -180,7 +180,7 @@ export interface ExpedienteTrabajadorFicha extends ExpedienteTrabajador {
   pagos_salud: {
     id: number
     periodo: string
-    feria: { codigo: string; nombre: string }
+    feria: { codigo: string; nombre: string; direccion: string | null }
     monto_usd: number
     estado: 'vigente' | 'anulado'
     pago: { id: number; fecha_pago: string; referencia: string | null }

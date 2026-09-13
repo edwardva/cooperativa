@@ -21,7 +21,7 @@ export const mesesDePrueba = (): Promise<number> => leerParametroNumerico('MESES
 
 export const includeFerias = {
   orderBy: { fecha_inicio: 'desc' },
-  include: { feria: { select: { id: true, codigo: true, nombre: true } } },
+  include: { feria: { select: { id: true, codigo: true, nombre: true, direccion: true } } },
 } satisfies Prisma.SocioTrabajador$feriasArgs;
 
 export const includeTrabajador = {
@@ -42,7 +42,12 @@ interface FeriaResumen {
   id: number;
   codigo: string;
   nombre: string;
+  direccion: string | null;
 }
+
+/** Cómo se nombra una feria ante el usuario: por su dirección, igual que en el resto del sistema */
+export const etiquetaFeria = (f: { codigo: string; nombre: string; direccion?: string | null }): string =>
+  f.direccion?.trim() || f.nombre || f.codigo;
 
 interface TrabajadorBase {
   estado: EstadoTrabajador;
@@ -52,7 +57,7 @@ interface TrabajadorBase {
 
 export const saludDelTrabajador = (estado: EstadoTrabajador, feria: FeriaResumen | null) => {
   if (estado === 'activo' && feria) {
-    return { asignada: true, detalle: `Asignada automáticamente por la feria ${feria.codigo}` };
+    return { asignada: true, detalle: `Asignada automáticamente por la feria ${etiquetaFeria(feria)}` };
   }
   if (estado === 'activo') return { asignada: false, detalle: 'Sin salud: el trabajador no tiene feria' };
   return { asignada: false, detalle: `Sin salud: trabajador ${estado}` };
