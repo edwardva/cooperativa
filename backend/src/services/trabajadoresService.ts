@@ -90,6 +90,6 @@ export const advertenciasParaAhorrista = async (
     .map(
       ({ t, prueba }) =>
         `Es trabajador (${t.codigo_trabajador}) y todavía no cumple los ${meses} meses de prueba: ` +
-        `termina el ${textoDia(prueba.fin_prueba)}.`
+        `termina el ${textoDia(prueba.fin_prueba).split('-').reverse().join('/')}.`
     );
 };

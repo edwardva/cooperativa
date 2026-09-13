@@ -57,6 +57,10 @@ app.use(
   cors({
     origin: config.corsOrigin,
     credentials: true,
+    // El nombre de los Excel y PDF viaja en Content-Disposition. Cuando el
+    // front llama a la API desde otro origen, el navegador lo oculta si no se
+    // expone, y la descarga pierde el nombre con la fecha.
+    exposedHeaders: ['Content-Disposition'],
   })
 );
 

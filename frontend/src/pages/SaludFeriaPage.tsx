@@ -15,7 +15,7 @@
  * todavia no los confirmo.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Ban, CheckCircle2, FileSpreadsheet, FileText, HeartPulse, Loader2, Printer, Search, X } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -140,7 +140,15 @@ export default function SaludFeriaPage() {
   }, [])
 
 
+  // Elegir feria y mes dispara dos consultas seguidas. Si la primera responde
+  // después, mostraría la deuda de OTRO período con el mes nuevo seleccionado:
+  // sólo se aplica la respuesta del último pedido.
+  const pedidoDeuda = useRef(0)
+  const pedidoPendientes = useRef(0)
+  const pedidoPagos = useRef(0)
+
   const cargarDeuda = useCallback(async () => {
+    const pedido = ++pedidoDeuda.current
     if (!feriaId || !config) {
       setDeuda(null)
       return
@@ -149,12 +157,14 @@ export default function SaludFeriaPage() {
     setErrorPago('')
     try {
       const r = await saludFeriaService.obtenerDeuda(Number(feriaId), { tipo, anio, numero })
+      if (pedido !== pedidoDeuda.current) return
       setDeuda(r.data)
     } catch (err) {
+      if (pedido !== pedidoDeuda.current) return
       setDeuda(null)
       setErrorPago(getErrorMessage(err) || 'No fue posible calcular la deuda')
     } finally {
-      setCargandoDeuda(false)
+      if (pedido === pedidoDeuda.current) setCargandoDeuda(false)
     }
   }, [feriaId, config, tipo, anio, numero])
 
@@ -175,14 +185,17 @@ export default function SaludFeriaPage() {
 
   const cargarPendientes = useCallback(async () => {
     if (!config) return
+    const pedido = ++pedidoPendientes.current
     setCargandoPendientes(true)
     try {
       const r = await saludFeriaService.obtenerFeriasPendientes({ tipo, anio, numero })
+      if (pedido !== pedidoPendientes.current) return
       setPendientes(r.data)
     } catch (err) {
+      if (pedido !== pedidoPendientes.current) return
       setError(getErrorMessage(err) || 'No fue posible calcular las ferias pendientes')
     } finally {
-      setCargandoPendientes(false)
+      if (pedido === pedidoPendientes.current) setCargandoPendientes(false)
     }
   }, [config, tipo, anio, numero])
 
@@ -191,6 +204,7 @@ export default function SaludFeriaPage() {
   }, [pestana, cargarPendientes])
 
   const cargarPagos = useCallback(async () => {
+    const pedido = ++pedidoPagos.current
     setCargandoPagos(true)
     try {
       const r = await saludFeriaService.listarPagos({
@@ -201,6 +215,7 @@ export default function SaludFeriaPage() {
         page: paginaPagos,
         limit: 20,
       })
+      if (pedido !== pedidoPagos.current) return
       setPagos(r.data)
       setTotalPagos(r.meta?.total ?? r.data.length)
       setPaginasPagos(Math.max(1, r.meta?.totalPages ?? 1))
@@ -297,12 +312,13 @@ export default function SaludFeriaPage() {
     <>
       <label className={labelClass}>
         <span className="mb-1.5 block">Año</span>
-        <input type="number" min={2000} max={2100} value={anio} onChange={(e) => setAnio(Number(e.target.value))} className={controlClass} />
+        {/* Deshabilitados hasta leer la configuración: si no, el período en curso pisa lo que el usuario ya eligió */}
+        <input type="number" min={2000} max={2100} value={anio} onChange={(e) => setAnio(Number(e.target.value))} disabled={!config} className={controlClass} />
       </label>
       {tipo === 'mensual' ? (
         <label className={labelClass}>
           <span className="mb-1.5 block">Mes</span>
-          <select value={numero} onChange={(e) => setNumero(Number(e.target.value))} className={controlClass}>
+          <select value={numero} onChange={(e) => setNumero(Number(e.target.value))} disabled={!config} className={controlClass}>
             {MESES.map((m, i) => (
               <option key={m} value={i + 1}>{m}</option>
             ))}
@@ -311,7 +327,7 @@ export default function SaludFeriaPage() {
       ) : (
         <label className={labelClass}>
           <span className="mb-1.5 block">Semana</span>
-          <input type="number" min={1} max={53} value={numero} onChange={(e) => setNumero(Number(e.target.value))} className={controlClass} />
+          <input type="number" min={1} max={53} value={numero} onChange={(e) => setNumero(Number(e.target.value))} disabled={!config} className={controlClass} />
         </label>
       )}
     </>
@@ -525,7 +541,7 @@ export default function SaludFeriaPage() {
       {pestana === 'pendientes' && (
         <div className="space-y-5">
           <Card className="p-4">
-            <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
               {selectorPeriodo}
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => window.print()} disabled={!pendientes}>

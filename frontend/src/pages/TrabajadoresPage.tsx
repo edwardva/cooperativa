@@ -10,7 +10,7 @@
  * con sus datos, nunca se registra dos veces.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -178,7 +178,12 @@ export default function TrabajadoresPage() {
     return () => clearTimeout(espera)
   }, [busqueda])
 
+  // Con filtros cambiando rápido, una respuesta vieja puede llegar después de
+  // la nueva: sólo se aplica la del último pedido
+  const pedidoListado = useRef(0)
+
   const cargar = useCallback(async () => {
+    const pedido = ++pedidoListado.current
     setCargando(true)
     setError('')
     try {
@@ -191,6 +196,7 @@ export default function TrabajadoresPage() {
         page: pagina,
         limit: 20,
       })
+      if (pedido !== pedidoListado.current) return
       setFilas(r.data)
       setTotal(r.meta?.total ?? r.data.length)
       setPaginas(Math.max(1, r.meta?.totalPages ?? 1))
@@ -539,7 +545,7 @@ export default function TrabajadoresPage() {
                     tabIndex={0}
                     className="cursor-pointer transition hover:bg-primary-50/40 focus:bg-primary-50/40 focus:outline-none"
                   >
-                    <td className="px-4 py-3 font-mono text-neutral-900">{t.codigo_trabajador}</td>
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-neutral-900">{t.codigo_trabajador}</td>
                     <td className="px-4 py-3 text-neutral-700">
                       {t.persona.tipo_identificacion}-{t.persona.numero_identificacion}
                     </td>
@@ -645,11 +651,12 @@ export default function TrabajadoresPage() {
               <HeartPulse className="mt-0.5 h-5 w-5 flex-shrink-0" />
               <div>
                 <p className="font-medium">Servicio de salud</p>
-                <p>{detalle.salud.detalle}. Lo descuenta y paga la feria.</p>
+                <p>{detalle.salud.detalle}.{detalle.salud.asignada ? ' Lo descuenta y paga la feria.' : ''}</p>
               </div>
             </section>
 
-            {/* Prueba y expediente de ahorrista (HU-04) */}
+            {/* Prueba y expediente de ahorrista (HU-04): no aplica a quien ya se retiró */}
+            {detalle.estado !== 'retirado' && (
             <section className="space-y-3 rounded-lg border border-neutral-200 px-4 py-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-medium text-neutral-900">Periodo de prueba ({detalle.prueba.meses} meses)</p>
@@ -674,6 +681,7 @@ export default function TrabajadoresPage() {
                 </Button>
               )}
             </section>
+            )}
 
             {/* Pagos de salud recibidos de la feria */}
             {pagosSalud && (
