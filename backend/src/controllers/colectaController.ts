@@ -44,6 +44,7 @@ import {
 import { obtenerTarifas, tipoCuentaAhorroObligatorio } from '../services/tarifasService';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio } from '../utils/bloqueos';
+import { etiquetaFeria } from '../services/trabajadoresService';
 import {
   asegurarReversoConFiadores,
   liberarFiadores,
@@ -293,6 +294,20 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       orderBy: [{ apellido: 'asc' }, { nombre: 'asc' }],
       include: {
         ubicacion: { select: { id: true, codigo: true, direccion: true } },
+        // Expediente de trabajador vigente de la misma persona: el cajero ve si
+        // el ahorrista también trabaja en una feria
+        persona: {
+          select: {
+            trabajadores: {
+              where: { estado: { not: 'retirado' } },
+              select: {
+                codigo_trabajador: true,
+                estado: true,
+                ferias: { where: { fecha_fin: null }, select: { feria: { select: { codigo: true, nombre: true, direccion: true } } } },
+              },
+            },
+          },
+        },
         cuentas_ahorro: {
           where: { estado: true },
           include: {
@@ -577,7 +592,18 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         nombre: socio.nombre,
         apellido: socio.apellido,
         estado: socio.estado,
-        es_trabajador: socio.es_trabajador,
+        // Derivado del expediente de trabajador de la persona, no de la columna
+        // vieja `socios.es_trabajador`, que nadie actualiza
+        es_trabajador: (socio.persona?.trabajadores.length ?? 0) > 0,
+        trabajador: socio.persona?.trabajadores[0]
+          ? {
+              codigo: socio.persona.trabajadores[0].codigo_trabajador,
+              estado: socio.persona.trabajadores[0].estado,
+              feria: socio.persona.trabajadores[0].ferias[0]
+                ? etiquetaFeria(socio.persona.trabajadores[0].ferias[0].feria)
+                : null,
+            }
+          : null,
         telefono: socio.telefono,
         ubicacion: socio.ubicacion,
 

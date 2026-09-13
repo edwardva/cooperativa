@@ -77,8 +77,9 @@ model Socio {
   fecha_inscripcion DateTime    @db.Date
   estado            EstadoSocio @default(activo)
   es_delegado       Boolean     @default(false)
-  // Socio trabajador vs. no trabajador: condiciona las categorias de prestamo
-  // a las que puede acceder (req. 7 de la reunion)
+  // OBSOLETO desde la fase 2: no se lee ni se actualiza. Si el socio también es
+  // trabajador se sabe por su persona (expediente en socios_trabajadores sin
+  // retirar). Queda para no perder el dato migrado; puede borrarse más adelante.
   es_trabajador     Boolean     @default(false)
   ubicacion_id      Int?
   // Identidad de la persona (fase 2). Nulo hasta correr prisma/backfill-personas.ts

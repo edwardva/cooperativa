@@ -180,7 +180,7 @@ export const feriasPendientesDelPeriodo = async (db: Db, ref: PeriodoSaludRef) =
   const [ferias, tarifa, { tasa }] = await Promise.all([
     db.ubicacion.findMany({
       orderBy: { codigo: 'asc' },
-      select: { id: true, codigo: true, nombre: true, responsable: true, telefono: true, estado: true },
+      select: { id: true, codigo: true, nombre: true, direccion: true, responsable: true, telefono: true, estado: true },
     }),
     leerParametroNumerico('TARIFA_SALUD_TRABAJADOR_USD'),
     resolverTasa(),

@@ -22,7 +22,7 @@ import PrestamosPage from './pages/PrestamosPage'
 import ColectaReportesPage from './pages/ColectaReportesPage'
 import TrabajadoresPage from './pages/TrabajadoresPage'
 import SaludFeriaPage from './pages/SaludFeriaPage'
-import PersonasPage from './pages/PersonasPage'
+
 import PersonaFichaPage from './pages/PersonaFichaPage'
 import AuditoriaPage from './pages/AuditoriaPage'
 
@@ -81,19 +81,9 @@ function App() {
           }
         />
 
+        {/* Ficha completa de un socio o trabajador: se abre desde Socios y Trabajadores */}
         <Route
-          path="/personas"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <PersonasPage />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/personas/:id"
+          path="/ficha/:id"
           element={
             <ProtectedRoute>
               <MainLayout>

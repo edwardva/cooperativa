@@ -48,7 +48,7 @@ const cargar = (personaId: number) =>
             take: 24,
             include: {
               periodo: true,
-              feria: { select: { codigo: true, nombre: true } },
+              feria: { select: { codigo: true, nombre: true, direccion: true } },
               pago: { select: { id: true, fecha_pago: true, referencia: true } },
             },
           },

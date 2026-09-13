@@ -22,7 +22,6 @@ import {
   Printer,
   Shield,
   HardHat,
-  Contact,
   ScrollText
 } from 'lucide-react'
 import logo from '@/logoR.png'
@@ -37,7 +36,7 @@ interface NavItem {
 const navigationItems: NavItem[] = [
   { name: 'Dashboard', path: '/dashboard', icon: Home },
   { name: 'Socios', path: '/socios', icon: Users },
-  { name: 'Personas', path: '/personas', icon: Contact },
+
   { name: 'Trabajadores', path: '/trabajadores', icon: HardHat },
   { name: 'Ahorro', path: '/ahorro', icon: Wallet },
   { name: 'Préstamos', path: '/prestamos', icon: DollarSign },

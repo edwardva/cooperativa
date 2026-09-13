@@ -59,7 +59,7 @@ export interface ResumenDeuda {
 }
 
 export interface Deuda {
-  feria: { id: number; codigo: string; nombre: string; responsable: string | null; estado: boolean }
+  feria: { id: number; codigo: string; nombre: string; direccion: string | null; responsable: string | null; estado: boolean }
   periodo: Periodo & { id: number | null }
   tarifa_usd: number
   filas: FilaDeuda[]
@@ -71,7 +71,7 @@ export interface Deuda {
 }
 
 export interface FeriaPendiente extends ResumenDeuda {
-  feria: { id: number; codigo: string; nombre: string; responsable: string | null; telefono: string | null; estado: boolean }
+  feria: { id: number; codigo: string; nombre: string; direccion: string | null; responsable: string | null; telefono: string | null; estado: boolean }
   monto_pendiente_bs: number
   estado: 'sin_trabajadores' | 'pagada' | 'parcial' | 'pendiente'
 }
@@ -102,7 +102,7 @@ export interface PagoResumen {
   created_at: string
   fecha_anulacion: string | null
   motivo_anulacion: string | null
-  feria: { id: number; codigo: string; nombre: string }
+  feria: { id: number; codigo: string; nombre: string; direccion: string | null }
   periodo: PeriodoGuardado
 }
 
@@ -130,7 +130,7 @@ export interface PagoDeTrabajador {
   monto_usd: string
   estado: 'vigente' | 'anulado'
   periodo: PeriodoGuardado
-  feria: { id: number; codigo: string; nombre: string }
+  feria: { id: number; codigo: string; nombre: string; direccion: string | null }
   pago: { id: number; fecha_pago: string; referencia: string | null; estado: 'vigente' | 'anulado' }
 }
 

@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { validarCedula } from '../utils/cedula';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
-import { advertenciasParaAhorrista } from '../services/trabajadoresService';
+import { advertenciasParaAhorrista, etiquetaFeria } from '../services/trabajadoresService';
 
 const prisma = new PrismaClient();
 
@@ -283,6 +283,19 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
               direccion: true,
             },
           },
+          // Expediente de trabajador vigente de la misma persona (fase 2)
+          persona: {
+            select: {
+              trabajadores: {
+                where: { estado: { not: 'retirado' } },
+                take: 1,
+                select: {
+                  codigo_trabajador: true,
+                  ferias: { where: { fecha_fin: null }, select: { feria: { select: { codigo: true, nombre: true, direccion: true } } } },
+                },
+              },
+            },
+          },
           _count: {
             select: {
               beneficiarios: true,
@@ -304,7 +317,19 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
 
     res.json({
       success: true,
-      data: socios.map(prepararSocioParaRespuesta),
+      data: socios.map(({ persona, ...socio }) => {
+        const trabajador = persona?.trabajadores[0];
+        return {
+          ...prepararSocioParaRespuesta(socio),
+          // Si también es trabajador de feria: sale del expediente, no de `es_trabajador`
+          trabajador: trabajador
+            ? {
+                codigo: trabajador.codigo_trabajador,
+                feria: trabajador.ferias[0] ? etiquetaFeria(trabajador.ferias[0].feria) : null,
+              }
+            : null,
+        };
+      }),
       meta: {
         page,
         limit,

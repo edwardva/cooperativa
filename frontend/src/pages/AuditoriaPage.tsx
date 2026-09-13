@@ -26,6 +26,9 @@ interface Registro {
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
+
+// Mismo diseño de combo que el formulario de Socios
+const selectClass = `${controlClass} appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10`
 const labelClass = 'block text-sm font-medium text-neutral-700'
 
 const filtrosVacios = { usuario: '', modulo: '', accion: '', registro_id: '', desde: '', hasta: '' }
@@ -104,14 +107,14 @@ export default function AuditoriaPage() {
           </label>
           <label className={labelClass}>
             <span className="mb-1.5 block">Modulo</span>
-            <select value={filtros.modulo} onChange={(e) => setFiltros({ ...filtros, modulo: e.target.value })} className={controlClass}>
+            <select value={filtros.modulo} onChange={(e) => setFiltros({ ...filtros, modulo: e.target.value })} className={selectClass}>
               <option value="">Todos</option>
               {opciones.modulos.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
           <label className={labelClass}>
             <span className="mb-1.5 block">Accion</span>
-            <select value={filtros.accion} onChange={(e) => setFiltros({ ...filtros, accion: e.target.value })} className={controlClass}>
+            <select value={filtros.accion} onChange={(e) => setFiltros({ ...filtros, accion: e.target.value })} className={selectClass}>
               <option value="">Todas</option>
               {opciones.acciones.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>

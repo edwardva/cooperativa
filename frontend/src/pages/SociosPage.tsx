@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Contact,
   Download,
   Edit2,
   Eye,
   Filter,
+  HardHat,
   MapPin,
   MoreVertical,
   Phone,
@@ -62,6 +64,10 @@ interface Socio {
     cuentas_ahorro: number
     prestamos: number
   }
+  /** Expediente de trabajador vigente de la misma persona, si lo tiene */
+  trabajador?: { codigo: string; feria: string | null } | null
+  /** Nula mientras la cédula esté pendiente de revisión: sin ella no hay ficha completa */
+  persona_id?: number | null
 }
 
 interface SocioFormData {
@@ -153,7 +159,10 @@ const resumenExpedientes = (r: ResultadoIdentificacion): string => {
     ? r.persona.socios.map((s) => `Ahorrista ${s.codigo_socio} (${s.estado})`)
     : r.socios_sin_persona.map((s) => `Ahorrista ${s.codigo_socio} (${s.estado})`)
   const trabajadores = (r.persona?.trabajadores ?? []).map(
-    (t) => `Trabajador ${t.codigo_trabajador} (${t.estado}${t.feria_actual ? `, ${t.feria_actual.codigo}` : ''})`
+    (t) =>
+      `Trabajador ${t.codigo_trabajador} (${t.estado}${
+        t.feria_actual ? `, ${t.feria_actual.direccion?.trim() || t.feria_actual.nombre || t.feria_actual.codigo}` : ''
+      })`
   )
   return [...socios, ...trabajadores].join(' · ')
 }
@@ -181,11 +190,37 @@ export const SociosPage = () => {
   const [errorRetiro, setErrorRetiro] = useState('')
   const [procesandoRetiro, setProcesandoRetiro] = useState(false)
   const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null)
+  // El menú se posiciona sobre la ventana: dentro de la tabla (overflow) se cortaba en las últimas filas
+  const [posicionMenu, setPosicionMenu] = useState<{ top?: number; bottom?: number; right: number }>({ right: 0 })
+
+  useEffect(() => {
+    if (menuAbiertoId === null) return
+    const cerrar = () => setMenuAbiertoId(null)
+    window.addEventListener('scroll', cerrar, true)
+    window.addEventListener('resize', cerrar)
+    return () => {
+      window.removeEventListener('scroll', cerrar, true)
+      window.removeEventListener('resize', cerrar)
+    }
+  }, [menuAbiertoId])
+
+  const alternarMenu = (socioId: number, boton: HTMLElement) => {
+    if (menuAbiertoId === socioId) {
+      setMenuAbiertoId(null)
+      return
+    }
+    const r = boton.getBoundingClientRect()
+    const right = window.innerWidth - r.right
+    // Sin espacio debajo para las opciones, abre hacia arriba
+    setPosicionMenu(window.innerHeight - r.bottom < 280 ? { bottom: window.innerHeight - r.top + 4, right } : { top: r.bottom + 4, right })
+    setMenuAbiertoId(socioId)
+  }
   const [fotoPreview, setFotoPreview] = useState<string | null>(null)
   // Fase 2: la cedula se consulta al salir del campo para no duplicar a la persona
   const [identificacion, setIdentificacion] = useState<ResultadoIdentificacion | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const alEnter = useEnterNavigation()
+  const navigate = useNavigate()
   
   // Estados de paginación
   const [paginaActual, setPaginaActual] = useState(1)
@@ -837,6 +872,14 @@ export const SociosPage = () => {
                               Delegado
                             </span>
                           )}
+                          {socio.trabajador && (
+                            <span
+                              className="mt-1 ml-1 inline-flex rounded-full bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700"
+                              title={`Trabajador de feria ${socio.trabajador.codigo}${socio.trabajador.feria ? `: ${socio.trabajador.feria}` : ''}`}
+                            >
+                              Trabajador
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 font-medium text-neutral-900">{socio.cedula}</td>
                         <td className="px-4 py-3">
@@ -858,7 +901,7 @@ export const SociosPage = () => {
                         <td className="px-2 py-3">
                           <div className="relative flex items-center justify-end">
                             <button
-                              onClick={() => setMenuAbiertoId(menuAbiertoId === socio.id ? null : socio.id)}
+                              onClick={(e) => alternarMenu(socio.id, e.currentTarget)}
                               className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800"
                               title="Acciones"
                             >
@@ -871,7 +914,10 @@ export const SociosPage = () => {
                                   className="fixed inset-0 z-10"
                                   onClick={() => setMenuAbiertoId(null)}
                                 />
-                                <div className="absolute right-0 top-8 z-20 w-48 rounded-lg border border-neutral-200 bg-white shadow-lg">
+                                <div
+                                  className="fixed z-20 w-60 rounded-lg border border-neutral-200 bg-white shadow-lg"
+                                  style={posicionMenu}
+                                >
                                   <div className="py-1">
                                     <button
                                       onClick={() => {
@@ -882,6 +928,30 @@ export const SociosPage = () => {
                                       <Eye className="h-4 w-4 text-neutral-500" />
                                       <span>Ver detalle</span>
                                     </button>
+                                    <button
+                                      onClick={() => {
+                                        setMenuAbiertoId(null)
+                                        if (socio.persona_id) navigate(`/ficha/${socio.persona_id}`)
+                                      }}
+                                      disabled={!socio.persona_id}
+                                      title={socio.persona_id ? undefined : 'La cédula de este socio está pendiente de revisión'}
+                                      className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      <Contact className="h-4 w-4 text-primary-600" />
+                                      <span>Ficha completa</span>
+                                    </button>
+                                    {!socio.trabajador && socio.estado === 'activo' && (
+                                      <button
+                                        onClick={() => {
+                                          setMenuAbiertoId(null)
+                                          navigate(`/trabajadores?nuevo=1&cedula=${encodeURIComponent(socio.cedula)}`)
+                                        }}
+                                        className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50"
+                                      >
+                                        <HardHat className="h-4 w-4 text-purple-600" />
+                                        <span>Registrar como trabajador</span>
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() => {
                                         setMenuAbiertoId(null)
@@ -1406,12 +1476,23 @@ export const SociosPage = () => {
                   Vista de solo lectura sin posibilidad de edición.
                 </p>
               </div>
-              <button
-                onClick={() => setModalDetalleAbierto(false)}
-                className="rounded-lg border border-neutral-200 px-3 py-1.5 text-sm text-neutral-600 transition hover:bg-neutral-50"
-              >
-                Cerrar
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {socioDetalle.persona_id && (
+                  <button
+                    onClick={() => navigate(`/ficha/${socioDetalle.persona_id}`)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-1.5 text-sm font-medium text-primary-700 transition hover:bg-primary-50"
+                  >
+                    <Contact className="h-4 w-4" />
+                    Ficha completa
+                  </button>
+                )}
+                <button
+                  onClick={() => setModalDetalleAbierto(false)}
+                  className="rounded-lg border border-neutral-200 px-3 py-1.5 text-sm text-neutral-600 transition hover:bg-neutral-50"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
 
             {/* Foto del socio */}

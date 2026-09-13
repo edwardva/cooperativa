@@ -13,6 +13,7 @@ import { BadRequestError } from '../middleware/errorHandler';
 import { carteraPrestamos, VISTAS_CARTERA } from './carteraService';
 import { redondear } from './cobroSemanalService';
 import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
+import { etiquetaFeria } from './trabajadoresService';
 import { formatearPeriodo, semanaDeFecha } from '../utils/calendarioSemanal';
 import { fechaDia } from '../utils/fechaDia';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
@@ -88,10 +89,9 @@ const feriasPendientes = async (p: Parametros): Promise<Reporte> => {
     clave: 'ferias-pendientes',
     titulo: REPORTES['ferias-pendientes'],
     subtitulo: `${r.periodo.etiqueta} · $${r.tarifa_usd} por trabajador · tasa ${r.tasa}`,
-    columnas: ['Código', 'Feria', 'Responsable', 'Teléfono', 'Trabajadores', 'Pagados', 'Pendientes', 'Pendiente USD', 'Pendiente Bs', 'Estado'],
+    columnas: ['Feria', 'Responsable', 'Teléfono', 'Trabajadores', 'Pagados', 'Pendientes', 'Pendiente USD', 'Pendiente Bs', 'Estado'],
     filas: r.ferias.map((f) => [
-      f.feria.codigo,
-      f.feria.nombre,
+      etiquetaFeria(f.feria),
       f.feria.responsable ?? '',
       f.feria.telefono ?? '',
       f.total,
@@ -152,7 +152,7 @@ const pagosSalud = async (p: Parametros): Promise<Reporte> => {
     where,
     include: {
       pago: { select: { id: true, fecha_pago: true, referencia: true } },
-      feria: { select: { codigo: true } },
+      feria: { select: { codigo: true, nombre: true, direccion: true } },
       periodo: true,
       trabajador: {
         select: {
@@ -176,7 +176,7 @@ const pagosSalud = async (p: Parametros): Promise<Reporte> => {
     filas: renglones.map((r) => [
       diaBD(r.pago.fecha_pago),
       r.pago.id,
-      r.feria.codigo,
+      etiquetaFeria(r.feria),
       etiquetaPeriodo(r.periodo),
       r.trabajador.codigo_trabajador,
       `${r.trabajador.persona.apellidos}, ${r.trabajador.persona.nombres}`,
@@ -206,7 +206,7 @@ const trabajadoresFeria = async (p: Parametros): Promise<Reporte> => {
     prisma.ubicacion.findMany({
       where: feriaId ? { id: feriaId } : {},
       orderBy: { codigo: 'asc' },
-      select: { id: true, codigo: true, nombre: true, responsable: true, estado: true },
+      select: { id: true, codigo: true, nombre: true, direccion: true, responsable: true, estado: true },
     }),
     // Feria actual de los que siguen asociados
     prisma.trabajadorFeria.findMany({
@@ -243,10 +243,9 @@ const trabajadoresFeria = async (p: Parametros): Promise<Reporte> => {
     clave: 'trabajadores-feria',
     titulo: REPORTES['trabajadores-feria'],
     subtitulo: 'Salud asignada: trabajadores activos con la feria como feria actual',
-    columnas: ['Código', 'Feria', 'Responsable', 'Activos', 'Suspendidos', 'Inactivos', 'Retirados', 'Con salud asignada', 'Estado de la feria'],
+    columnas: ['Feria', 'Responsable', 'Activos', 'Suspendidos', 'Inactivos', 'Retirados', 'Con salud asignada', 'Estado de la feria'],
     filas: filas.map(({ f, c }) => [
-      f.codigo,
-      f.nombre,
+      etiquetaFeria(f),
       f.responsable ?? '',
       c.activo,
       c.suspendido,

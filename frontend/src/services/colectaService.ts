@@ -162,6 +162,8 @@ export interface SocioColecta {
   telefono: string | null
   ubicacion: { id: number; codigo: string; direccion: string | null } | null
   es_trabajador?: boolean
+  /** Expediente de trabajador vigente de la misma persona, si lo tiene */
+  trabajador?: { codigo: string; estado: string; feria: string | null } | null
   cobrables: Cobrable[]
 
   /** Vistas ya resueltas por el backend para la pantalla principal */

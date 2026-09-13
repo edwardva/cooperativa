@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { calcularDeuda, feriasPendientesDelPeriodo, periodoDesdeParametros } from '../services/saludFeriaService';
+import { etiquetaFeria } from '../services/trabajadoresService';
 import { leerParametroNumerico, periodicidadSaludFeria } from '../services/tarifasService';
 import { resolverTasa } from '../services/tasaCambioService';
 import { redondear } from '../services/cobroSemanalService';
@@ -80,7 +81,7 @@ const periodoDeQuery = (req: Request): Promise<PeriodoSaludRef> =>
   periodoDesdeParametros({ tipo: req.query.tipo, anio: req.query.anio, numero: req.query.numero });
 
 const includeDetalle = {
-  feria: { select: { id: true, codigo: true, nombre: true, responsable: true } },
+  feria: { select: { id: true, codigo: true, nombre: true, direccion: true, responsable: true } },
   periodo: true,
   detalles: {
     include: {
@@ -156,7 +157,7 @@ export const obtenerDeuda = async (req: Request, res: Response): Promise<void> =
     const ref = await periodoDeQuery(req);
 
     const [feria, tarifa, { tasa }] = await Promise.all([
-      prisma.ubicacion.findUnique({ where: { id: feriaId }, select: { id: true, codigo: true, nombre: true, responsable: true, estado: true } }),
+      prisma.ubicacion.findUnique({ where: { id: feriaId }, select: { id: true, codigo: true, nombre: true, direccion: true, responsable: true, estado: true } }),
       leerParametroNumerico('TARIFA_SALUD_TRABAJADOR_USD'),
       resolverTasa(),
     ]);
@@ -223,7 +224,7 @@ export const listarPagos = async (req: Request, res: Response): Promise<void> =>
       prisma.pagoSaludFeria.count({ where }),
       prisma.pagoSaludFeria.findMany({
         where,
-        include: { feria: { select: { id: true, codigo: true, nombre: true } }, periodo: true },
+        include: { feria: { select: { id: true, codigo: true, nombre: true, direccion: true } }, periodo: true },
         orderBy: [{ fecha_pago: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
@@ -256,7 +257,7 @@ export const historialTrabajador = async (req: Request, res: Response): Promise<
       where: { trabajador_id: idDeRuta(req) },
       include: {
         periodo: true,
-        feria: { select: { id: true, codigo: true, nombre: true } },
+        feria: { select: { id: true, codigo: true, nombre: true, direccion: true } },
         pago: { select: { id: true, fecha_pago: true, referencia: true, estado: true } },
       },
       orderBy: [{ periodo: { fecha_inicio: 'desc' } }, { id: 'desc' }],
@@ -327,7 +328,7 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
       const deuda = await calcularDeuda(tx, feria.id, ref, tarifa);
       const pendientes = deuda.filas.filter((f) => f.estado === 'pendiente');
       if (pendientes.length === 0) {
-        throw new ConflictError(`La feria ${feria.codigo} no tiene trabajadores pendientes en ${rango.etiqueta}`);
+        throw new ConflictError(`La feria ${etiquetaFeria(feria)} no tiene trabajadores pendientes en ${rango.etiqueta}`);
       }
 
       const esperadoUsd = deuda.resumen.monto_pendiente_usd;
