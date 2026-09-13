@@ -16,6 +16,8 @@ import type { Request, Response } from 'express';
 import { PrismaClient, Prisma, type AcuerdoSalud, type Beneficiario } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { registrarAuditoria } from '../services/auditoriaService';
+import { bloquearSocios } from '../utils/bloqueos';
 
 const prisma = new PrismaClient();
 
@@ -872,15 +874,11 @@ export const crearGrupoAcuerdo = async (req: Request, res: Response): Promise<vo
       include: includeGrupo,
     })) as AcuerdoSaludCompleto[];
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREATE',
-        modulo: 'salud',
-        datos_despues: { numero_acuerdo: data.numero_acuerdo, socio_id: data.socio_id, personas: rows.length } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREATE',
+      modulo: 'salud',
+      despues: { numero_acuerdo: data.numero_acuerdo, socio_id: data.socio_id, personas: rows.length },
     });
 
     logger.info(`Acuerdo de salud ${data.numero_acuerdo} creado para socio ${data.socio_id} con ${rows.length} persona(s)`);
@@ -956,16 +954,12 @@ export const agregarBeneficiarioAGrupo = async (req: Request, res: Response): Pr
       });
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREATE',
-        modulo: 'salud',
-        registro_id: nuevaFila.id,
-        datos_despues: nuevaFila as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREATE',
+      modulo: 'salud',
+      registro_id: nuevaFila.id,
+      despues: nuevaFila,
     });
 
     logger.info(`Beneficiario agregado al acuerdo de salud ${numeroAcuerdo}`);
@@ -1033,16 +1027,12 @@ export const actualizarGrupoAcuerdo = async (req: Request, res: Response): Promi
       },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'UPDATE',
-        modulo: 'salud',
-        datos_antes: { numero_acuerdo: numeroAcuerdo } as any,
-        datos_despues: data as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'UPDATE',
+      modulo: 'salud',
+      antes: { numero_acuerdo: numeroAcuerdo },
+      despues: data,
     });
 
     const numeroFinal = data.numero_acuerdo_nuevo || numeroAcuerdo;
@@ -1096,15 +1086,11 @@ export const eliminarGrupoAcuerdo = async (req: Request, res: Response): Promise
 
     await prisma.acuerdoSalud.deleteMany({ where: { numero_acuerdo: numeroAcuerdo } });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'DELETE',
-        modulo: 'salud',
-        datos_antes: { numero_acuerdo: numeroAcuerdo, personas: filas.length } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'DELETE',
+      modulo: 'salud',
+      antes: { numero_acuerdo: numeroAcuerdo, personas: filas.length },
     });
 
     logger.info(`Acuerdo de salud ${numeroAcuerdo} eliminado (${filas.length} persona(s))`);
@@ -1156,16 +1142,12 @@ export const eliminarAcuerdo = async (req: Request, res: Response): Promise<void
 
     await prisma.acuerdoSalud.delete({ where: { id: acuerdoId } });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'DELETE',
-        modulo: 'salud',
-        registro_id: acuerdoId,
-        datos_antes: acuerdo as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'DELETE',
+      modulo: 'salud',
+      registro_id: acuerdoId,
+      antes: acuerdo,
     });
 
     logger.info(`Acuerdo de salud ${acuerdoId} eliminado`);
@@ -1285,17 +1267,13 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
 
     const resultado = await prisma.acuerdoSalud.updateMany({ where: grupoWhere, data: updateData });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'UPDATE',
-        modulo: 'salud',
-        registro_id: acuerdoId,
-        datos_antes: { numero_acuerdo: acuerdo.numero_acuerdo, estado: acuerdo.estado } as any,
-        datos_despues: { estado: data.estado, motivo: data.motivo || null, personas_afectadas: resultado.count } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'UPDATE',
+      modulo: 'salud',
+      registro_id: acuerdoId,
+      antes: { numero_acuerdo: acuerdo.numero_acuerdo, estado: acuerdo.estado },
+      despues: { estado: data.estado, motivo: data.motivo || null, personas_afectadas: resultado.count },
     });
 
     logger.info(`Acuerdo de salud ${acuerdo.numero_acuerdo || acuerdoId}: estado ${acuerdo.estado} → ${data.estado} (${resultado.count} persona(s))`);
@@ -1353,17 +1331,13 @@ export const retirarBeneficiario = async (req: Request, res: Response): Promise<
       },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'UPDATE',
-        modulo: 'salud',
-        registro_id: acuerdoId,
-        datos_antes: acuerdo as any,
-        datos_despues: actualizado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'UPDATE',
+      modulo: 'salud',
+      registro_id: acuerdoId,
+      antes: acuerdo,
+      despues: actualizado,
     });
 
     logger.info(`Beneficiario retirado del acuerdo de salud ${acuerdoId} (motivo: ${data.motivo_retiro})`);
@@ -1413,7 +1387,18 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
     const concepto = `Pago salud - Año ${data.anio}, ${data.semanas} semana(s) - Recibo ${data.numero_recibo}`;
 
     await prisma.$transaction(async (tx) => {
-      for (const fila of filas) {
+      // El pago descuenta semanas sobre lo leído. Con los titulares bloqueados
+      // se relee, para que dos pagos simultáneos del mismo grupo no partan del
+      // mismo atraso (ver utils/bloqueos.ts)
+      const titulares = await tx.beneficiario.findMany({
+        where: { id: { in: filas.map((f) => f.beneficiario_id) } },
+        select: { socio_id: true },
+      });
+      await bloquearSocios(tx, titulares.map((t) => t.socio_id));
+
+      const vigentes = await tx.acuerdoSalud.findMany({ where: { id: { in: filas.map((f) => f.id) } } });
+
+      for (const fila of vigentes) {
         await tx.movimientoSalud.create({
           data: {
             acuerdo_id: fila.id,
@@ -1439,15 +1424,11 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
       }
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREATE',
-        modulo: 'salud',
-        datos_despues: { numero_acuerdo: numeroAcuerdo, ...data, personas_afectadas: filas.length } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREATE',
+      modulo: 'salud',
+      despues: { numero_acuerdo: numeroAcuerdo, ...data, personas_afectadas: filas.length },
     });
 
     logger.info(`Pago de salud registrado para acuerdo ${numeroAcuerdo}: ${filas.length} persona(s), ${data.semanas} semana(s)`);
@@ -1556,15 +1537,11 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
       return resultados;
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREATE',
-        modulo: 'funeraria',
-        datos_despues: { origen: 'salud', numero_acuerdo_salud: numeroAcuerdo, personas: creados.length } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREATE',
+      modulo: 'funeraria',
+      despues: { origen: 'salud', numero_acuerdo_salud: numeroAcuerdo, personas: creados.length },
     });
 
     logger.info(`Transferidas ${creados.length} persona(s) del acuerdo de salud ${numeroAcuerdo} a funeraria`);
@@ -1631,16 +1608,12 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       include: { beneficiario: { include: { socio: true } }, tipo_acuerdo: true },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREATE',
-        modulo: 'salud',
-        registro_id: nuevoAcuerdo.id,
-        datos_despues: { origen: 'funeraria', acuerdo_id: nuevoAcuerdo.id, socio_id: data.socio_id } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREATE',
+      modulo: 'salud',
+      registro_id: nuevoAcuerdo.id,
+      despues: { origen: 'funeraria', acuerdo_id: nuevoAcuerdo.id, socio_id: data.socio_id },
     });
 
     res.status(201).json({
@@ -1696,13 +1669,11 @@ export async function suspenderGruposVencidos(usuarioId: number | null): Promise
     });
     personasSuspendidas += resultado.count;
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: usuarioId,
-        accion: 'UPDATE',
-        modulo: 'salud',
-        datos_despues: { tipo: 'suspension_automatica', numero_acuerdo: numeroAcuerdo, personas: resultado.count } as any,
-      },
+    await registrarAuditoria(prisma, {
+      usuarioId,
+      accion: 'UPDATE',
+      modulo: 'salud',
+      despues: { tipo: 'suspension_automatica', numero_acuerdo: numeroAcuerdo, personas: resultado.count },
     });
   }
 

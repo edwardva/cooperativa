@@ -77,6 +77,11 @@ export interface AbonoPrestamo {
   aplicado_mora_usd: string | number
   concepto: string | null
   fecha_abono: string
+  /** Colecta que lo cobró: esos abonos se reversan reversando la colecta */
+  colecta_id: number | null
+  reversado: boolean
+  fecha_reverso: string | null
+  motivo_reverso: string | null
 }
 
 export interface Prestamo {
@@ -212,6 +217,15 @@ export const registrarAbono = async (
   concepto?: string | null
 ): Promise<Respuesta<{ reparto: { mora: number; interes: number; capital: number }; saldado: boolean }>> => {
   const response = await apiClient.post(`/prestamos/${id}/abonos`, { monto_usd, concepto: concepto ?? null })
+  return response.data
+}
+
+export const reversarAbono = async (
+  prestamoId: number,
+  abonoId: number,
+  motivo: string
+): Promise<Respuesta<{ id: number; reversado: boolean }>> => {
+  const response = await apiClient.post(`/prestamos/${prestamoId}/abonos/${abonoId}/reversar`, { motivo })
   return response.data
 }
 

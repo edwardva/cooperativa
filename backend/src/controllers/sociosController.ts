@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { validarCedula } from '../utils/cedula';
+import { registrarAuditoria } from '../services/auditoriaService';
 
 const prisma = new PrismaClient();
 
@@ -582,16 +583,12 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREAR',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_despues: socio as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREAR',
+      modulo: 'socios',
+      registro_id: socio.id,
+      despues: socio,
     });
 
     logger.info(`Socio creado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -770,17 +767,13 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ACTUALIZAR',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: socioExistente as any,
-        datos_despues: socio as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR',
+      modulo: 'socios',
+      registro_id: socio.id,
+      antes: socioExistente,
+      despues: socio,
     });
 
     logger.info(`Socio actualizado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -857,17 +850,13 @@ export const actualizarCodigoSocial = async (req: Request, res: Response): Promi
       data: { codigo_social: codigoSocial },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ACTUALIZAR_COD_SOCIAL',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: { codigo_social: socioExistente.codigo_social } as any,
-        datos_despues: { codigo_social: socio.codigo_social } as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR_COD_SOCIAL',
+      modulo: 'socios',
+      registro_id: socio.id,
+      antes: { codigo_social: socioExistente.codigo_social },
+      despues: { codigo_social: socio.codigo_social },
     });
 
     logger.info(`Código social actualizado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -980,17 +969,13 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
       },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'RETIRAR',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: socio as any,
-        datos_despues: socioActualizado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'RETIRAR',
+      modulo: 'socios',
+      registro_id: socio.id,
+      antes: socio,
+      despues: socioActualizado,
     });
 
     logger.info(`Socio retirado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -1268,17 +1253,13 @@ export const traspasarSocio = async (req: Request, res: Response): Promise<void>
       return actualizado;
     });
 
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'TRASPASO',
-        modulo: 'socios',
-        registro_id: socio.id,
-        datos_antes: socio as any,
-        datos_despues: socioActualizado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'TRASPASO',
+      modulo: 'socios',
+      registro_id: socio.id,
+      antes: socio,
+      despues: socioActualizado,
     });
 
     logger.info(
@@ -1465,16 +1446,12 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'CREAR',
-        modulo: 'beneficiarios',
-        registro_id: beneficiario.id,
-        datos_despues: beneficiario as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'CREAR',
+      modulo: 'beneficiarios',
+      registro_id: beneficiario.id,
+      despues: beneficiario,
     });
 
     logger.info(`Beneficiario agregado: ${beneficiario.nombre} ${beneficiario.apellido} al socio ${socio.codigo_socio}`);
@@ -1586,17 +1563,13 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ACTUALIZAR',
-        modulo: 'beneficiarios',
-        registro_id: beneficiario.id,
-        datos_antes: beneficiarioExistente as any,
-        datos_despues: beneficiario as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ACTUALIZAR',
+      modulo: 'beneficiarios',
+      registro_id: beneficiario.id,
+      antes: beneficiarioExistente,
+      despues: beneficiario,
     });
 
     logger.info(`Beneficiario actualizado: ${beneficiario.nombre} ${beneficiario.apellido}`);
@@ -1692,17 +1665,13 @@ export const eliminarBeneficiario = async (req: Request, res: Response): Promise
     });
 
     // Audit log
-    await prisma.auditLog.create({
-      data: {
-        usuario_id: req.user!.userId,
-        accion: 'ELIMINAR',
-        modulo: 'beneficiarios',
-        registro_id: beneficiario.id,
-        datos_antes: beneficiario as any,
-        datos_despues: beneficiarioActualizado as any,
-        ip_address: req.ip || 'unknown',
-        user_agent: req.get('user-agent') || 'unknown',
-      },
+    await registrarAuditoria(prisma, {
+      req,
+      accion: 'ELIMINAR',
+      modulo: 'beneficiarios',
+      registro_id: beneficiario.id,
+      antes: beneficiario,
+      despues: beneficiarioActualizado,
     });
 
     logger.info(`Beneficiario eliminado (soft delete): ${beneficiario.nombre} ${beneficiario.apellido}`);

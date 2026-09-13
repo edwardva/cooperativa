@@ -4,6 +4,7 @@
 // ============================================
 
 import { PrismaClient } from '@prisma/client';
+import { registrarAuditoria } from './auditoriaService';
 
 const prisma = new PrismaClient();
 
@@ -404,17 +405,15 @@ export async function registrarImpresion(
   usuario_id: number,
   contenido: string
 ): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
-      usuario_id,
-      accion: 'IMPRIMIR',
-      modulo: tipo,
-      registro_id: referencia_id,
-      datos_despues: {
-        contenido_longitud: contenido.length,
-        fecha_impresion: new Date().toISOString()
-      }
-    }
+  await registrarAuditoria(prisma, {
+    usuarioId: usuario_id,
+    accion: 'IMPRIMIR',
+    modulo: tipo,
+    registro_id: referencia_id,
+    despues: {
+      contenido_longitud: contenido.length,
+      fecha_impresion: new Date().toISOString()
+    },
   });
 }
 

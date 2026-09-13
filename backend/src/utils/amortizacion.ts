@@ -155,3 +155,41 @@ export const distribuirAbono = (
 
   return { mora, interes, capital, sobrante: restante };
 };
+
+export type EstadoCuotaCalculado = 'pendiente' | 'pagada' | 'vencida';
+
+/**
+ * Estado de cada cuota según lo abonado VIGENTE, acumulado.
+ *
+ * Antes cada abono marcaba cuotas por su cuenta y sólo si él solo cubría una
+ * cuota completa: dos medios pagos dejaban la cuota pendiente para siempre, el
+ * abono cobrado en caja no marcaba ninguna, y un reverso no tenía forma de
+ * saber qué cuotas desmarcar. Recalcular desde el total resuelve las tres
+ * cosas, y da lo mismo en qué orden llegaron los abonos.
+ *
+ * Lo abonado a mora no cuenta: la mora es un recargo aparte, no paga cuotas.
+ */
+export const estadosDeCuotas = (
+  cuotas: { numero_cuota: number; monto_total_usd: number; fecha_vencimiento: Date }[],
+  aplicadoACuotasUsd: number,
+  hoy: Date = new Date()
+): { numero_cuota: number; estado: EstadoCuotaCalculado }[] => {
+  let disponible = redondear(aplicadoACuotasUsd);
+  let cubriendo = true;
+
+  return [...cuotas]
+    .sort((a, b) => a.numero_cuota - b.numero_cuota)
+    .map((cuota) => {
+      // Misma tolerancia de un centavo que usaba el marcado por abono
+      if (cubriendo && disponible + 0.009 >= cuota.monto_total_usd) {
+        disponible = redondear(disponible - cuota.monto_total_usd);
+        return { numero_cuota: cuota.numero_cuota, estado: 'pagada' as const };
+      }
+      // Las cuotas se pagan en orden: la primera que no alcanza corta la cadena
+      cubriendo = false;
+      return {
+        numero_cuota: cuota.numero_cuota,
+        estado: cuota.fecha_vencimiento < hoy ? ('vencida' as const) : ('pendiente' as const),
+      };
+    });
+};

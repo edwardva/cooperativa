@@ -196,6 +196,8 @@ export interface SocioColecta {
 
 export interface ResultadoBusqueda {
   encontrados: SocioColecta[]
+  /** La búsqueda por nombre se corta en 20: hay más coincidencias que no se muestran */
+  truncado?: boolean
   tasa: number
   asambleas: AsambleaOpcion[]
   tarifas: TarifasColecta

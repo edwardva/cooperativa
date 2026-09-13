@@ -10,6 +10,7 @@ import {
   listarPrestamos,
   obtenerPrestamo,
   registrarAbono,
+  reversarAbono,
   reporteCartera,
   prestamosPorSocio,
 } from '../controllers/prestamosController';
@@ -61,5 +62,11 @@ router.get('/:id', authorize('prestamos', 'read'), obtenerPrestamo);
  * Aplica el pago en orden mora -> interes -> capital
  */
 router.post('/:id/abonos', authorize('prestamos', 'update'), registrarAbono);
+
+/**
+ * POST /api/prestamos/:id/abonos/:abonoId/reversar
+ * Reversa un abono mal cargado; exige motivo. Permiso delete, como el reverso de colecta
+ */
+router.post('/:id/abonos/:abonoId/reversar', authorize('prestamos', 'delete'), reversarAbono);
 
 export default router;

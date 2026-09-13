@@ -552,6 +552,10 @@ model AbonoPrestamo {
   aplicado_mora_bs     Decimal @default(0) @db.Decimal(10, 2)
   concepto             String? @db.Text
 
+  // Colecta que lo cobró, si vino de la caja. Esos abonos se reversan junto
+  // con su colecta: reversarlos sueltos descuadraría el cierre de caja.
+  colecta_id Int?
+
   // Reverso del abono: no se borra, se marca y se deja rastro (req. 6)
   reversado      Boolean   @default(false)
   fecha_reverso  DateTime?
@@ -566,6 +570,7 @@ model AbonoPrestamo {
 
   @@index([prestamo_id])
   @@index([fecha_abono])
+  @@index([colecta_id])
   @@map("abonos_prestamo")
 }
 
