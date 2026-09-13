@@ -23,6 +23,7 @@ import {
   Plus,
   Search,
   UserCheck,
+  Contact,
   X,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
@@ -601,6 +602,14 @@ export default function TrabajadoresPage() {
       >
         {detalle && (
           <div className="space-y-5">
+            <button
+              onClick={() => navigate(`/personas/${detalle.persona.id}`)}
+              className="flex items-center gap-1.5 text-sm font-medium text-primary-700 hover:underline"
+            >
+              <Contact className="h-4 w-4" />
+              Ver ficha integral de la persona
+            </button>
+
             {/* Expediente laboral */}
             <section className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
               <div>

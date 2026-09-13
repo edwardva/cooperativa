@@ -17,7 +17,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
-import { calcularDeuda } from '../services/saludFeriaService';
+import { calcularDeuda, feriasPendientesDelPeriodo, periodoDesdeParametros } from '../services/saludFeriaService';
 import { leerParametroNumerico, periodicidadSaludFeria } from '../services/tarifasService';
 import { resolverTasa } from '../services/tasaCambioService';
 import { redondear } from '../services/cobroSemanalService';
@@ -76,19 +76,8 @@ const idDeRuta = (req: Request, param = 'id'): number => {
 };
 
 /** Período de la query (?tipo=&anio=&numero=); sin anio/numero, el período en curso */
-const periodoDeQuery = async (req: Request): Promise<PeriodoSaludRef> => {
-  const tipoQuery = req.query.tipo ? String(req.query.tipo) : '';
-  if (tipoQuery && tipoQuery !== 'mensual' && tipoQuery !== 'semanal') {
-    throw new BadRequestError("El tipo de período debe ser 'mensual' o 'semanal'");
-  }
-  const tipo: TipoPeriodo = (tipoQuery as TipoPeriodo) || (await periodicidadSaludFeria());
-  if (req.query.anio === undefined && req.query.numero === undefined) return periodoQueContiene(tipo);
-
-  const ref = { tipo, anio: Number(req.query.anio), numero: Number(req.query.numero) };
-  const error = validarPeriodo(ref);
-  if (error) throw new BadRequestError(error);
-  return ref;
-};
+const periodoDeQuery = (req: Request): Promise<PeriodoSaludRef> =>
+  periodoDesdeParametros({ tipo: req.query.tipo, anio: req.query.anio, numero: req.query.numero });
 
 const includeDetalle = {
   feria: { select: { id: true, codigo: true, nombre: true, responsable: true } },
@@ -288,46 +277,7 @@ export const historialTrabajador = async (req: Request, res: Response): Promise<
 export const feriasPendientes = async (req: Request, res: Response): Promise<void> => {
   try {
     const ref = await periodoDeQuery(req);
-    const [ferias, tarifa, { tasa }] = await Promise.all([
-      prisma.ubicacion.findMany({
-        orderBy: { codigo: 'asc' },
-        select: { id: true, codigo: true, nombre: true, responsable: true, telefono: true, estado: true },
-      }),
-      leerParametroNumerico('TARIFA_SALUD_TRABAJADOR_USD'),
-      resolverTasa(),
-    ]);
-
-    const filas = [];
-    for (const feria of ferias) {
-      const { resumen } = await calcularDeuda(prisma, feria.id, ref, tarifa);
-      if (!feria.estado && resumen.total === 0) continue;
-      filas.push({
-        feria,
-        ...resumen,
-        monto_pendiente_bs: redondear(resumen.monto_pendiente_usd * tasa),
-        estado:
-          resumen.total === 0 ? 'sin_trabajadores'
-          : resumen.pendientes === 0 ? 'pagada'
-          : resumen.pagados === 0 ? 'pendiente'
-          : 'parcial',
-      });
-    }
-
-    const conDeuda = filas.filter((f) => f.pendientes > 0);
-    res.json({
-      success: true,
-      data: {
-        periodo: rangoPeriodo(ref),
-        tarifa_usd: tarifa,
-        tasa,
-        ferias: filas,
-        totales: {
-          ferias_con_deuda: conDeuda.length,
-          trabajadores_pendientes: conDeuda.reduce((s, f) => s + f.pendientes, 0),
-          monto_pendiente_usd: redondear(conDeuda.reduce((s, f) => s + f.monto_pendiente_usd, 0)),
-        },
-      },
-    });
+    res.json({ success: true, data: await feriasPendientesDelPeriodo(prisma, ref) });
   } catch (error) {
     responderError(res, error, 'Error al calcular las ferias pendientes');
   }

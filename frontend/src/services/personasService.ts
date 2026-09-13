@@ -88,6 +88,144 @@ interface Respuesta<T> {
   message?: string
 }
 
+export interface PersonaListada extends Persona {
+  _count: { socios: number; trabajadores: number }
+}
+
+export interface ServicioFicha {
+  servicio: 'funeraria' | 'salud'
+  acuerdo_id: number
+  plan: string
+  numero_acuerdo: string | null
+  beneficiario: string
+  parentesco: string
+  estado: string
+  estado_calculado: 'vigente' | 'atrasado' | 'suspendido'
+  pagado_hasta: string
+  semanas_pendientes: number
+  semanas_adelantadas: number
+  fecha_ultimo_pago: string | null
+  fecha_suspension: string | null
+  fecha_retiro: string | null
+  motivo_retiro: string | null
+}
+
+export interface PrestamoFicha {
+  id: number
+  numero_prestamo: string
+  tipo: string
+  estado: string
+  moneda: string
+  monto_original_usd: number
+  deuda_total_usd: number
+  saldo_mora_usd: number
+  cuota_semanal_usd: number
+  cuotas_totales: number
+  cuotas_pagadas: number
+  cuotas_pendientes: number
+  cuotas_vencidas: number
+  fecha_desembolso: string
+  fecha_vencimiento: string
+  fecha_ultimo_abono: string | null
+}
+
+export interface ExpedienteAhorristaFicha {
+  socio: {
+    id: number
+    codigo_socio: string
+    estado: string
+    fecha_inscripcion: string
+    es_delegado: boolean
+    ubicacion: { codigo: string; nombre: string } | null
+  }
+  cuentas: {
+    id: number
+    numero_cuenta: string
+    tipo: string
+    estado: boolean
+    saldo_usd: number
+    saldo_bs: number
+    bloqueado_usd: number
+    disponible_usd: number
+  }[]
+  saldo_ahorro_usd: number
+  servicios: ServicioFicha[]
+  semanas: {
+    ultima_semana_pagada: string
+    semanas_pendientes: number
+    semanas_adelantadas: number
+    semana_actual: string
+  } | null
+  prestamos: {
+    actuales: PrestamoFicha[]
+    anteriores: PrestamoFicha[]
+    saldo_total_usd: number
+    cuotas_pagadas: number
+    cuotas_pendientes: number
+  }
+  colectas_recientes: {
+    id: number
+    fecha_colecta: string
+    monto_total_usd: number
+    semanas_cobradas: number
+    reversada: boolean
+    motivo_reverso: string | null
+  }[]
+}
+
+export interface ExpedienteTrabajadorFicha extends ExpedienteTrabajador {
+  fecha_salida: string | null
+  motivo_salida: string | null
+  observaciones: string | null
+  pagos_salud: {
+    id: number
+    periodo: string
+    feria: { codigo: string; nombre: string }
+    monto_usd: number
+    estado: 'vigente' | 'anulado'
+    pago: { id: number; fecha_pago: string; referencia: string | null }
+  }[]
+}
+
+export interface FichaPersona {
+  persona: Persona & { updated_at: string }
+  trabajadores: ExpedienteTrabajadorFicha[]
+  ahorristas: ExpedienteAhorristaFicha[]
+  suspensiones: {
+    expediente: string
+    servicio: string
+    plan: string
+    beneficiario: string
+    estado: string
+    fecha_suspension: string | null
+    fecha_retiro: string | null
+    motivo_retiro: string | null
+  }[]
+  historial: {
+    id: number
+    accion: string
+    modulo: string
+    registro_id: number | null
+    created_at: string
+    usuario: { nombre_completo: string; username: string } | null
+  }[]
+}
+
+export const listarPersonas = async (params: {
+  busqueda?: string
+  page?: number
+  limit?: number
+}): Promise<Respuesta<PersonaListada[]> & { meta?: { total: number; page: number; totalPages: number } }> => {
+  const response = await apiClient.get('/personas', { params })
+  return response.data
+}
+
+/** Ficha integral (HU-20) */
+export const obtenerFicha = async (id: number): Promise<Respuesta<FichaPersona>> => {
+  const response = await apiClient.get(`/personas/${id}/resumen`)
+  return response.data
+}
+
 /** ¿Ya existe? Lo consulta todo formulario de alta antes de crear a nadie */
 export const buscarPorIdentificacion = async (
   numero: string,

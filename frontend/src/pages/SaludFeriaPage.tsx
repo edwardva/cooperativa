@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, Ban, CheckCircle2, HeartPulse, Loader2, Printer, Search, X } from 'lucide-react'
+import { AlertTriangle, Ban, CheckCircle2, FileSpreadsheet, FileText, HeartPulse, Loader2, Printer, Search, X } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
@@ -27,6 +27,7 @@ import { usePermissions } from '../store/authStore'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
 import * as saludFeriaService from '../services/saludFeriaService'
 import * as feriasService from '../services/feriasService'
+import * as reportesService from '../services/reportesService'
 import type {
   Configuracion,
   Deuda,
@@ -75,6 +76,8 @@ export default function SaludFeriaPage() {
   const { hasPermission } = usePermissions()
   const puedeRegistrar = hasPermission('salud_feria', 'create')
   const puedeAnular = hasPermission('salud_feria', 'delete')
+  const puedeExportar = hasPermission('reportes', 'export')
+  const [exportando, setExportando] = useState<'excel' | 'pdf' | null>(null)
   const alEnter = useEnterNavigation()
 
   const [pestana, setPestana] = useState<Pestana>('registrar')
@@ -524,10 +527,30 @@ export default function SaludFeriaPage() {
           <Card className="p-4">
             <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-4">
               {selectorPeriodo}
-              <Button variant="secondary" onClick={() => window.print()} disabled={!pendientes}>
-                <Printer className="h-4 w-4" />
-                Imprimir
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => window.print()} disabled={!pendientes}>
+                  <Printer className="h-4 w-4" />
+                  Imprimir
+                </Button>
+                {puedeExportar &&
+                  (['excel', 'pdf'] as const).map((formato) => (
+                    <Button
+                      key={formato}
+                      variant="outline"
+                      disabled={exportando !== null}
+                      onClick={() => {
+                        setExportando(formato)
+                        reportesService
+                          .exportarReporte('ferias-pendientes', formato, { tipo, anio: String(anio), numero: String(numero) })
+                          .catch((err) => setError(getErrorMessage(err) || 'No fue posible exportar'))
+                          .finally(() => setExportando(null))
+                      }}
+                    >
+                      {exportando === formato ? <Loader2 className="h-4 w-4 animate-spin" /> : formato === 'excel' ? <FileSpreadsheet className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                      {formato === 'excel' ? 'Excel' : 'PDF'}
+                    </Button>
+                  ))}
+              </div>
             </div>
           </Card>
 

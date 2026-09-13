@@ -21,7 +21,18 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { redondear } from './cobroSemanalService';
-import { feriaDelPeriodo, rangoPeriodo, type PeriodoSaludRef, type RangoPeriodo } from '../utils/periodoSalud';
+import { leerParametroNumerico, periodicidadSaludFeria } from './tarifasService';
+import { resolverTasa } from './tasaCambioService';
+import { BadRequestError } from '../middleware/errorHandler';
+import {
+  feriaDelPeriodo,
+  periodoQueContiene,
+  rangoPeriodo,
+  validarPeriodo,
+  type PeriodoSaludRef,
+  type RangoPeriodo,
+  type TipoPeriodo,
+} from '../utils/periodoSalud';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -133,6 +144,74 @@ export const calcularDeuda = async (
       monto_pagado_usd: redondear(pagadas.reduce((s, f) => s + f.monto_usd, 0)),
       // Suma de los renglones, no cantidad × tarifa: tiene que coincidir con la tabla (HU-07.6)
       monto_pendiente_usd: redondear(pendientes.reduce((s, f) => s + f.monto_usd, 0)),
+    },
+  };
+};
+
+// ============================================
+// Período pedido y ferias pendientes (HU-19)
+// ============================================
+
+/** `tipo`, `anio` y `numero` tal como llegan de la query; sin anio ni numero, el período en curso */
+export const periodoDesdeParametros = async (p: {
+  tipo?: unknown;
+  anio?: unknown;
+  numero?: unknown;
+}): Promise<PeriodoSaludRef> => {
+  const tipoTexto = p.tipo ? String(p.tipo) : '';
+  if (tipoTexto && tipoTexto !== 'mensual' && tipoTexto !== 'semanal') {
+    throw new BadRequestError("El tipo de período debe ser 'mensual' o 'semanal'");
+  }
+  const tipo: TipoPeriodo = (tipoTexto as TipoPeriodo) || (await periodicidadSaludFeria());
+  const vacio = (v: unknown) => v === undefined || v === null || v === '';
+  if (vacio(p.anio) && vacio(p.numero)) return periodoQueContiene(tipo);
+
+  const ref = { tipo, anio: Number(p.anio), numero: Number(p.numero) };
+  const error = validarPeriodo(ref);
+  if (error) throw new BadRequestError(error);
+  return ref;
+};
+
+/**
+ * Estado de cada feria en un período. Todas las activas, más las inactivas
+ * que tengan algo en el período. Lo usan la pantalla y el reporte exportable.
+ */
+export const feriasPendientesDelPeriodo = async (db: Db, ref: PeriodoSaludRef) => {
+  const [ferias, tarifa, { tasa }] = await Promise.all([
+    db.ubicacion.findMany({
+      orderBy: { codigo: 'asc' },
+      select: { id: true, codigo: true, nombre: true, responsable: true, telefono: true, estado: true },
+    }),
+    leerParametroNumerico('TARIFA_SALUD_TRABAJADOR_USD'),
+    resolverTasa(),
+  ]);
+
+  const filas = [];
+  for (const feria of ferias) {
+    const { resumen } = await calcularDeuda(db, feria.id, ref, tarifa);
+    if (!feria.estado && resumen.total === 0) continue;
+    filas.push({
+      feria,
+      ...resumen,
+      monto_pendiente_bs: redondear(resumen.monto_pendiente_usd * tasa),
+      estado:
+        resumen.total === 0 ? ('sin_trabajadores' as const)
+        : resumen.pendientes === 0 ? ('pagada' as const)
+        : resumen.pagados === 0 ? ('pendiente' as const)
+        : ('parcial' as const),
+    });
+  }
+
+  const conDeuda = filas.filter((f) => f.pendientes > 0);
+  return {
+    periodo: rangoPeriodo(ref),
+    tarifa_usd: tarifa,
+    tasa,
+    ferias: filas,
+    totales: {
+      ferias_con_deuda: conDeuda.length,
+      trabajadores_pendientes: conDeuda.reduce((s, f) => s + f.pendientes, 0),
+      monto_pendiente_usd: redondear(conDeuda.reduce((s, f) => s + f.monto_pendiente_usd, 0)),
     },
   };
 };

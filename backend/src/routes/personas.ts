@@ -8,6 +8,7 @@ import {
   listarPersonas,
   buscarPorIdentificacion,
   obtenerPersona,
+  resumenPersona,
   crearPersona,
   actualizarPersona,
 } from '../controllers/personasController';
@@ -26,6 +27,9 @@ router.get('/', authorize('personas', 'read'), listarPersonas);
  * ¿Ya existe? Lo consulta todo formulario de alta antes de crear a nadie
  */
 router.get('/identificacion/:numero', authorize('personas', 'read'), buscarPorIdentificacion);
+
+/** GET /api/personas/:id/resumen — ficha integral con cada expediente por separado (HU-20) */
+router.get('/:id/resumen', authorize('personas', 'read'), resumenPersona);
 
 /** GET /api/personas/:id — con sus expedientes de ahorrista y de trabajador */
 router.get('/:id', authorize('personas', 'read'), obtenerPersona);

@@ -1,0 +1,458 @@
+// ============================================
+// COOPERATIVA EL TRIUNFO - SERVICIO
+// Reportes exportables (fase 2, Sprint E)
+// ============================================
+//
+// RF-REP-01 a 08. Cada generador devuelve un `Reporte` (título, columnas,
+// filas y totales) que la pantalla muestra y que se exporta a Excel o PDF sin
+// volver a calcular nada. Las consultas son las mismas que usan las pantallas
+// de cada módulo, así un total del reporte coincide con el de su pantalla.
+
+import { PrismaClient, Prisma } from '@prisma/client';
+import { BadRequestError } from '../middleware/errorHandler';
+import { carteraPrestamos, VISTAS_CARTERA } from './carteraService';
+import { redondear } from './cobroSemanalService';
+import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
+import { formatearPeriodo, semanaDeFecha } from '../utils/calendarioSemanal';
+import { fechaDia } from '../utils/fechaDia';
+import { etiquetaPeriodo } from '../utils/periodoSalud';
+import { adelantoDelRenglon, type Reporte } from '../utils/reportes';
+
+const prisma = new PrismaClient();
+
+export const REPORTES = {
+  'ferias-pendientes': 'Ferias pendientes de pago de salud',
+  'pagos-salud': 'Pagos de salud por feria',
+  'trabajadores-feria': 'Trabajadores por feria',
+  'cartera-prestamos': 'Cartera de préstamos',
+  'semanas-adelantadas': 'Semanas pagadas por adelantado',
+  colectas: 'Colectas',
+} as const;
+
+export type ClaveReporte = keyof typeof REPORTES;
+
+/** Más filas que esto no es un reporte, es un volcado: se pide acotar */
+const MAXIMO_FILAS = 20_000;
+
+type Parametros = Record<string, string | undefined>;
+
+const texto = (p: Parametros, clave: string): string => (p[clave] ?? '').trim();
+
+/** Columnas DATE: se leen en UTC para no correr el día */
+const diaBD = (d: Date | null): string => (d ? d.toISOString().slice(0, 10).split('-').reverse().join('/') : '');
+/** Marcas de tiempo: en la hora local del servidor */
+const diaLocal = (d: Date): string => d.toLocaleDateString('es-VE');
+
+/** Rango de fechas en hora local. Por defecto, del primero del mes a hoy. */
+const rangoLocal = (p: Parametros): { desde: Date; hasta: Date; texto: string } => {
+  const hoy = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const hoyTexto = `${hoy.getFullYear()}-${pad(hoy.getMonth() + 1)}-${pad(hoy.getDate())}`;
+  const desdeTexto = texto(p, 'desde') || `${hoyTexto.slice(0, 8)}01`;
+  const hastaTexto = texto(p, 'hasta') || hoyTexto;
+  fechaDia(desdeTexto, 'Desde');
+  fechaDia(hastaTexto, 'Hasta');
+
+  const desde = new Date(`${desdeTexto}T00:00:00`);
+  const hasta = new Date(`${hastaTexto}T23:59:59.999`);
+  if (desde > hasta) throw new BadRequestError('La fecha desde no puede ser posterior a la fecha hasta');
+  const legible = (t: string) => t.split('-').reverse().join('/');
+  return { desde, hasta, texto: `del ${legible(desdeTexto)} al ${legible(hastaTexto)}` };
+};
+
+const acotar = (cantidad: number): void => {
+  if (cantidad > MAXIMO_FILAS) {
+    throw new BadRequestError(
+      `El reporte tendría ${cantidad.toLocaleString('es-VE')} filas. Acote las fechas o los filtros (máximo ${MAXIMO_FILAS.toLocaleString('es-VE')}).`
+    );
+  }
+};
+
+const insensible = Prisma.QueryMode.insensitive;
+
+// ============================================
+// RF-REP-03 / HU-19 · Ferias pendientes
+// ============================================
+
+const ESTADO_FERIA = {
+  pagada: 'Pagada',
+  parcial: 'Parcial',
+  pendiente: 'Pendiente',
+  sin_trabajadores: 'Sin trabajadores',
+} as const;
+
+const feriasPendientes = async (p: Parametros): Promise<Reporte> => {
+  const ref = await periodoDesdeParametros({ tipo: p.tipo, anio: p.anio, numero: p.numero });
+  const r = await feriasPendientesDelPeriodo(prisma, ref);
+  return {
+    clave: 'ferias-pendientes',
+    titulo: REPORTES['ferias-pendientes'],
+    subtitulo: `${r.periodo.etiqueta} · $${r.tarifa_usd} por trabajador · tasa ${r.tasa}`,
+    columnas: ['Código', 'Feria', 'Responsable', 'Teléfono', 'Trabajadores', 'Pagados', 'Pendientes', 'Pendiente USD', 'Pendiente Bs', 'Estado'],
+    filas: r.ferias.map((f) => [
+      f.feria.codigo,
+      f.feria.nombre,
+      f.feria.responsable ?? '',
+      f.feria.telefono ?? '',
+      f.total,
+      f.pagados,
+      f.pendientes,
+      f.monto_pendiente_usd,
+      f.monto_pendiente_bs,
+      ESTADO_FERIA[f.estado],
+    ]),
+    totales: [
+      { etiqueta: 'Ferias con deuda', valor: r.totales.ferias_con_deuda },
+      { etiqueta: 'Trabajadores pendientes', valor: r.totales.trabajadores_pendientes },
+      { etiqueta: 'Monto pendiente USD', valor: r.totales.monto_pendiente_usd },
+    ],
+  };
+};
+
+// ============================================
+// RF-REP-02 · Pagos de salud (un renglón por trabajador)
+// ============================================
+
+const pagosSalud = async (p: Parametros): Promise<Reporte> => {
+  const where: Prisma.PagoSaludTrabajadorWhereInput = {};
+  const filtros: string[] = [];
+
+  if (texto(p, 'feria_id')) where.feria_id = Number(texto(p, 'feria_id'));
+  if (texto(p, 'estado')) {
+    if (p.estado !== 'vigente' && p.estado !== 'anulado') throw new BadRequestError('Estado inválido');
+    where.estado = p.estado;
+    filtros.push(p.estado === 'vigente' ? 'vigentes' : 'anulados');
+  }
+  if (texto(p, 'anio')) {
+    const ref = await periodoDesdeParametros({ tipo: p.tipo, anio: p.anio, numero: p.numero || '1' });
+    where.periodo = { anio: ref.anio, tipo: ref.tipo, ...(texto(p, 'numero') ? { numero: ref.numero } : {}) };
+    filtros.push(texto(p, 'numero') ? etiquetaPeriodo(ref) : `año ${ref.anio}`);
+  }
+  if (texto(p, 'desde') || texto(p, 'hasta')) {
+    const desde = texto(p, 'desde') ? fechaDia(texto(p, 'desde'), 'Desde') : undefined;
+    const hasta = texto(p, 'hasta') ? fechaDia(texto(p, 'hasta'), 'Hasta') : undefined;
+    where.pago = { fecha_pago: { ...(desde ? { gte: desde } : {}), ...(hasta ? { lte: hasta } : {}) } };
+    filtros.push(`pagados ${desde ? `desde ${diaBD(desde)} ` : ''}${hasta ? `hasta ${diaBD(hasta)}` : ''}`.trim());
+  }
+  const trabajador = texto(p, 'trabajador');
+  if (trabajador) {
+    const digitos = trabajador.replace(/\D/g, '');
+    where.trabajador = {
+      OR: [
+        { codigo_trabajador: { contains: trabajador, mode: insensible } },
+        ...(digitos.length >= 3 ? [{ persona: { numero_identificacion: { contains: digitos } } }] : []),
+        { persona: { apellidos: { contains: trabajador, mode: insensible } } },
+      ],
+    };
+    filtros.push(`trabajador "${trabajador}"`);
+  }
+
+  acotar(await prisma.pagoSaludTrabajador.count({ where }));
+  const renglones = await prisma.pagoSaludTrabajador.findMany({
+    where,
+    include: {
+      pago: { select: { id: true, fecha_pago: true, referencia: true } },
+      feria: { select: { codigo: true } },
+      periodo: true,
+      trabajador: {
+        select: {
+          codigo_trabajador: true,
+          persona: { select: { tipo_identificacion: true, numero_identificacion: true, nombres: true, apellidos: true } },
+        },
+      },
+    },
+    orderBy: [{ pago: { fecha_pago: 'desc' } }, { pago_id: 'desc' }, { id: 'asc' }],
+  });
+
+  const vigentes = renglones.filter((r) => r.estado === 'vigente');
+  const anulados = renglones.filter((r) => r.estado === 'anulado');
+  const suma = (lista: typeof renglones) => redondear(lista.reduce((s, r) => s + Number(r.monto_usd), 0));
+
+  return {
+    clave: 'pagos-salud',
+    titulo: REPORTES['pagos-salud'],
+    subtitulo: filtros.length ? filtros.join(' · ') : 'Todos los pagos',
+    columnas: ['Fecha de pago', 'Pago #', 'Feria', 'Período', 'Código', 'Trabajador', 'Identificación', 'Monto USD', 'Estado', 'Referencia'],
+    filas: renglones.map((r) => [
+      diaBD(r.pago.fecha_pago),
+      r.pago.id,
+      r.feria.codigo,
+      etiquetaPeriodo(r.periodo),
+      r.trabajador.codigo_trabajador,
+      `${r.trabajador.persona.apellidos}, ${r.trabajador.persona.nombres}`,
+      `${r.trabajador.persona.tipo_identificacion}-${r.trabajador.persona.numero_identificacion}`,
+      Number(r.monto_usd),
+      r.estado === 'vigente' ? 'Pagado' : 'Anulado',
+      r.pago.referencia ?? '',
+    ]),
+    totales: [
+      { etiqueta: 'Trabajadores pagados', valor: vigentes.length },
+      { etiqueta: 'Pagos distintos', valor: new Set(vigentes.map((r) => r.pago.id)).size },
+      { etiqueta: 'Monto vigente USD', valor: suma(vigentes) },
+      { etiqueta: 'Renglones anulados', valor: anulados.length },
+      { etiqueta: 'Monto anulado USD', valor: suma(anulados) },
+    ],
+  };
+};
+
+// ============================================
+// RF-REP-01 · Trabajadores por feria
+// ============================================
+
+const trabajadoresFeria = async (p: Parametros): Promise<Reporte> => {
+  const feriaId = texto(p, 'feria_id') ? Number(texto(p, 'feria_id')) : null;
+
+  const [ferias, abiertas, retirados] = await Promise.all([
+    prisma.ubicacion.findMany({
+      where: feriaId ? { id: feriaId } : {},
+      orderBy: { codigo: 'asc' },
+      select: { id: true, codigo: true, nombre: true, responsable: true, estado: true },
+    }),
+    // Feria actual de los que siguen asociados
+    prisma.trabajadorFeria.findMany({
+      where: { fecha_fin: null },
+      select: { feria_id: true, trabajador: { select: { estado: true } } },
+    }),
+    // Los retirados cuentan en la última feria donde estuvieron
+    prisma.socioTrabajador.findMany({
+      where: { estado: 'retirado' },
+      select: { ferias: { orderBy: { fecha_inicio: 'desc' }, take: 1, select: { feria_id: true } } },
+    }),
+  ]);
+
+  const cuenta = new Map<number, { activo: number; suspendido: number; inactivo: number; retirado: number }>();
+  const de = (id: number) => {
+    if (!cuenta.has(id)) cuenta.set(id, { activo: 0, suspendido: 0, inactivo: 0, retirado: 0 });
+    return cuenta.get(id)!;
+  };
+  for (const a of abiertas) {
+    const estado = a.trabajador.estado;
+    if (estado === 'activo' || estado === 'suspendido' || estado === 'inactivo') de(a.feria_id)[estado]++;
+  }
+  for (const r of retirados) {
+    const ultima = r.ferias[0];
+    if (ultima) de(ultima.feria_id).retirado++;
+  }
+
+  const filas = ferias
+    .map((f) => ({ f, c: cuenta.get(f.id) ?? { activo: 0, suspendido: 0, inactivo: 0, retirado: 0 } }))
+    .filter(({ f, c }) => f.estado || c.activo + c.suspendido + c.inactivo + c.retirado > 0);
+  const total = (k: 'activo' | 'suspendido' | 'inactivo' | 'retirado') => filas.reduce((s, { c }) => s + c[k], 0);
+
+  return {
+    clave: 'trabajadores-feria',
+    titulo: REPORTES['trabajadores-feria'],
+    subtitulo: 'Salud asignada: trabajadores activos con la feria como feria actual',
+    columnas: ['Código', 'Feria', 'Responsable', 'Activos', 'Suspendidos', 'Inactivos', 'Retirados', 'Con salud asignada', 'Estado de la feria'],
+    filas: filas.map(({ f, c }) => [
+      f.codigo,
+      f.nombre,
+      f.responsable ?? '',
+      c.activo,
+      c.suspendido,
+      c.inactivo,
+      c.retirado,
+      c.activo,
+      f.estado ? 'Activa' : 'Inactiva',
+    ]),
+    totales: [
+      { etiqueta: 'Trabajadores activos', valor: total('activo') },
+      { etiqueta: 'Suspendidos e inactivos', valor: total('suspendido') + total('inactivo') },
+      { etiqueta: 'Retirados', valor: total('retirado') },
+    ],
+  };
+};
+
+// ============================================
+// RF-REP-06 · Cartera de préstamos
+// ============================================
+
+const carteraPrestamosReporte = async (p: Parametros): Promise<Reporte> => {
+  const r = await carteraPrestamos(texto(p, 'vista') || 'por_cobrar');
+  return {
+    clave: 'cartera-prestamos',
+    titulo: REPORTES['cartera-prestamos'],
+    subtitulo: VISTAS_CARTERA[r.vista],
+    columnas: ['Préstamo', 'Expediente', 'Socio', 'Cédula', 'Tipo', 'Otorgado USD', 'Deuda USD', 'Mora USD', 'Cuotas pagadas', 'Cuotas vencidas', 'Estado', 'Desembolso'],
+    filas: r.filas.map((f) => [
+      f.numero_prestamo,
+      f.codigo_socio,
+      f.socio,
+      f.cedula,
+      f.tipo,
+      f.monto_original_usd,
+      f.deuda_total_usd,
+      f.saldo_mora_usd,
+      `${f.cuotas_pagadas} de ${f.cuotas_totales}`,
+      f.cuotas_vencidas,
+      f.estado,
+      diaBD(f.fecha_desembolso),
+    ]),
+    totales: [
+      { etiqueta: 'Préstamos', valor: r.resumen.cantidad },
+      { etiqueta: 'Otorgado USD', valor: r.resumen.otorgado_usd },
+      { etiqueta: 'Saldo por cobrar USD', valor: r.resumen.por_cobrar_usd },
+      { etiqueta: 'Mora USD', valor: r.resumen.mora_usd },
+      { etiqueta: 'Cuotas pendientes', valor: r.resumen.cuotas_pendientes },
+    ],
+  };
+};
+
+// ============================================
+// RF-REP-05 · Semanas adelantadas
+// ============================================
+
+const filtroSocio = (valor: string): Prisma.SocioWhereInput => ({
+  OR: [
+    { codigo_socio: valor },
+    { cedula: { contains: valor.replace(/\D/g, '') || valor } },
+    { apellido: { contains: valor, mode: insensible } },
+  ],
+});
+
+const semanasAdelantadas = async (p: Parametros): Promise<Reporte> => {
+  const rango = rangoLocal(p);
+  const socio = texto(p, 'socio');
+
+  const where: Prisma.DetalleColectaWhereInput = {
+    servicio: { in: ['funeraria', 'salud'] },
+    es_reintegro: false,
+    semanas: { gt: 0 },
+    cobertura_ano_antes: { not: null },
+    cobertura_ano_despues: { not: null },
+    colecta: {
+      reversada: false,
+      fecha_colecta: { gte: rango.desde, lte: rango.hasta },
+      ...(socio ? { socio: filtroSocio(socio) } : {}),
+    },
+  };
+  acotar(await prisma.detalleColecta.count({ where }));
+
+  const detalles = await prisma.detalleColecta.findMany({
+    where,
+    include: {
+      colecta: {
+        select: {
+          id: true,
+          fecha_colecta: true,
+          socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true } },
+        },
+      },
+    },
+    orderBy: [{ colecta: { fecha_colecta: 'desc' } }, { id: 'asc' }],
+  });
+
+  const filas = detalles.flatMap((d) => {
+    const adelanto = adelantoDelRenglon(
+      semanaDeFecha(d.colecta.fecha_colecta),
+      { ano: d.cobertura_ano_antes!, semana: d.cobertura_semana_antes! },
+      { ano: d.cobertura_ano_despues!, semana: d.cobertura_semana_despues! }
+    );
+    if (!adelanto) return [];
+    return [{ d, adelanto }];
+  });
+
+  return {
+    clave: 'semanas-adelantadas',
+    titulo: REPORTES['semanas-adelantadas'],
+    subtitulo: `Cobros ${rango.texto}${socio ? ` · socio "${socio}"` : ''}`,
+    columnas: ['Fecha', 'Colecta #', 'Expediente', 'Socio', 'Servicio', 'Semana inicial', 'Semana final', 'Semanas pagadas', 'Adelantadas', 'Monto USD'],
+    filas: filas.map(({ d, adelanto }) => [
+      diaLocal(d.colecta.fecha_colecta),
+      d.colecta.id,
+      d.colecta.socio.codigo_socio,
+      `${d.colecta.socio.apellido}, ${d.colecta.socio.nombre}`,
+      d.servicio === 'salud' ? 'Salud' : 'Funeraria',
+      formatearPeriodo(adelanto.desde),
+      formatearPeriodo(adelanto.hasta),
+      d.semanas ?? 0,
+      adelanto.adelantadas,
+      Number(d.monto_usd),
+    ]),
+    totales: [
+      { etiqueta: 'Renglones con adelanto', valor: filas.length },
+      { etiqueta: 'Socios', valor: new Set(filas.map(({ d }) => d.colecta.socio.codigo_socio)).size },
+      { etiqueta: 'Semanas adelantadas', valor: filas.reduce((s, { adelanto }) => s + adelanto.adelantadas, 0) },
+      { etiqueta: 'Monto USD', valor: redondear(filas.reduce((s, { d }) => s + Number(d.monto_usd), 0)) },
+    ],
+  };
+};
+
+// ============================================
+// RF-REP-04 · Colectas
+// ============================================
+
+const colectas = async (p: Parametros): Promise<Reporte> => {
+  const rango = rangoLocal(p);
+  const socio = texto(p, 'socio');
+  const where: Prisma.ColectaWhereInput = { fecha_colecta: { gte: rango.desde, lte: rango.hasta } };
+  const filtros = [rango.texto];
+
+  if (socio) {
+    where.socio = filtroSocio(socio);
+    filtros.push(`socio "${socio}"`);
+  }
+  if (texto(p, 'anio') && texto(p, 'semana')) {
+    where.ano_cobro = Number(texto(p, 'anio'));
+    where.semana_cobro = Number(texto(p, 'semana'));
+    filtros.push(`semana cobrada ${formatearPeriodo({ ano: where.ano_cobro, semana: where.semana_cobro })}`);
+  }
+  if (texto(p, 'estado') === 'vigentes') where.reversada = false;
+  if (texto(p, 'estado') === 'reversadas') where.reversada = true;
+
+  acotar(await prisma.colecta.count({ where }));
+  const lista = await prisma.colecta.findMany({
+    where,
+    include: {
+      socio: { select: { codigo_socio: true, nombre: true, apellido: true } },
+      usuario: { select: { username: true } },
+    },
+    orderBy: { fecha_colecta: 'desc' },
+  });
+
+  const vigentes = lista.filter((c) => !c.reversada);
+  const reversadas = lista.filter((c) => c.reversada);
+  const suma = (l: typeof lista, campo: 'monto_total_usd' | 'monto_total_bs') => redondear(l.reduce((s, c) => s + Number(c[campo]), 0));
+
+  return {
+    clave: 'colectas',
+    titulo: REPORTES.colectas,
+    subtitulo: filtros.join(' · '),
+    columnas: ['Fecha', 'Colecta #', 'Expediente', 'Socio', 'Semana cobrada', 'Semanas', 'Total USD', 'Total Bs', 'Cajero', 'Estado'],
+    filas: lista.map((c) => [
+      diaLocal(c.fecha_colecta),
+      c.id,
+      c.socio.codigo_socio,
+      `${c.socio.apellido}, ${c.socio.nombre}`,
+      c.ano_cobro && c.semana_cobro ? formatearPeriodo({ ano: c.ano_cobro, semana: c.semana_cobro }) : '',
+      c.semanas_cobradas,
+      Number(c.monto_total_usd),
+      Number(c.monto_total_bs),
+      c.usuario.username,
+      c.reversada ? `Reversada: ${c.motivo_reverso ?? ''}` : 'Vigente',
+    ]),
+    totales: [
+      { etiqueta: 'Colectas vigentes', valor: vigentes.length },
+      { etiqueta: 'Total vigente USD', valor: suma(vigentes, 'monto_total_usd') },
+      { etiqueta: 'Total vigente Bs', valor: suma(vigentes, 'monto_total_bs') },
+      { etiqueta: 'Colectas reversadas', valor: reversadas.length },
+      { etiqueta: 'Monto reversado USD', valor: suma(reversadas, 'monto_total_usd') },
+    ],
+  };
+};
+
+// ============================================
+
+const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
+  'ferias-pendientes': feriasPendientes,
+  'pagos-salud': pagosSalud,
+  'trabajadores-feria': trabajadoresFeria,
+  'cartera-prestamos': carteraPrestamosReporte,
+  'semanas-adelantadas': semanasAdelantadas,
+  colectas,
+};
+
+export const esClaveReporte = (clave: string): clave is ClaveReporte => clave in GENERADORES;
+
+export const generarReporte = (clave: ClaveReporte, parametros: Parametros): Promise<Reporte> =>
+  GENERADORES[clave](parametros);

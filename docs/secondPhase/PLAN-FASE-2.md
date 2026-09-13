@@ -328,12 +328,36 @@ Supuestos, mientras la cooperativa no confirme:
   reporte de diferencias (MIG-008, MIG-011).
 - Ensayo completo sobre copia de producción antes de aplicar (QA-021).
 
-### Sprint E · Reportes y ficha integral
+### Sprint E · Reportes y ficha integral ✅
 
 - `GET /personas/:id/resumen` y ficha con pestañas por expediente (HU-20).
 - Ferias pendientes, semanas adelantadas, cartera de préstamos, socios suspendidos; todos
   con Excel y PDF sobre el motor existente. QA: totales de pantalla = Excel = PDF.
 - Pantalla de consulta de auditoría (FE-025).
+
+**Avance al 13/09/2026: Sprint E hecho (backend, pantallas y pruebas)**
+
+Se adelantó a C y D porque es el único sprint que no depende de ninguna confirmación de la cooperativa.
+
+| Parte | Qué quedó |
+|---|---|
+| Ficha integral (HU-20) | `GET /api/personas/:id/resumen` y la pantalla **Personas → ficha** con las pestañas de FE-021: General, Trabajo, Salud, Ahorro, Colectas, Préstamos, Servicios e Historial. El expediente de trabajador (feria, historial, salud pagada por la feria) y el de ahorrista (cuentas, servicios con cobertura, semanas, préstamos actuales y anteriores, colectas) se muestran **por separado**. La situación de cada servicio usa la misma cobertura que la colecta |
+| Reportes (RF-REP-01 a 08) | La pantalla **Reportes era una maqueta**: el botón simulaba una espera. Ahora genera y exporta. Seis reportes: ferias pendientes, pagos de salud (un renglón por trabajador), trabajadores por feria, cartera de préstamos, semanas adelantadas y colectas. Cada uno se ve en pantalla y baja a **Excel o PDF desde el mismo generador**, con los totales al pie (QA-019). Ferias pendientes también exporta desde su pestaña (HU-19.5) |
+| Refactor | Cartera de préstamos y ferias pendientes pasaron de los controladores a servicios: la pantalla de cada módulo y su reporte usan la misma consulta |
+| Auditoría (FE-025) | `GET /api/auditoria` con filtros por usuario, módulo, acción, registro y fechas, y la pantalla **Auditoría** con valores anteriores y nuevos. Permiso `auditoria:read`, solo administrador |
+| Pruebas | 6 tests unitarios (totales al exportar, nombre de archivo, semanas adelantadas con cruce de año) y 27 chequeos de punta a punta. Incluyen que el total del Excel sea el de pantalla, que el saldo de la cartera coincida con el de la pantalla de préstamos, que una colecta reversada deje de contar como adelanto, y la ficha de una persona que es trabajador y ahorrista a la vez |
+
+**Criterios tomados**
+
+- **Semanas adelantadas:** son las que un cobro dejó cubiertas **por delante de la semana en que se cobró**. Un pago que solo pone al día no aparece. Solo cuentan funeraria y salud: el ahorro no tiene cobertura semanal.
+- **Trabajadores por feria:** activos, suspendidos e inactivos se cuentan por su feria actual; los retirados, en la última feria donde estuvieron.
+- **Límite:** un reporte de más de 20.000 filas pide acotar los filtros. La pantalla muestra hasta 500 filas; Excel y PDF llevan todas.
+
+**Pendiente**
+
+- **Reporte de socios suspendidos (RF-REP-07):** espera la suspensión del socio del Sprint F. Hoy la ficha muestra las suspensiones por servicio.
+- **Reportes viejos de socios y préstamos:** siguen existiendo en la API (`POST /api/reportes/socios` y `/prestamos`), pero la pantalla ya no los ofrece, porque nunca estuvieron conectados.
+- **Revisión visual** de las pantallas nuevas.
 
 ### Sprint F · Morosidad, suspensión y reactivación
 

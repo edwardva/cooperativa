@@ -15,6 +15,7 @@ import {
   reporteSaludGrupos,
   listarTiposReportes,
 } from '../controllers/reportesController';
+import { catalogoReportes, exportarReporte, verReporte } from '../controllers/reportesFase2Controller';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -88,5 +89,16 @@ router.post(
   authorize('reportes', 'export'),
   reporteSaludGrupos
 );
+
+/**
+ * Reportes de fase 2 (RF-REP-01 a 08): la misma tabla se ve en pantalla y se
+ * exporta, así los totales coinciden.
+ *   GET /api/reportes/catalogo
+ *   GET /api/reportes/generar/:reporte?...                   Permiso: reportes:read
+ *   GET /api/reportes/exportar/:reporte?formato=excel|pdf... Permiso: reportes:export
+ */
+router.get('/catalogo', authorize('reportes', 'read'), catalogoReportes);
+router.get('/generar/:reporte', authorize('reportes', 'read'), verReporte);
+router.get('/exportar/:reporte', authorize('reportes', 'export'), exportarReporte);
 
 export default router;

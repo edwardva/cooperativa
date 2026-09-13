@@ -48,6 +48,7 @@ const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     personas: TODO,
     trabajadores: TODO,
     salud_feria: TODO,
+    auditoria: ['read'],
     impresion: ['create', 'read'],
     reportes: ['read', 'export'],
     parametros: ['read', 'update'],

@@ -19,6 +19,7 @@ import {
   includeFerias,
   mesesDePrueba,
 } from '../services/trabajadoresService';
+import { fichaPersona } from '../services/fichaPersonaService';
 import { responderError, responderInvalido } from '../utils/responderError';
 import { fechaDia } from '../utils/fechaDia';
 
@@ -194,6 +195,21 @@ export const obtenerPersona = async (req: Request, res: Response): Promise<void>
     res.json({ success: true, data: formatearPersona(persona, meses) });
   } catch (error) {
     responderError(res, error, 'Error al obtener la persona');
+  }
+};
+
+/**
+ * GET /api/personas/:id/resumen — ficha integral (HU-20): datos personales,
+ * expedientes de trabajador y de ahorrista por separado, préstamos,
+ * suspensiones e historial de cambios
+ */
+export const resumenPersona = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const ficha = await fichaPersona(idDeRuta(req));
+    if (!ficha) throw new NotFoundError('Persona no encontrada');
+    res.json({ success: true, data: ficha });
+  } catch (error) {
+    responderError(res, error, 'Error al armar la ficha de la persona');
   }
 };
 

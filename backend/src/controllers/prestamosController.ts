@@ -16,6 +16,7 @@ import { logger } from '../utils/logger';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { generarPlanPagos, calcularMora, distribuirAbono } from '../utils/amortizacion';
 import { resolverTasa } from '../services/tasaCambioService';
+import { carteraPrestamos } from '../services/carteraService';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio, bloquearSocios } from '../utils/bloqueos';
 import {
@@ -811,67 +812,7 @@ export const reversarAbono = async (req: Request, res: Response): Promise<void> 
  */
 export const reporteCartera = async (req: Request, res: Response): Promise<void> => {
   try {
-    const vista = String(req.query.vista ?? 'por_cobrar');
-
-    const filtros: Record<string, Prisma.PrestamoWhereInput> = {
-      por_cobrar: { estado: { in: ['activo', 'moroso'] } },
-      morosos: { estado: 'moroso' },
-      cobrados: { estado: 'saldado' },
-      emitidos: {},
-    };
-
-    const where = filtros[vista] ?? filtros.por_cobrar!;
-
-    const prestamos = await prisma.prestamo.findMany({
-      where,
-      orderBy: { fecha_desembolso: 'desc' },
-      include: {
-        socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true, telefono: true } },
-        tipo_prestamo: { select: { codigo: true, nombre: true } },
-        plan_pagos: { select: { estado: true } },
-      },
-    });
-
-    const filas = prestamos.map((p) => {
-      const vencidas = p.plan_pagos.filter((c) => c.estado === 'vencida').length;
-      const pagadas = p.plan_pagos.filter((c) => c.estado === 'pagada').length;
-      return {
-        id: p.id,
-        numero_prestamo: p.numero_prestamo,
-        codigo_socio: p.socio.codigo_socio,
-        cedula: p.socio.cedula,
-        socio: `${p.socio.apellido}, ${p.socio.nombre}`,
-        telefono: p.socio.telefono,
-        tipo: p.tipo_prestamo.nombre,
-        monto_original_usd: Number(p.monto_original_usd),
-        saldo_capital_usd: Number(p.saldo_capital_usd),
-        saldo_interes_usd: Number(p.saldo_interes_usd),
-        saldo_mora_usd: Number(p.saldo_mora_usd),
-        deuda_total_usd: redondear(
-          Number(p.saldo_capital_usd) + Number(p.saldo_interes_usd) + Number(p.saldo_mora_usd)
-        ),
-        cuotas_pagadas: pagadas,
-        cuotas_vencidas: vencidas,
-        cuotas_totales: p.plan_pagos.length,
-        estado: p.estado,
-        fecha_desembolso: p.fecha_desembolso,
-        fecha_vencimiento: p.fecha_vencimiento,
-      };
-    });
-
-    res.json({
-      success: true,
-      data: {
-        vista,
-        filas,
-        resumen: {
-          cantidad: filas.length,
-          otorgado_usd: redondear(filas.reduce((a, f) => a + f.monto_original_usd, 0)),
-          por_cobrar_usd: redondear(filas.reduce((a, f) => a + f.deuda_total_usd, 0)),
-          mora_usd: redondear(filas.reduce((a, f) => a + f.saldo_mora_usd, 0)),
-        },
-      },
-    });
+    res.json({ success: true, data: await carteraPrestamos(String(req.query.vista ?? 'por_cobrar')) });
   } catch (error) {
     responderError(res, error, 'Error al generar el reporte de cartera');
   }
