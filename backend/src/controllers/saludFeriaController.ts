@@ -3,21 +3,22 @@
 // Pago de Salud por Feria (HU-07 a HU-10, HU-19)
 // ============================================
 //
-// La feria descuenta la salud a sus trabajadores y paga todo junto por
-// período. Registrar ese pago crea un encabezado y un renglón por trabajador
-// pendiente, en UNA transacción (HU-09): si falla un renglón no queda nada.
+// La feria descuenta la salud a sus trabajadores y la paga junta. La salud se
+// calcula por SEMANA (confirmado por la cooperativa) y un pago puede cubrir
+// varias semanas seguidas: crea un encabezado con el rango y un renglón por
+// trabajador y semana pendiente, en UNA transacción (HU-09): si falla un
+// renglón no queda nada.
 //
-// Lo que no confirmó la cooperativa va por parámetro: la periodicidad
-// (PERIODICIDAD_SALUD_FERIA) y el monto por trabajador
-// (TARIFA_SALUD_TRABAJADOR_USD, en 0 hasta que lo carguen). No hay pagos
-// parciales (pendiente 8): un pago cubre a todos los pendientes del período.
+// Por parámetro: la periodicidad (PERIODICIDAD_SALUD_FERIA, semanal) y el monto
+// por trabajador y período (TARIFA_SALUD_TRABAJADOR_USD). No hay pagos parciales
+// (pendiente 8): un pago cubre a todos los pendientes de los períodos elegidos.
 
 import type { Request, Response } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
-import { calcularDeuda, feriasPendientesDelPeriodo, periodoDesdeParametros } from '../services/saludFeriaService';
+import { calcularDeudaRango, feriasPendientesDelPeriodo, periodoDesdeParametros } from '../services/saludFeriaService';
 import { etiquetaFeria } from '../services/trabajadoresService';
 import { leerParametroNumerico, periodicidadSaludFeria } from '../services/tarifasService';
 import { resolverTasa } from '../services/tasaCambioService';
@@ -25,12 +26,15 @@ import { redondear } from '../services/cobroSemanalService';
 import { bloquearFeria } from '../utils/bloqueos';
 import { fechaDia, hoyDia } from '../utils/fechaDia';
 import {
+  contarPeriodos,
   etiquetaPeriodo,
+  etiquetaRango,
+  MAX_PERIODOS_POR_PAGO,
   periodoQueContiene,
+  periodosDesde,
   rangoPeriodo,
   validarPeriodo,
   type PeriodoSaludRef,
-  type TipoPeriodo,
 } from '../utils/periodoSalud';
 import { responderError, responderInvalido } from '../utils/responderError';
 
@@ -45,8 +49,16 @@ const METODOS_PAGO = ['transferencia', 'pago_movil', 'deposito', 'efectivo', 'ot
 const registrarPagoSchema = z.object({
   feria_id: z.number({ required_error: 'Seleccione la feria' }).int().positive(),
   tipo: z.enum(['mensual', 'semanal']).optional(),
+  /** Primer período que se paga */
   anio: z.number().int(),
   numero: z.number().int(),
+  /** Períodos seguidos desde el primero: la feria paga varias semanas juntas */
+  cantidad: z
+    .number()
+    .int()
+    .min(1, 'Indique al menos un período')
+    .max(MAX_PERIODOS_POR_PAGO, `Un pago cubre como máximo ${MAX_PERIODOS_POR_PAGO} períodos`)
+    .default(1),
   fecha_pago: z.string().min(1, 'Indique la fecha del pago'),
   moneda: z.enum(['BS', 'USD']).default('BS'),
   monto_recibido: z.number().positive('El monto recibido debe ser mayor a cero'),
@@ -56,6 +68,7 @@ const registrarPagoSchema = z.object({
   /** Lo que el usuario vio y confirmó: si la deuda cambió entre medio, se rechaza */
   esperado: z.object({
     cantidad_trabajadores: z.number().int().nonnegative(),
+    cantidad_renglones: z.number().int().nonnegative(),
     monto_usd: z.number().nonnegative(),
   }),
   /** El recibido no coincide con el esperado y el usuario lo acepta igual */
@@ -80,11 +93,25 @@ const idDeRuta = (req: Request, param = 'id'): number => {
 const periodoDeQuery = (req: Request): Promise<PeriodoSaludRef> =>
   periodoDesdeParametros({ tipo: req.query.tipo, anio: req.query.anio, numero: req.query.numero });
 
+/** ?cantidad= de períodos seguidos; sin ella, uno */
+const cantidadDeQuery = (req: Request): number => {
+  const valor = req.query.cantidad;
+  const cantidad = valor === undefined || valor === '' ? 1 : Number(valor);
+  if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > MAX_PERIODOS_POR_PAGO) {
+    throw new BadRequestError(`La cantidad de períodos debe estar entre 1 y ${MAX_PERIODOS_POR_PAGO}`);
+  }
+  return cantidad;
+};
+
+const conEtiqueta = <T extends PeriodoSaludRef>(p: T) => ({ ...p, etiqueta: etiquetaPeriodo(p) });
+
 const includeDetalle = {
   feria: { select: { id: true, codigo: true, nombre: true, direccion: true, responsable: true } },
   periodo: true,
+  periodo_hasta: true,
   detalles: {
     include: {
+      periodo: true,
       trabajador: {
         select: {
           id: true,
@@ -110,10 +137,18 @@ const cargarPago = async (id: number) => {
   const suma = redondear(pago.detalles.reduce((s, d) => s + Number(d.monto_usd), 0));
   return {
     ...pago,
-    periodo: { ...pago.periodo, etiqueta: etiquetaPeriodo(pago.periodo) },
-    detalles: [...pago.detalles].sort((a, b) =>
-      a.trabajador.persona.apellidos.localeCompare(b.trabajador.persona.apellidos, 'es')
-    ),
+    periodo: conEtiqueta(pago.periodo),
+    periodo_hasta: conEtiqueta(pago.periodo_hasta),
+    etiqueta_periodos: etiquetaRango(pago.periodo, pago.periodo_hasta),
+    // Por trabajador y, dentro de cada uno, por semana
+    detalles: pago.detalles
+      .map((d) => ({ ...d, periodo: conEtiqueta(d.periodo) }))
+      .sort(
+        (a, b) =>
+          a.trabajador.persona.apellidos.localeCompare(b.trabajador.persona.apellidos, 'es') ||
+          a.trabajador_id - b.trabajador_id ||
+          a.periodo.fecha_inicio.getTime() - b.periodo.fecha_inicio.getTime()
+      ),
     registrado_por: usuario(pago.created_by),
     anulado_por_usuario: usuario(pago.anulado_por),
     suma_detalles_usd: suma,
@@ -142,6 +177,7 @@ export const obtenerConfiguracion = async (_req: Request, res: Response): Promis
         tarifa_configurada: tarifa > 0,
         tasa,
         periodo_actual: actual,
+        max_periodos: MAX_PERIODOS_POR_PAGO,
         metodos_pago: METODOS_PAGO,
       },
     });
@@ -150,11 +186,12 @@ export const obtenerConfiguracion = async (_req: Request, res: Response): Promis
   }
 };
 
-/** GET /api/salud-feria/ferias/:feriaId/deuda?tipo=&anio=&numero= (HU-07) */
+/** GET /api/salud-feria/ferias/:feriaId/deuda?tipo=&anio=&numero=&cantidad= (HU-07): desde un período, `cantidad` seguidos */
 export const obtenerDeuda = async (req: Request, res: Response): Promise<void> => {
   try {
     const feriaId = idDeRuta(req, 'feriaId');
     const ref = await periodoDeQuery(req);
+    const cantidad = cantidadDeQuery(req);
 
     const [feria, tarifa, { tasa }] = await Promise.all([
       prisma.ubicacion.findUnique({ where: { id: feriaId }, select: { id: true, codigo: true, nombre: true, direccion: true, responsable: true, estado: true } }),
@@ -163,7 +200,7 @@ export const obtenerDeuda = async (req: Request, res: Response): Promise<void> =
     ]);
     if (!feria) throw new NotFoundError('Feria no encontrada');
 
-    const deuda = await calcularDeuda(prisma, feriaId, ref, tarifa);
+    const deuda = await calcularDeudaRango(prisma, feriaId, ref, cantidad, tarifa);
     res.json({
       success: true,
       data: {
@@ -172,7 +209,8 @@ export const obtenerDeuda = async (req: Request, res: Response): Promise<void> =
         tasa,
         monto_pendiente_bs: redondear(deuda.resumen.monto_pendiente_usd * tasa),
         tarifa_configurada: tarifa > 0,
-        periodo_futuro: deuda.periodo.inicio > hoyDia(),
+        // Algún período del rango todavía no empieza: se consulta, no se paga
+        periodo_futuro: deuda.hasta.inicio > hoyDia(),
       },
     });
   } catch (error) {
@@ -197,11 +235,14 @@ export const listarPagos = async (req: Request, res: Response): Promise<void> =>
       where.estado = q.estado;
     }
     if (q.anio) {
-      where.periodo = {
-        anio: Number(q.anio),
-        ...(q.numero ? { numero: Number(q.numero) } : {}),
-        ...(q.tipo ? { tipo: String(q.tipo) as TipoPeriodo } : {}),
-      };
+      // Pagos cuyo rango de períodos toca el período (o el año) pedido
+      const anio = Number(q.anio);
+      if (!Number.isInteger(anio)) throw new BadRequestError('Año inválido');
+      const rango = q.numero
+        ? rangoPeriodo(await periodoDesdeParametros({ tipo: q.tipo, anio: q.anio, numero: q.numero }))
+        : { inicio: new Date(Date.UTC(anio, 0, 1)), fin: new Date(Date.UTC(anio, 11, 31)) };
+      where.periodo = { fecha_inicio: { lte: rango.fin } };
+      where.periodo_hasta = { fecha_fin: { gte: rango.inicio } };
     }
     if (q.referencia) where.referencia = { contains: String(q.referencia), mode: Prisma.QueryMode.insensitive };
     if (q.trabajador) {
@@ -224,7 +265,7 @@ export const listarPagos = async (req: Request, res: Response): Promise<void> =>
       prisma.pagoSaludFeria.count({ where }),
       prisma.pagoSaludFeria.findMany({
         where,
-        include: { feria: { select: { id: true, codigo: true, nombre: true, direccion: true } }, periodo: true },
+        include: { feria: { select: { id: true, codigo: true, nombre: true, direccion: true } }, periodo: true, periodo_hasta: true },
         orderBy: [{ fecha_pago: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
@@ -233,7 +274,12 @@ export const listarPagos = async (req: Request, res: Response): Promise<void> =>
 
     res.json({
       success: true,
-      data: pagos.map((p) => ({ ...p, periodo: { ...p.periodo, etiqueta: etiquetaPeriodo(p.periodo) } })),
+      data: pagos.map((p) => ({
+        ...p,
+        periodo: conEtiqueta(p.periodo),
+        periodo_hasta: conEtiqueta(p.periodo_hasta),
+        etiqueta_periodos: etiquetaRango(p.periodo, p.periodo_hasta),
+      })),
       meta: { total, page, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -291,9 +337,9 @@ export const feriasPendientes = async (req: Request, res: Response): Promise<voi
 /**
  * POST /api/salud-feria/pagos (HU-08, HU-09)
  *
- * Con la feria bloqueada recalcula la deuda (BE-009: no confía en la pantalla),
- * exige que coincida con lo que el usuario confirmó, crea el encabezado y un
- * renglón por trabajador pendiente. Todo o nada.
+ * Con la feria bloqueada recalcula la deuda de todos los períodos (BE-009: no
+ * confía en la pantalla), exige que coincida con lo que el usuario confirmó,
+ * crea el encabezado y un renglón por trabajador y período pendiente. Todo o nada.
  */
 export const registrarPago = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -301,12 +347,14 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
     if (!validacion.success) return responderInvalido(res, validacion.error);
     const d = validacion.data;
 
-    const ref: PeriodoSaludRef = { tipo: d.tipo ?? (await periodicidadSaludFeria()), anio: d.anio, numero: d.numero };
-    const errorPeriodo = validarPeriodo(ref);
+    const desde: PeriodoSaludRef = { tipo: d.tipo ?? (await periodicidadSaludFeria()), anio: d.anio, numero: d.numero };
+    const errorPeriodo = validarPeriodo(desde);
     if (errorPeriodo) throw new BadRequestError(errorPeriodo);
-    const rango = rangoPeriodo(ref);
-    if (rango.inicio > hoyDia()) {
-      throw new BadRequestError(`El período ${rango.etiqueta} todavía no empieza: no se registran pagos adelantados`);
+    const refs = periodosDesde(desde, d.cantidad);
+    // `cantidad` es al menos 1: la lista nunca está vacía
+    const ultimo = rangoPeriodo(refs[refs.length - 1]!);
+    if (ultimo.inicio > hoyDia()) {
+      throw new BadRequestError(`${ultimo.etiqueta} todavía no empieza: no se registran pagos adelantados`);
     }
 
     const fechaPago = fechaDia(d.fecha_pago, 'La fecha del pago');
@@ -325,18 +373,25 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
       await bloquearFeria(tx, d.feria_id);
       const feria = await tx.ubicacion.findUniqueOrThrow({ where: { id: d.feria_id } });
 
-      const deuda = await calcularDeuda(tx, feria.id, ref, tarifa);
-      const pendientes = deuda.filas.filter((f) => f.estado === 'pendiente');
-      if (pendientes.length === 0) {
-        throw new ConflictError(`La feria ${etiquetaFeria(feria)} no tiene trabajadores pendientes en ${rango.etiqueta}`);
+      const deuda = await calcularDeudaRango(tx, feria.id, desde, d.cantidad, tarifa);
+      const {
+        trabajadores_con_pendiente: trabajadores,
+        renglones_pendientes: renglones,
+        monto_pendiente_usd: esperadoUsd,
+      } = deuda.resumen;
+      if (renglones === 0) {
+        throw new ConflictError(`La feria ${etiquetaFeria(feria)} no tiene trabajadores pendientes en ${deuda.etiqueta}`);
       }
 
-      const esperadoUsd = deuda.resumen.monto_pendiente_usd;
-      if (d.esperado.cantidad_trabajadores !== pendientes.length || Math.abs(d.esperado.monto_usd - esperadoUsd) > 0.009) {
+      if (
+        d.esperado.cantidad_trabajadores !== trabajadores ||
+        d.esperado.cantidad_renglones !== renglones ||
+        Math.abs(d.esperado.monto_usd - esperadoUsd) > 0.009
+      ) {
         throw new ConflictError(
-          `La deuda cambió mientras se registraba: ahora son ${pendientes.length} trabajador(es) por $${esperadoUsd}. ` +
-            'Revise el detalle y confirme de nuevo.',
-          { cantidad_trabajadores: pendientes.length, monto_usd: esperadoUsd }
+          `La deuda cambió mientras se registraba: ahora son ${trabajadores} trabajador(es) y ${renglones} ` +
+            `movimiento(s) por $${esperadoUsd}. Revise el detalle y confirme de nuevo.`,
+          { cantidad_trabajadores: trabajadores, cantidad_renglones: renglones, monto_usd: esperadoUsd }
         );
       }
 
@@ -351,18 +406,36 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
         );
       }
 
-      const periodo = await tx.periodoSalud.upsert({
-        where: { tipo_anio_numero: { tipo: ref.tipo, anio: ref.anio, numero: ref.numero } },
-        update: {},
-        create: { tipo: ref.tipo, anio: ref.anio, numero: ref.numero, fecha_inicio: rango.inicio, fecha_fin: rango.fin },
-      });
+      // El pago cubre de la primera a la última semana que tenía algo pendiente
+      const conPendientes = deuda.periodos.filter((p) => p.pendientes > 0);
+      // Hay al menos un renglón pendiente, así que al menos un período con pendientes
+      const primero = conPendientes[0]!;
+      const ultimoPendiente = conPendientes[conPendientes.length - 1]!;
+      const clave = (p: { anio: number; numero: number }) => `${p.anio}-${p.numero}`;
+      const idDePeriodo = new Map<string, number>();
+      for (const p of deuda.periodos) {
+        if (p.inicio < primero.inicio || p.inicio > ultimoPendiente.inicio) continue;
+        const guardado = await tx.periodoSalud.upsert({
+          where: { tipo_anio_numero: { tipo: p.tipo, anio: p.anio, numero: p.numero } },
+          update: {},
+          create: { tipo: p.tipo, anio: p.anio, numero: p.numero, fecha_inicio: p.inicio, fecha_fin: p.fin },
+        });
+        idDePeriodo.set(clave(p), guardado.id);
+      }
+      const idPeriodo = (p: { anio: number; numero: number }): number => {
+        const id = idDePeriodo.get(clave(p));
+        if (id === undefined) throw new Error(`Período ${clave(p)} sin guardar`);
+        return id;
+      };
 
       const pago = await tx.pagoSaludFeria.create({
         data: {
           feria_id: feria.id,
-          periodo_id: periodo.id,
+          periodo_id: idPeriodo(primero),
+          periodo_hasta_id: idPeriodo(ultimoPendiente),
+          cantidad_periodos: contarPeriodos(primero, ultimoPendiente),
           fecha_pago: fechaPago,
-          cantidad_trabajadores: pendientes.length,
+          cantidad_trabajadores: trabajadores,
           tarifa_usd: tarifa,
           monto_esperado_usd: esperadoUsd,
           tasa_cambio: tasa,
@@ -376,15 +449,19 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
         },
       });
 
-      // RF-SAL-11/12: un renglón por trabajador, atado al pago que lo originó
+      // RF-SAL-11/12: un renglón por trabajador y período, atado al pago que lo originó
       await tx.pagoSaludTrabajador.createMany({
-        data: pendientes.map((f) => ({
-          pago_id: pago.id,
-          trabajador_id: f.trabajador_id,
-          feria_id: feria.id,
-          periodo_id: periodo.id,
-          monto_usd: f.monto_usd,
-        })),
+        data: deuda.filas.flatMap((f) =>
+          f.periodos
+            .filter((p) => p.estado === 'pendiente')
+            .map((p) => ({
+              pago_id: pago.id,
+              trabajador_id: f.trabajador_id,
+              feria_id: feria.id,
+              periodo_id: idPeriodo(p),
+              monto_usd: p.monto_usd,
+            }))
+        ),
       });
 
       await registrarAuditoria(tx, {
@@ -394,8 +471,9 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
         registro_id: pago.id,
         despues: {
           feria: feria.codigo,
-          periodo: rango.etiqueta,
-          trabajadores: pendientes.length,
+          periodo: etiquetaRango(primero, ultimoPendiente),
+          trabajadores,
+          movimientos: renglones,
           monto_esperado_usd: esperadoUsd,
           monto_recibido: d.monto_recibido,
           moneda: d.moneda,
@@ -415,7 +493,7 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
 
 /**
  * POST /api/salud-feria/pagos/:id/anular (RF-SAL-15)
- * Marca el pago y sus renglones como anulados; los trabajadores vuelven a pendiente.
+ * Marca el pago y sus renglones como anulados; esas semanas vuelven a pendiente.
  */
 export const anularPago = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -428,7 +506,7 @@ export const anularPago = async (req: Request, res: Response): Promise<void> => 
 
     await prisma.$transaction(async (tx) => {
       await bloquearFeria(tx, existe.feria_id);
-      const pago = await tx.pagoSaludFeria.findUniqueOrThrow({ where: { id }, include: { periodo: true } });
+      const pago = await tx.pagoSaludFeria.findUniqueOrThrow({ where: { id }, include: { periodo: true, periodo_hasta: true } });
       if (pago.estado === 'anulado') throw new ConflictError('Este pago ya fue anulado');
 
       await tx.pagoSaludFeria.update({
@@ -447,7 +525,7 @@ export const anularPago = async (req: Request, res: Response): Promise<void> => 
         accion: 'ANULAR_PAGO_SALUD_FERIA',
         modulo: 'salud_feria',
         registro_id: id,
-        antes: { estado: pago.estado, trabajadores: count, periodo: etiquetaPeriodo(pago.periodo) },
+        antes: { estado: pago.estado, movimientos: count, periodo: etiquetaRango(pago.periodo, pago.periodo_hasta) },
         despues: { estado: 'anulado', motivo: validacion.data.motivo },
       });
     });

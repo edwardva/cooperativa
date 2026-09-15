@@ -1,6 +1,6 @@
 // ============================================
 // COOPERATIVA EL TRIUNFO - SERVICIO
-// Deuda de salud de una feria en un período
+// Deuda de salud de una feria en uno o varios períodos
 // ============================================
 //
 // Quién debe pagarse por la feria en un período (HU-07):
@@ -25,8 +25,11 @@ import { leerParametroNumerico, periodicidadSaludFeria } from './tarifasService'
 import { resolverTasa } from './tasaCambioService';
 import { BadRequestError } from '../middleware/errorHandler';
 import {
+  etiquetaRango,
   feriaDelPeriodo,
+  MAX_PERIODOS_POR_PAGO,
   periodoQueContiene,
+  periodosDesde,
   rangoPeriodo,
   validarPeriodo,
   type PeriodoSaludRef,
@@ -144,6 +147,142 @@ export const calcularDeuda = async (
       monto_pagado_usd: redondear(pagadas.reduce((s, f) => s + f.monto_usd, 0)),
       // Suma de los renglones, no cantidad × tarifa: tiene que coincidir con la tabla (HU-07.6)
       monto_pendiente_usd: redondear(pendientes.reduce((s, f) => s + f.monto_usd, 0)),
+    },
+  };
+};
+
+// ============================================
+// Varios períodos seguidos
+// ============================================
+//
+// La feria paga varias semanas juntas. La deuda de cada semana se calcula por
+// separado (un traslado puede cambiar la feria de una semana a otra) y se
+// agrupa por trabajador para mostrarla y cobrarla en un solo pago.
+
+export interface PeriodoDeTrabajador {
+  anio: number;
+  numero: number;
+  etiqueta: string;
+  estado: 'pendiente' | 'pagado';
+  monto_usd: number;
+  pago_id: number | null;
+}
+
+export interface FilaDeudaRango {
+  trabajador_id: number;
+  codigo_trabajador: string;
+  identificacion: string;
+  nombre: string;
+  estado_trabajador: string;
+  /** Sólo los períodos en que su salud le toca a esta feria */
+  periodos: PeriodoDeTrabajador[];
+  pendientes: number;
+  pagados: number;
+  monto_pendiente_usd: number;
+  estado: 'pendiente' | 'parcial' | 'pagado';
+}
+
+export interface DeudaRango {
+  desde: RangoPeriodo;
+  hasta: RangoPeriodo;
+  etiqueta: string;
+  cantidad_periodos: number;
+  periodos: (RangoPeriodo & { id: number | null; trabajadores: number; pendientes: number })[];
+  tarifa_usd: number;
+  filas: FilaDeudaRango[];
+  resumen: {
+    trabajadores: number;
+    trabajadores_con_pendiente: number;
+    periodos: number;
+    renglones_pagados: number;
+    /** Movimientos individuales que generaría el pago: trabajador × período pendiente */
+    renglones_pendientes: number;
+    monto_individual_usd: number;
+    monto_pagado_usd: number;
+    monto_pendiente_usd: number;
+  };
+}
+
+export const calcularDeudaRango = async (
+  db: Db,
+  feriaId: number,
+  desde: PeriodoSaludRef,
+  cantidad: number,
+  tarifaUsd: number
+): Promise<DeudaRango> => {
+  if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > MAX_PERIODOS_POR_PAGO) {
+    throw new BadRequestError(`La cantidad de períodos debe estar entre 1 y ${MAX_PERIODOS_POR_PAGO}`);
+  }
+  const refs = periodosDesde(desde, cantidad);
+
+  const deudas: DeudaFeria[] = [];
+  for (const ref of refs) deudas.push(await calcularDeuda(db, feriaId, ref, tarifaUsd));
+
+  const porTrabajador = new Map<number, FilaDeudaRango>();
+  for (const deuda of deudas) {
+    for (const f of deuda.filas) {
+      let fila = porTrabajador.get(f.trabajador_id);
+      if (!fila) {
+        fila = {
+          trabajador_id: f.trabajador_id,
+          codigo_trabajador: f.codigo_trabajador,
+          identificacion: f.identificacion,
+          nombre: f.nombre,
+          estado_trabajador: f.estado_trabajador,
+          periodos: [],
+          pendientes: 0,
+          pagados: 0,
+          monto_pendiente_usd: 0,
+          estado: 'pendiente',
+        };
+        porTrabajador.set(f.trabajador_id, fila);
+      }
+      fila.periodos.push({
+        anio: deuda.periodo.anio,
+        numero: deuda.periodo.numero,
+        etiqueta: deuda.periodo.etiqueta,
+        estado: f.estado,
+        monto_usd: f.monto_usd,
+        pago_id: f.pago_id,
+      });
+      if (f.estado === 'pendiente') {
+        fila.pendientes++;
+        fila.monto_pendiente_usd += f.monto_usd;
+      } else {
+        fila.pagados++;
+      }
+    }
+  }
+
+  const filas = [...porTrabajador.values()]
+    .map((f) => ({
+      ...f,
+      monto_pendiente_usd: redondear(f.monto_pendiente_usd),
+      estado: f.pendientes === 0 ? ('pagado' as const) : f.pagados === 0 ? ('pendiente' as const) : ('parcial' as const),
+    }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+  // `cantidad` validada arriba: al menos un período
+  const primero = deudas[0]!.periodo;
+  const ultimo = deudas[deudas.length - 1]!.periodo;
+  return {
+    desde: primero,
+    hasta: ultimo,
+    etiqueta: etiquetaRango(primero, ultimo),
+    cantidad_periodos: refs.length,
+    periodos: deudas.map((d) => ({ ...d.periodo, trabajadores: d.resumen.total, pendientes: d.resumen.pendientes })),
+    tarifa_usd: redondear(tarifaUsd),
+    filas,
+    resumen: {
+      trabajadores: filas.length,
+      trabajadores_con_pendiente: filas.filter((f) => f.pendientes > 0).length,
+      periodos: refs.length,
+      renglones_pagados: deudas.reduce((s, d) => s + d.resumen.pagados, 0),
+      renglones_pendientes: deudas.reduce((s, d) => s + d.resumen.pendientes, 0),
+      monto_individual_usd: redondear(tarifaUsd),
+      monto_pagado_usd: redondear(deudas.reduce((s, d) => s + d.resumen.monto_pagado_usd, 0)),
+      // Suma de los renglones de cada período: coincide con la tabla (HU-07.6)
+      monto_pendiente_usd: redondear(deudas.reduce((s, d) => s + d.resumen.monto_pendiente_usd, 0)),
     },
   };
 };

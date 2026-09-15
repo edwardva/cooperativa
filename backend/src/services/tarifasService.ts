@@ -69,7 +69,7 @@ export const PARAMETROS_COLECTA = {
   // registrar ningún pago de salud por feria: mejor eso que inventar un monto.
   TARIFA_SALUD_TRABAJADOR_USD: {
     porDefecto: 0,
-    descripcion: 'Salud por trabajador y período que paga la feria, en USD (0 = sin configurar)',
+    descripcion: 'Salud por trabajador y semana que paga la feria, en USD (0 = sin configurar)',
   },
 } as const;
 
@@ -94,9 +94,10 @@ export const CLAVE_PERIODICIDAD_SALUD_FERIA = 'PERIODICIDAD_SALUD_FERIA';
 export async function periodicidadSaludFeria(): Promise<'mensual' | 'semanal'> {
   try {
     const p = await prisma.parametroSistema.findUnique({ where: { clave: CLAVE_PERIODICIDAD_SALUD_FERIA } });
-    return p?.valor?.trim().toLowerCase() === 'semanal' ? 'semanal' : 'mensual';
+    // Confirmado por la cooperativa: la salud de los trabajadores se calcula por semana
+    return p?.valor?.trim().toLowerCase() === 'mensual' ? 'mensual' : 'semanal';
   } catch {
-    return 'mensual';
+    return 'semanal';
   }
 }
 
@@ -229,8 +230,8 @@ export async function sembrarParametrosColecta(): Promise<void> {
     update: {},
     create: {
       clave: CLAVE_PERIODICIDAD_SALUD_FERIA,
-      valor: 'mensual',
-      descripcion: "Periodicidad del pago de salud por feria: 'mensual' o 'semanal'",
+      valor: 'semanal',
+      descripcion: "Periodicidad del pago de salud por feria: 'semanal' (confirmada) o 'mensual'",
       tipo_dato: 'string',
     },
   });
