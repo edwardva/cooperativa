@@ -3,14 +3,15 @@
 // Períodos del pago de salud por feria
 // ============================================
 //
-// La cooperativa no confirmó si la salud de los trabajadores se controla por
-// MES o por SEMANA (pendiente 2). Se soportan los dos: la periodicidad vigente
-// es un parámetro y cada período guardado lleva su tipo, así que cambiarla no
-// altera los pagos ya hechos. Las semanas son las ISO del resto del sistema.
+// La cooperativa confirmó que la salud de los trabajadores se calcula por
+// SEMANA y que la feria paga varias semanas juntas. Los meses se siguen
+// soportando: la periodicidad vigente es un parámetro y cada período guardado
+// lleva su tipo, así que cambiarla no altera los pagos ya hechos. Las semanas
+// son las ISO del resto del sistema.
 //
 // Todas las fechas son columnas DATE: medianoche UTC.
 
-import { formatearPeriodo, lunesDeSemana, semanaDeFecha, semanasEnAno } from './calendarioSemanal';
+import { aOrdinal, formatearPeriodo, lunesDeSemana, semanaDeFecha, semanasEnAno, sumarSemanas } from './calendarioSemanal';
 
 export type TipoPeriodo = 'mensual' | 'semanal';
 
@@ -26,6 +27,9 @@ export interface RangoPeriodo extends PeriodoSaludRef {
   fin: Date;
   etiqueta: string;
 }
+
+/** Tope de períodos en un solo pago: un año de semanas */
+export const MAX_PERIODOS_POR_PAGO = 52;
 
 const MESES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -65,6 +69,32 @@ export const rangoPeriodo = (p: PeriodoSaludRef): RangoPeriodo => {
   const lunes = lunesDeSemana(p.anio, p.numero);
   const inicio = new Date(Date.UTC(lunes.getUTCFullYear(), lunes.getUTCMonth(), lunes.getUTCDate()));
   return { ...p, inicio, fin: new Date(inicio.getTime() + 6 * DIA_MS), etiqueta: etiquetaPeriodo(p) };
+};
+
+/** Posición absoluta del período: dos períodos se restan sin ramas por cambio de año */
+const ordinal = (p: PeriodoSaludRef): number =>
+  p.tipo === 'mensual' ? p.anio * 12 + p.numero - 1 : aOrdinal({ ano: p.anio, semana: p.numero });
+
+/** Los `cantidad` períodos seguidos que empiezan en `desde`, cruzando el año si hace falta */
+export const periodosDesde = (desde: PeriodoSaludRef, cantidad: number): PeriodoSaludRef[] =>
+  Array.from({ length: cantidad }, (_, i) => {
+    if (desde.tipo === 'mensual') {
+      const indice = ordinal(desde) + i;
+      return { tipo: 'mensual' as const, anio: Math.floor(indice / 12), numero: (indice % 12) + 1 };
+    }
+    const s = sumarSemanas({ ano: desde.anio, semana: desde.numero }, i);
+    return { tipo: 'semanal' as const, anio: s.ano, numero: s.semana };
+  });
+
+/** Períodos de `desde` a `hasta`, inclusive */
+export const contarPeriodos = (desde: PeriodoSaludRef, hasta: PeriodoSaludRef): number =>
+  ordinal(hasta) - ordinal(desde) + 1;
+
+/** "S30/2026 a S38/2026 (9 semanas)"; si es un solo período, su etiqueta */
+export const etiquetaRango = (desde: PeriodoSaludRef, hasta: PeriodoSaludRef): string => {
+  const n = contarPeriodos(desde, hasta);
+  if (n <= 1) return etiquetaPeriodo(desde);
+  return `${etiquetaPeriodo(desde)} a ${etiquetaPeriodo(hasta)} (${n} ${desde.tipo === 'mensual' ? 'meses' : 'semanas'})`;
 };
 
 /** El período de ese tipo que contiene una fecha (por defecto, hoy) */

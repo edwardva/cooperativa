@@ -2,8 +2,8 @@
  * ============================================
  * SERVICE: PAGO DE SALUD POR FERIA
  * ============================================
- * La feria paga la salud de sus trabajadores en un solo pago por periodo.
- * Quien debe, cuanto y si cuadra lo calcula el backend.
+ * La feria paga la salud de sus trabajadores por semana, y puede pagar varias
+ * semanas juntas. Quien debe, cuanto y si cuadra lo calcula el backend.
  */
 
 import apiClient from './api'
@@ -35,6 +35,8 @@ export interface Configuracion {
   tarifa_configurada: boolean
   tasa: number
   periodo_actual: Periodo
+  /** Tope de periodos en un solo pago */
+  max_periodos: number
   metodos_pago: string[]
 }
 
@@ -58,15 +60,53 @@ export interface ResumenDeuda {
   monto_pendiente_usd: number
 }
 
+export interface PeriodoDeTrabajador {
+  anio: number
+  numero: number
+  etiqueta: string
+  estado: 'pendiente' | 'pagado'
+  monto_usd: number
+  pago_id: number | null
+}
+
+/** Un trabajador con sus periodos del rango: solo aquellos en que su salud le toca a esta feria */
+export interface FilaDeudaRango {
+  trabajador_id: number
+  codigo_trabajador: string
+  identificacion: string
+  nombre: string
+  estado_trabajador: string
+  periodos: PeriodoDeTrabajador[]
+  pendientes: number
+  pagados: number
+  monto_pendiente_usd: number
+  estado: 'pendiente' | 'parcial' | 'pagado'
+}
+
 export interface Deuda {
   feria: { id: number; codigo: string; nombre: string; direccion: string | null; responsable: string | null; estado: boolean }
-  periodo: Periodo & { id: number | null }
+  desde: Periodo
+  hasta: Periodo
+  etiqueta: string
+  cantidad_periodos: number
+  periodos: (Periodo & { id: number | null; trabajadores: number; pendientes: number })[]
   tarifa_usd: number
-  filas: FilaDeuda[]
-  resumen: ResumenDeuda
+  filas: FilaDeudaRango[]
+  resumen: {
+    trabajadores: number
+    trabajadores_con_pendiente: number
+    periodos: number
+    renglones_pagados: number
+    /** Movimientos individuales que genera el pago: trabajador × periodo pendiente */
+    renglones_pendientes: number
+    monto_individual_usd: number
+    monto_pagado_usd: number
+    monto_pendiente_usd: number
+  }
   tasa: number
   monto_pendiente_bs: number
   tarifa_configurada: boolean
+  /** Algun periodo del rango todavia no empieza */
   periodo_futuro: boolean
 }
 
@@ -88,6 +128,7 @@ export interface PagoResumen {
   id: number
   feria_id: number
   fecha_pago: string
+  cantidad_periodos: number
   cantidad_trabajadores: number
   tarifa_usd: string
   monto_esperado_usd: string
@@ -103,15 +144,20 @@ export interface PagoResumen {
   fecha_anulacion: string | null
   motivo_anulacion: string | null
   feria: { id: number; codigo: string; nombre: string; direccion: string | null }
+  /** Primer y ultimo periodo que cubre el pago */
   periodo: PeriodoGuardado
+  periodo_hasta: PeriodoGuardado
+  etiqueta_periodos: string
 }
 
 export interface PagoDetalle extends PagoResumen {
+  /** Un renglon por trabajador y periodo */
   detalles: {
     id: number
     trabajador_id: number
     monto_usd: string
     estado: 'vigente' | 'anulado'
+    periodo: PeriodoGuardado
     trabajador: {
       id: number
       codigo_trabajador: string
@@ -139,13 +185,15 @@ export interface NuevoPago {
   tipo: TipoPeriodo
   anio: number
   numero: number
+  /** Periodos seguidos desde anio/numero */
+  cantidad: number
   fecha_pago: string
   moneda: 'BS' | 'USD'
   monto_recibido: number
   metodo_pago: string
   referencia?: string | null
   observaciones?: string | null
-  esperado: { cantidad_trabajadores: number; monto_usd: number }
+  esperado: { cantidad_trabajadores: number; cantidad_renglones: number; monto_usd: number }
   aceptar_diferencia?: boolean
 }
 
@@ -161,7 +209,7 @@ type ParamsPeriodo = { tipo: TipoPeriodo; anio: number; numero: number }
 export const obtenerConfiguracion = async (): Promise<Respuesta<Configuracion>> =>
   (await apiClient.get('/salud-feria/configuracion')).data
 
-export const obtenerDeuda = async (feriaId: number, periodo: ParamsPeriodo): Promise<Respuesta<Deuda>> =>
+export const obtenerDeuda = async (feriaId: number, periodo: ParamsPeriodo & { cantidad: number }): Promise<Respuesta<Deuda>> =>
   (await apiClient.get(`/salud-feria/ferias/${feriaId}/deuda`, { params: periodo })).data
 
 export const obtenerFeriasPendientes = async (periodo: ParamsPeriodo): Promise<Respuesta<FeriasPendientes>> =>

@@ -3,16 +3,17 @@
  * PAGE: PAGO DE SALUD POR FERIA
  * ============================================
  * RF-SAL-01 a 15, HU-07 a HU-10 y HU-19. La feria descuenta la salud a sus
- * trabajadores y la paga junta por periodo:
+ * trabajadores y la paga junta. Se calcula por semana y la feria suele pagar
+ * varias semanas de una vez (8, 9, 10...):
  *
- *   1. Se elige feria y periodo: aparece quien debe y cuanto (HU-07).
+ *   1. Se elige feria, semana inicial y cantidad de semanas: aparece quien
+ *      debe, que semanas y cuanto (HU-07).
  *   2. Se cargan los datos del pago y se confirma viendo cuantos movimientos
  *      individuales se van a generar (RF-SAL-10).
  *   3. El backend recalcula todo en una transaccion: si la deuda cambio entre
  *      medio, rechaza y se vuelve a mostrar.
  *
- * Periodicidad y monto por trabajador vienen de Parametros: la cooperativa
- * todavia no los confirmo.
+ * Periodicidad (semanal) y monto por trabajador vienen de Parametros.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -93,10 +94,13 @@ export default function SaludFeriaPage() {
   // Periodo compartido por las pestañas de registro y pendientes
   const [anio, setAnio] = useState(new Date().getFullYear())
   const [numero, setNumero] = useState(new Date().getMonth() + 1)
-  const tipo = config?.periodicidad ?? 'mensual'
+  const tipo = config?.periodicidad ?? 'semanal'
+  const unidad = tipo === 'mensual' ? { singular: 'mes', plural: 'meses' } : { singular: 'semana', plural: 'semanas' }
 
   // --- Registrar ---
   const [feriaId, setFeriaId] = useState('')
+  // Periodos seguidos desde anio/numero que cubre el pago
+  const [cantidad, setCantidad] = useState(1)
   const [deuda, setDeuda] = useState<Deuda | null>(null)
   const [cargandoDeuda, setCargandoDeuda] = useState(false)
   const [pago, setPago] = useState({
@@ -157,10 +161,15 @@ export default function SaludFeriaPage() {
       setDeuda(null)
       return
     }
+    if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > config.max_periodos) {
+      setDeuda(null)
+      setErrorPago(`La cantidad de ${unidad.plural} debe estar entre 1 y ${config.max_periodos}.`)
+      return
+    }
     setCargandoDeuda(true)
     setErrorPago('')
     try {
-      const r = await saludFeriaService.obtenerDeuda(Number(feriaId), { tipo, anio, numero })
+      const r = await saludFeriaService.obtenerDeuda(Number(feriaId), { tipo, anio, numero, cantidad })
       if (pedido !== pedidoDeuda.current) return
       setDeuda(r.data)
     } catch (err) {
@@ -170,7 +179,7 @@ export default function SaludFeriaPage() {
     } finally {
       if (pedido === pedidoDeuda.current) setCargandoDeuda(false)
     }
-  }, [feriaId, config, tipo, anio, numero])
+  }, [feriaId, config, tipo, anio, numero, cantidad, unidad.plural])
 
   useEffect(() => {
     void cargarDeuda()
@@ -264,18 +273,24 @@ export default function SaludFeriaPage() {
         tipo,
         anio,
         numero,
+        cantidad,
         fecha_pago: pago.fecha_pago,
         moneda: pago.moneda,
         monto_recibido: Number(pago.monto_recibido),
         metodo_pago: pago.metodo_pago,
         referencia: pago.referencia.trim() || null,
         observaciones: pago.observaciones.trim() || null,
-        esperado: { cantidad_trabajadores: deuda.resumen.pendientes, monto_usd: esperadoUsd },
+        esperado: {
+          cantidad_trabajadores: deuda.resumen.trabajadores_con_pendiente,
+          cantidad_renglones: deuda.resumen.renglones_pendientes,
+          monto_usd: esperadoUsd,
+        },
         aceptar_diferencia: aceptarDiferencia,
       })
       setConfirmando(false)
       setAviso(
-        `Pago registrado: ${r.data.cantidad_trabajadores} trabajador(es) de ${nombreFeria(r.data.feria)} en ${r.data.periodo.etiqueta}.`
+        `Pago registrado: ${r.data.cantidad_trabajadores} trabajador(es) de ${nombreFeria(r.data.feria)} en ${r.data.etiqueta_periodos}, ` +
+          `${r.data.detalles.length} movimiento(s) individual(es).`
       )
       setPago((p) => ({ ...p, referencia: '', observaciones: '' }))
       await cargarDeuda()
@@ -300,7 +315,7 @@ export default function SaludFeriaPage() {
       const r = await saludFeriaService.anularPago(detallePago.id, anulacion.trim())
       setDetallePago(r.data)
       setAnulacion(null)
-      setAviso(`Pago #${r.data.id} anulado. Sus ${r.data.detalles.length} trabajadores vuelven a pendiente.`)
+      setAviso(`Pago #${r.data.id} anulado. Sus ${r.data.detalles.length} movimientos vuelven a pendiente.`)
       if (pestana === 'historial') await cargarPagos()
       await cargarDeuda()
     } catch (err) {
@@ -312,7 +327,7 @@ export default function SaludFeriaPage() {
 
   // ================= VISTA =================
 
-  const selectorPeriodo = (
+  const selectorPeriodo = (inicial: boolean) => (
     <>
       <label className={labelClass}>
         <span className="mb-1.5 block">Año</span>
@@ -321,7 +336,7 @@ export default function SaludFeriaPage() {
       </label>
       {tipo === 'mensual' ? (
         <label className={labelClass}>
-          <span className="mb-1.5 block">Mes</span>
+          <span className="mb-1.5 block">{inicial ? 'Desde el mes' : 'Mes'}</span>
           <select value={numero} onChange={(e) => setNumero(Number(e.target.value))} disabled={!config} className={selectClass}>
             {MESES.map((m, i) => (
               <option key={m} value={i + 1}>{m}</option>
@@ -330,7 +345,7 @@ export default function SaludFeriaPage() {
         </label>
       ) : (
         <label className={labelClass}>
-          <span className="mb-1.5 block">Semana</span>
+          <span className="mb-1.5 block">{inicial ? 'Desde la semana' : 'Semana'}</span>
           <input type="number" min={1} max={53} value={numero} onChange={(e) => setNumero(Number(e.target.value))} disabled={!config} className={controlClass} />
         </label>
       )}
@@ -338,7 +353,7 @@ export default function SaludFeriaPage() {
   )
 
   const puedePagar =
-    !!deuda && puedeRegistrar && deuda.resumen.pendientes > 0 && deuda.tarifa_configurada && !deuda.periodo_futuro
+    !!deuda && puedeRegistrar && deuda.resumen.renglones_pendientes > 0 && deuda.tarifa_configurada && !deuda.periodo_futuro
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -349,8 +364,8 @@ export default function SaludFeriaPage() {
             Pago de Salud por Feria
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
-            La feria paga la salud de sus trabajadores en un solo pago por periodo
-            {config ? ` (${config.periodicidad}, $${money(config.tarifa_usd)} por trabajador)` : ''}.
+            La feria paga la salud de sus trabajadores por {unidad.singular} y puede pagar varias {unidad.plural} juntas
+            {config ? ` ($${money(config.tarifa_usd)} por trabajador por ${unidad.singular})` : ''}.
           </p>
         </div>
       </div>
@@ -397,7 +412,7 @@ export default function SaludFeriaPage() {
       {pestana === 'registrar' && (
         <div className="space-y-5">
           <Card className="p-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" onKeyDown={alEnter}>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" onKeyDown={alEnter}>
               <label className={labelClass}>
                 <span className="mb-1.5 block">Feria *</span>
                 <select value={feriaId} onChange={(e) => setFeriaId(e.target.value)} className={selectClass} autoFocus>
@@ -407,7 +422,19 @@ export default function SaludFeriaPage() {
                   ))}
                 </select>
               </label>
-              {selectorPeriodo}
+              {selectorPeriodo(true)}
+              <label className={labelClass}>
+                <span className="mb-1.5 block">Cantidad de {unidad.plural}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={config?.max_periodos ?? 52}
+                  value={cantidad}
+                  onChange={(e) => setCantidad(Number(e.target.value))}
+                  disabled={!config}
+                  className={controlClass}
+                />
+              </label>
             </div>
           </Card>
 
@@ -417,10 +444,10 @@ export default function SaludFeriaPage() {
             <>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                 {[
-                  ['Trabajadores', deuda.resumen.total],
-                  ['Pagados', deuda.resumen.pagados],
-                  ['Pendientes', deuda.resumen.pendientes],
-                  ['Monto individual', `$${money(deuda.resumen.monto_individual_usd)}`],
+                  ['Trabajadores', deuda.resumen.trabajadores],
+                  [unidad.plural[0]!.toUpperCase() + unidad.plural.slice(1), deuda.resumen.periodos],
+                  ['Movimientos pendientes', deuda.resumen.renglones_pendientes],
+                  [`Monto por ${unidad.singular}`, `$${money(deuda.resumen.monto_individual_usd)}`],
                   ['Total pendiente', `$${money(deuda.resumen.monto_pendiente_usd)} · Bs ${money(deuda.monto_pendiente_bs)}`],
                 ].map(([titulo, valor]) => (
                   <Card key={titulo} className="p-4">
@@ -432,14 +459,14 @@ export default function SaludFeriaPage() {
 
               {deuda.periodo_futuro && (
                 <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                  {deuda.periodo.etiqueta} todavia no empieza: se puede consultar, pero no pagar.
+                  {deuda.hasta.etiqueta} todavia no empieza: se puede consultar, pero no se registran pagos adelantados.
                 </p>
               )}
 
               <Card padding="none">
                 <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
                   <p className="text-sm font-medium text-neutral-800">
-                    {nombreFeria(deuda.feria)} · {deuda.periodo.etiqueta} ({dia(deuda.periodo.inicio)} al {dia(deuda.periodo.fin)})
+                    {nombreFeria(deuda.feria)} · {deuda.etiqueta} ({dia(deuda.desde.inicio)} al {dia(deuda.hasta.fin)})
                   </p>
                 </div>
                 <div className="overflow-x-auto">
@@ -449,15 +476,15 @@ export default function SaludFeriaPage() {
                         <th className="px-4 py-2">Identificacion</th>
                         <th className="px-4 py-2">Trabajador</th>
                         <th className="px-4 py-2">Codigo</th>
-                        <th className="px-4 py-2">Feria</th>
-                        <th className="px-4 py-2 text-right">Monto</th>
-                        <th className="px-4 py-2">Periodo</th>
+                        <th className="px-4 py-2">{unidad.plural[0]!.toUpperCase() + unidad.plural.slice(1)}</th>
+                        <th className="px-4 py-2 text-right">Pendientes</th>
+                        <th className="px-4 py-2 text-right">Monto pendiente</th>
                         <th className="px-4 py-2">Estado</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">
                       {deuda.filas.length === 0 ? (
-                        <tr><td colSpan={7} className="px-4 py-8 text-center text-neutral-500">La feria no tuvo trabajadores en este periodo</td></tr>
+                        <tr><td colSpan={7} className="px-4 py-8 text-center text-neutral-500">La feria no tuvo trabajadores en {cantidad > 1 ? `estas ${unidad.plural}` : `esta ${unidad.singular}`}</td></tr>
                       ) : (
                         deuda.filas.map((f) => (
                           <tr key={f.trabajador_id}>
@@ -466,15 +493,35 @@ export default function SaludFeriaPage() {
                               {f.nombre}
                               {f.estado_trabajador === 'retirado' && <span className="ml-2 text-xs text-neutral-500">(retirado)</span>}
                             </td>
-                            <td className="px-4 py-2 font-mono">{f.codigo_trabajador}</td>
-                            <td className="px-4 py-2">{nombreFeria(deuda.feria)}</td>
-                            <td className="px-4 py-2 text-right">${money(f.monto_usd)}</td>
-                            <td className="px-4 py-2">{deuda.periodo.etiqueta}</td>
+                            <td className="whitespace-nowrap px-4 py-2 font-mono">{f.codigo_trabajador}</td>
+                            <td className="px-4 py-2">
+                              {/* Verde: pagada (abre el pago). Ambar: pendiente */}
+                              <div className="flex max-w-md flex-wrap gap-1">
+                                {f.periodos.map((p) =>
+                                  p.estado === 'pagado' ? (
+                                    <button
+                                      key={p.etiqueta}
+                                      onClick={() => p.pago_id && void abrirPago(p.pago_id)}
+                                      title={`Pagada · pago #${p.pago_id}`}
+                                      className="rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-xs text-emerald-700 hover:underline"
+                                    >
+                                      {p.etiqueta}
+                                    </button>
+                                  ) : (
+                                    <span key={p.etiqueta} title="Pendiente" className="rounded bg-amber-50 px-1.5 py-0.5 font-mono text-xs text-amber-800">
+                                      {p.etiqueta}
+                                    </span>
+                                  )
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 text-right">{f.pendientes} de {f.periodos.length}</td>
+                            <td className="px-4 py-2 text-right">${money(f.monto_pendiente_usd)}</td>
                             <td className="px-4 py-2">
                               {f.estado === 'pagado' ? (
-                                <button onClick={() => f.pago_id && void abrirPago(f.pago_id)} className="hover:underline">
-                                  <Badge variant="success">Pagado</Badge>
-                                </button>
+                                <Badge variant="success">Pagado</Badge>
+                              ) : f.estado === 'parcial' ? (
+                                <Badge variant="info">Parcial</Badge>
                               ) : (
                                 <Badge variant="warning">Pendiente</Badge>
                               )}
@@ -531,7 +578,9 @@ export default function SaludFeriaPage() {
                   )}
                   {errorPago && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{errorPago}</p>}
                   <div className="mt-4 flex justify-end">
-                    <Button onClick={pedirConfirmacion}>Registrar pago de {deuda.resumen.pendientes} trabajador(es)</Button>
+                    <Button onClick={pedirConfirmacion}>
+                      Registrar pago de {deuda.resumen.trabajadores_con_pendiente} trabajador(es) · {deuda.resumen.renglones_pendientes} movimiento(s)
+                    </Button>
                   </div>
                 </Card>
               )}
@@ -546,7 +595,7 @@ export default function SaludFeriaPage() {
         <div className="space-y-5">
           <Card className="p-4">
             <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
-              {selectorPeriodo}
+              {selectorPeriodo(false)}
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => window.print()} disabled={!pendientes}>
                   <Printer className="h-4 w-4" />
@@ -618,7 +667,7 @@ export default function SaludFeriaPage() {
                         <tr
                           key={f.feria.id}
                           className="cursor-pointer hover:bg-primary-50/40"
-                          onClick={() => { setFeriaId(String(f.feria.id)); setPestana('registrar') }}
+                          onClick={() => { setFeriaId(String(f.feria.id)); setCantidad(1); setPestana('registrar') }}
                         >
                           <td className="px-4 py-2 font-medium text-neutral-900">{nombreFeria(f.feria)}</td>
                           <td className="px-4 py-2 text-neutral-600">{f.feria.responsable ?? '—'}{f.feria.telefono ? ` · ${f.feria.telefono}` : ''}</td>
@@ -707,7 +756,7 @@ export default function SaludFeriaPage() {
                       <tr key={p.id} className="cursor-pointer hover:bg-primary-50/40" onClick={() => void abrirPago(p.id)}>
                         <td className="px-4 py-2">{dia(p.fecha_pago)}</td>
                         <td className="px-4 py-2 font-medium text-neutral-900">{nombreFeria(p.feria)}</td>
-                        <td className="px-4 py-2">{p.periodo.etiqueta}</td>
+                        <td className="px-4 py-2 whitespace-nowrap">{p.etiqueta_periodos}</td>
                         <td className="px-4 py-2 text-right">{p.cantidad_trabajadores}</td>
                         <td className="px-4 py-2 text-right">${money(p.monto_esperado_usd)}</td>
                         <td className="px-4 py-2 text-right">{p.moneda === 'USD' ? '$' : 'Bs '}{money(p.monto_recibido)}</td>
@@ -741,14 +790,15 @@ export default function SaludFeriaPage() {
             <div className="space-y-3 px-6 py-5 text-sm">
               <dl className="grid grid-cols-2 gap-2">
                 <dt className="text-neutral-500">Feria</dt><dd className="font-medium">{nombreFeria(deuda.feria)}</dd>
-                <dt className="text-neutral-500">Periodo</dt><dd className="font-medium">{deuda.periodo.etiqueta}</dd>
-                <dt className="text-neutral-500">Trabajadores</dt><dd className="font-medium">{deuda.resumen.pendientes}</dd>
+                <dt className="text-neutral-500">{unidad.plural[0]!.toUpperCase() + unidad.plural.slice(1)}</dt><dd className="font-medium">{deuda.etiqueta}</dd>
+                <dt className="text-neutral-500">Trabajadores</dt><dd className="font-medium">{deuda.resumen.trabajadores_con_pendiente}</dd>
+                <dt className="text-neutral-500">Movimientos</dt><dd className="font-medium">{deuda.resumen.renglones_pendientes}</dd>
                 <dt className="text-neutral-500">Monto total</dt><dd className="font-medium">${money(esperadoUsd)} · Bs {money(deuda.monto_pendiente_bs)}</dd>
                 <dt className="text-neutral-500">Recibido</dt><dd className="font-medium">{pago.moneda === 'USD' ? '$' : 'Bs '}{money(pago.monto_recibido)}</dd>
               </dl>
               <p className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sky-900">
                 <HeartPulse className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                Esta por registrar {deuda.resumen.pendientes} pago(s) individual(es) por un monto de ${money(esperadoUsd)}. Se genera un movimiento de salud por cada trabajador.
+                Esta por registrar {deuda.resumen.renglones_pendientes} pago(s) individual(es) por un monto de ${money(esperadoUsd)}. Se genera un movimiento de salud por cada trabajador en cada {unidad.singular} pendiente.
               </p>
               {hayDiferencia && (
                 <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
@@ -773,7 +823,7 @@ export default function SaludFeriaPage() {
         open={!!detallePago}
         onClose={() => { setDetallePago(null); setAnulacion(null) }}
         title={detallePago ? `Pago #${detallePago.id} · ${nombreFeria(detallePago.feria)}` : ''}
-        description={detallePago ? `${detallePago.periodo.etiqueta} · pagado el ${dia(detallePago.fecha_pago)}` : undefined}
+        description={detallePago ? `${detallePago.etiqueta_periodos} · pagado el ${dia(detallePago.fecha_pago)}` : undefined}
         width="xl"
         footer={
           detallePago && detallePago.estado === 'vigente' && puedeAnular && anulacion === null ? (
@@ -794,7 +844,7 @@ export default function SaludFeriaPage() {
               </div>
             )}
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-              <div><dt className="text-xs uppercase text-neutral-500">Trabajadores</dt><dd className="font-medium">{detallePago.cantidad_trabajadores}</dd></div>
+              <div><dt className="text-xs uppercase text-neutral-500">Trabajadores</dt><dd className="font-medium">{detallePago.cantidad_trabajadores} · {detallePago.detalles.length} movimiento(s)</dd></div>
               <div><dt className="text-xs uppercase text-neutral-500">Esperado</dt><dd className="font-medium">${money(detallePago.monto_esperado_usd)} · Bs {money(detallePago.monto_esperado_bs)}</dd></div>
               <div><dt className="text-xs uppercase text-neutral-500">Recibido</dt><dd className="font-medium">{detallePago.moneda === 'USD' ? '$' : 'Bs '}{money(detallePago.monto_recibido)}</dd></div>
               <div><dt className="text-xs uppercase text-neutral-500">Metodo</dt><dd>{METODOS[detallePago.metodo_pago] ?? detallePago.metodo_pago}</dd></div>
@@ -809,7 +859,7 @@ export default function SaludFeriaPage() {
             <div className="overflow-x-auto rounded-lg border border-neutral-200">
               <table className="w-full">
                 <thead className="bg-neutral-50 text-left text-xs text-neutral-500">
-                  <tr><th className="px-3 py-2">Codigo</th><th className="px-3 py-2">Trabajador</th><th className="px-3 py-2">Identificacion</th><th className="px-3 py-2 text-right">Monto</th><th className="px-3 py-2">Estado</th></tr>
+                  <tr><th className="px-3 py-2">Codigo</th><th className="px-3 py-2">Trabajador</th><th className="px-3 py-2">Identificacion</th><th className="px-3 py-2">Periodo</th><th className="px-3 py-2 text-right">Monto</th><th className="px-3 py-2">Estado</th></tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {detallePago.detalles.map((d) => (
@@ -817,6 +867,7 @@ export default function SaludFeriaPage() {
                       <td className="px-3 py-2 font-mono">{d.trabajador.codigo_trabajador}</td>
                       <td className="px-3 py-2">{d.trabajador.persona.apellidos}, {d.trabajador.persona.nombres}</td>
                       <td className="px-3 py-2">{d.trabajador.persona.tipo_identificacion}-{d.trabajador.persona.numero_identificacion}</td>
+                      <td className="px-3 py-2 font-mono">{d.periodo.etiqueta}</td>
                       <td className="px-3 py-2 text-right">${money(d.monto_usd)}</td>
                       <td className="px-3 py-2">{d.estado === 'vigente' ? <Badge variant="success">Pagado</Badge> : <Badge variant="error">Anulado</Badge>}</td>
                     </tr>
@@ -829,7 +880,7 @@ export default function SaludFeriaPage() {
               <div className="space-y-3 rounded-lg border border-red-200 bg-red-50/50 p-4">
                 <p className="flex items-start gap-2 font-medium text-red-800">
                   <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                  Se anulan el pago y sus {detallePago.detalles.length} movimientos individuales. Esos trabajadores vuelven a quedar pendientes en {detallePago.periodo.etiqueta}. Nada se borra.
+                  Se anulan el pago y sus {detallePago.detalles.length} movimientos individuales. Esos trabajadores vuelven a quedar pendientes en {detallePago.etiqueta_periodos}. Nada se borra.
                 </p>
                 <label className={labelClass}>
                   <span className="mb-1.5 block">Motivo de la anulacion *</span>

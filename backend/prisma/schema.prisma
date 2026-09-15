@@ -287,8 +287,9 @@ model PeriodoSalud {
   created_at   DateTime         @default(now())
 
   // Relaciones
-  pagos    PagoSaludFeria[]
-  detalles PagoSaludTrabajador[]
+  pagos_desde PagoSaludFeria[]      @relation("PagoSaludDesde")
+  pagos_hasta PagoSaludFeria[]      @relation("PagoSaludHasta")
+  detalles    PagoSaludTrabajador[]
 
   @@unique([tipo, anio, numero])
   @@map("periodos_salud")
@@ -297,7 +298,10 @@ model PeriodoSalud {
 model PagoSaludFeria {
   id                    Int             @id @default(autoincrement())
   feria_id              Int
+  // Primer y último período que cubre el pago (pueden ser el mismo)
   periodo_id            Int
+  periodo_hasta_id      Int
+  cantidad_periodos     Int             @default(1)
   fecha_pago            DateTime        @db.Date
   cantidad_trabajadores Int
   // Tarifa y tasa del momento: cambiar el parámetro no altera pagos hechos
@@ -318,9 +322,10 @@ model PagoSaludFeria {
   motivo_anulacion      String?         @db.Text
 
   // Relaciones
-  feria    Ubicacion             @relation(fields: [feria_id], references: [id])
-  periodo  PeriodoSalud          @relation(fields: [periodo_id], references: [id])
-  detalles PagoSaludTrabajador[]
+  feria         Ubicacion             @relation(fields: [feria_id], references: [id])
+  periodo       PeriodoSalud          @relation("PagoSaludDesde", fields: [periodo_id], references: [id])
+  periodo_hasta PeriodoSalud          @relation("PagoSaludHasta", fields: [periodo_hasta_id], references: [id])
+  detalles      PagoSaludTrabajador[]
 
   @@index([feria_id, periodo_id])
   @@index([referencia])

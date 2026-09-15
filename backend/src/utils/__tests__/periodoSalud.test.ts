@@ -1,6 +1,14 @@
 // Períodos del pago de salud: meses, semanas ISO y la feria que paga en un traslado.
 
-import { etiquetaPeriodo, feriaDelPeriodo, rangoPeriodo, validarPeriodo } from '../periodoSalud';
+import {
+  contarPeriodos,
+  etiquetaPeriodo,
+  etiquetaRango,
+  feriaDelPeriodo,
+  periodosDesde,
+  rangoPeriodo,
+  validarPeriodo,
+} from '../periodoSalud';
 
 const dia = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -27,6 +35,30 @@ describe('rangoPeriodo', () => {
 
   it('etiqueta sin calcular el rango', () => {
     expect(etiquetaPeriodo({ tipo: 'mensual', anio: 2026, numero: 9 })).toBe('Septiembre 2026');
+  });
+});
+
+describe('varios períodos en un pago', () => {
+  const semana = (anio: number, numero: number) => ({ tipo: 'semanal' as const, anio, numero });
+
+  it('semanas seguidas que cruzan el año (2026 tiene 53)', () => {
+    expect(periodosDesde(semana(2026, 52), 3)).toEqual([semana(2026, 52), semana(2026, 53), semana(2027, 1)]);
+    expect(periodosDesde(semana(2025, 52), 2)).toEqual([semana(2025, 52), semana(2026, 1)]);
+  });
+
+  it('meses seguidos que cruzan el año', () => {
+    expect(periodosDesde({ tipo: 'mensual', anio: 2026, numero: 11 }, 3).map(etiquetaPeriodo)).toEqual([
+      'Noviembre 2026',
+      'Diciembre 2026',
+      'Enero 2027',
+    ]);
+  });
+
+  it('cuenta y nombra el rango', () => {
+    expect(contarPeriodos(semana(2026, 30), semana(2026, 38))).toBe(9);
+    expect(contarPeriodos(semana(2026, 53), semana(2027, 2))).toBe(3);
+    expect(etiquetaRango(semana(2026, 30), semana(2026, 38))).toBe('S30/2026 a S38/2026 (9 semanas)');
+    expect(etiquetaRango(semana(2026, 30), semana(2026, 30))).toBe('S30/2026');
   });
 });
 

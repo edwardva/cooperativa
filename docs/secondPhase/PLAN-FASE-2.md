@@ -300,8 +300,8 @@ Supuestos tomados mientras la cooperativa no confirme (sección 20):
 
 Supuestos, mientras la cooperativa no confirme:
 
-- **Periodicidad (pendiente 2):** parámetro `PERIODICIDAD_SALUD_FERIA`, mensual por defecto. Cambiarla no toca los pagos hechos.
-- **Monto por trabajador (pendiente 1):** parámetro `TARIFA_SALUD_TRABAJADOR_USD`. **Arranca en 0 y con 0 no se registra ningún pago**; hay que cargarlo antes de usar el módulo.
+- **Periodicidad (pendiente 2) · resuelto el 2026-09-14:** la cooperativa confirmó que la salud se calcula **por semana** y que la feria paga varias semanas juntas (8, 9, 10...). `PERIODICIDAD_SALUD_FERIA` pasa a `semanal`, y la migración `20260915000000_pago_salud_varios_periodos` lo cambia salvo que ya haya pagos mensuales vigentes. Un pago elige la semana inicial y la cantidad (hasta 52). Guarda `periodo_id`, `periodo_hasta_id` y `cantidad_periodos`, y crea un renglón por trabajador y semana pendiente. La deuda se calcula semana por semana, así un traslado a mitad del rango cae en la feria que corresponde. El rango se recorta a las semanas que tenían algo pendiente. No se aceptan semanas que todavía no empezaron.
+- **Monto por trabajador (pendiente 1):** parámetro `TARIFA_SALUD_TRABAJADOR_USD`, ahora **por semana**. En producción vale 0,96, lo mismo que cobra la salud en colecta. Falta que la cooperativa confirme el valor y si se aceptan pagos adelantados.
 - **Traslado a mitad de período:** paga la feria de la última asignación dentro del período, así nadie aparece en dos ferias ni en ninguna. Un pago ya hecho conserva su feria aunque después se cargue un traslado.
 - **Quién debe:** los activos, y los retirados en los períodos que trabajaron. Suspendidos e inactivos no generan deuda, igual que en la ficha.
 - **Pagos parciales (pendiente 8):** no hay. Un pago cubre a todos los pendientes. Si el monto recibido difiere del esperado, se registra solo confirmando la diferencia, que queda en la auditoría.
