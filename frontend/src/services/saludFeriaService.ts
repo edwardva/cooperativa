@@ -37,6 +37,8 @@ export interface Configuracion {
   periodo_actual: Periodo
   /** Tope de periodos en un solo pago */
   max_periodos: number
+  /** Semanas que la feria puede pagar por adelantado */
+  max_adelanto: number
   metodos_pago: string[]
 }
 
@@ -106,8 +108,9 @@ export interface Deuda {
   tasa: number
   monto_pendiente_bs: number
   tarifa_configurada: boolean
-  /** Algun periodo del rango todavia no empieza */
-  periodo_futuro: boolean
+  /** Periodos del rango que todavia no empiezan: se pueden pagar adelantados */
+  adelantadas: number
+  max_adelanto: number
 }
 
 export interface FeriaPendiente extends ResumenDeuda {

@@ -7,7 +7,8 @@
  * varias semanas de una vez (8, 9, 10...):
  *
  *   1. Se elige feria, semana inicial y cantidad de semanas: aparece quien
- *      debe, que semanas y cuanto (HU-07).
+ *      debe, que semanas y cuanto (HU-07). Se cobra lo que la feria debe y se
+ *      adelantan semanas, hasta el tope de SEMANAS_ADELANTO_SALUD_FERIA.
  *   2. Se cargan los datos del pago y se confirma viendo cuantos movimientos
  *      individuales se van a generar (RF-SAL-10).
  *   3. El backend recalcula todo en una transaccion: si la deuda cambio entre
@@ -352,8 +353,10 @@ export default function SaludFeriaPage() {
     </>
   )
 
+  const adelantadas = deuda?.adelantadas ?? 0
+  const excedeAdelanto = !!deuda && adelantadas > deuda.max_adelanto
   const puedePagar =
-    !!deuda && puedeRegistrar && deuda.resumen.renglones_pendientes > 0 && deuda.tarifa_configurada && !deuda.periodo_futuro
+    !!deuda && puedeRegistrar && deuda.resumen.renglones_pendientes > 0 && deuda.tarifa_configurada && !excedeAdelanto
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -457,9 +460,11 @@ export default function SaludFeriaPage() {
                 ))}
               </div>
 
-              {deuda.periodo_futuro && (
-                <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                  {deuda.hasta.etiqueta} todavia no empieza: se puede consultar, pero no se registran pagos adelantados.
+              {adelantadas > 0 && (
+                <p className={`rounded-lg border px-4 py-3 text-sm ${excedeAdelanto ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-sky-200 bg-sky-50 text-sky-900'}`}>
+                  {excedeAdelanto
+                    ? `El rango adelanta ${adelantadas} ${unidad.plural} y el tope es ${deuda.max_adelanto}: reduzca la cantidad para poder registrar el pago.`
+                    : `Incluye ${adelantadas} ${adelantadas === 1 ? unidad.singular : unidad.plural} por adelantado (tope ${deuda.max_adelanto}).`}
                 </p>
               )}
 
@@ -793,6 +798,7 @@ export default function SaludFeriaPage() {
                 <dt className="text-neutral-500">{unidad.plural[0]!.toUpperCase() + unidad.plural.slice(1)}</dt><dd className="font-medium">{deuda.etiqueta}</dd>
                 <dt className="text-neutral-500">Trabajadores</dt><dd className="font-medium">{deuda.resumen.trabajadores_con_pendiente}</dd>
                 <dt className="text-neutral-500">Movimientos</dt><dd className="font-medium">{deuda.resumen.renglones_pendientes}</dd>
+                {adelantadas > 0 && (<><dt className="text-neutral-500">Adelantadas</dt><dd className="font-medium">{adelantadas} {adelantadas === 1 ? unidad.singular : unidad.plural}</dd></>)}
                 <dt className="text-neutral-500">Monto total</dt><dd className="font-medium">${money(esperadoUsd)} · Bs {money(deuda.monto_pendiente_bs)}</dd>
                 <dt className="text-neutral-500">Recibido</dt><dd className="font-medium">{pago.moneda === 'USD' ? '$' : 'Bs '}{money(pago.monto_recibido)}</dd>
               </dl>
