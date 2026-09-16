@@ -9,9 +9,11 @@
 // trabajador y semana pendiente, en UNA transacción (HU-09): si falla un
 // renglón no queda nada.
 //
-// Por parámetro: la periodicidad (PERIODICIDAD_SALUD_FERIA, semanal) y el monto
-// por trabajador y período (TARIFA_SALUD_TRABAJADOR_USD). No hay pagos parciales
-// (pendiente 8): un pago cubre a todos los pendientes de los períodos elegidos.
+// Por parámetro: la periodicidad (PERIODICIDAD_SALUD_FERIA, semanal), el monto
+// por trabajador y período (TARIFA_SALUD_TRABAJADOR_USD) y cuántas semanas se
+// pueden adelantar (SEMANAS_ADELANTO_SALUD_FERIA, 10: la cooperativa cobra lo
+// que la feria debe más diez semanas). No hay pagos parciales (pendiente 8): un
+// pago cubre a todos los pendientes de los períodos elegidos.
 
 import type { Request, Response } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
@@ -178,6 +180,7 @@ export const obtenerConfiguracion = async (_req: Request, res: Response): Promis
         tasa,
         periodo_actual: actual,
         max_periodos: MAX_PERIODOS_POR_PAGO,
+        max_adelanto: await leerParametroNumerico('SEMANAS_ADELANTO_SALUD_FERIA'),
         metodos_pago: METODOS_PAGO,
       },
     });
@@ -193,10 +196,11 @@ export const obtenerDeuda = async (req: Request, res: Response): Promise<void> =
     const ref = await periodoDeQuery(req);
     const cantidad = cantidadDeQuery(req);
 
-    const [feria, tarifa, { tasa }] = await Promise.all([
+    const [feria, tarifa, { tasa }, maxAdelanto] = await Promise.all([
       prisma.ubicacion.findUnique({ where: { id: feriaId }, select: { id: true, codigo: true, nombre: true, direccion: true, responsable: true, estado: true } }),
       leerParametroNumerico('TARIFA_SALUD_TRABAJADOR_USD'),
       resolverTasa(),
+      leerParametroNumerico('SEMANAS_ADELANTO_SALUD_FERIA'),
     ]);
     if (!feria) throw new NotFoundError('Feria no encontrada');
 
@@ -209,8 +213,9 @@ export const obtenerDeuda = async (req: Request, res: Response): Promise<void> =
         tasa,
         monto_pendiente_bs: redondear(deuda.resumen.monto_pendiente_usd * tasa),
         tarifa_configurada: tarifa > 0,
-        // Algún período del rango todavía no empieza: se consulta, no se paga
-        periodo_futuro: deuda.hasta.inicio > hoyDia(),
+        // Períodos que todavía no empiezan: se pagan adelantados hasta el tope
+        adelantadas: deuda.periodos.filter((p) => p.inicio > hoyDia()).length,
+        max_adelanto: maxAdelanto,
       },
     });
   } catch (error) {
@@ -351,10 +356,14 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
     const errorPeriodo = validarPeriodo(desde);
     if (errorPeriodo) throw new BadRequestError(errorPeriodo);
     const refs = periodosDesde(desde, d.cantidad);
-    // `cantidad` es al menos 1: la lista nunca está vacía
-    const ultimo = rangoPeriodo(refs[refs.length - 1]!);
-    if (ultimo.inicio > hoyDia()) {
-      throw new BadRequestError(`${ultimo.etiqueta} todavía no empieza: no se registran pagos adelantados`);
+    // La feria paga lo que debe y adelanta unas semanas, con tope configurable
+    const adelantadas = refs.filter((r) => rangoPeriodo(r).inicio > hoyDia());
+    const maxAdelanto = await leerParametroNumerico('SEMANAS_ADELANTO_SALUD_FERIA');
+    if (adelantadas.length > maxAdelanto) {
+      throw new BadRequestError(
+        `Se pueden adelantar hasta ${maxAdelanto} período(s) y el rango tiene ${adelantadas.length}. ` +
+          `El primero adelantado es ${etiquetaPeriodo(adelantadas[0]!)}.`
+      );
     }
 
     const fechaPago = fechaDia(d.fecha_pago, 'La fecha del pago');

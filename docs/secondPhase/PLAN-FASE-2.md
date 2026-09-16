@@ -301,17 +301,32 @@ Supuestos tomados mientras la cooperativa no confirme (sección 20):
 Supuestos, mientras la cooperativa no confirme:
 
 - **Periodicidad (pendiente 2) · resuelto el 2026-09-14:** la cooperativa confirmó que la salud se calcula **por semana** y que la feria paga varias semanas juntas (8, 9, 10...). `PERIODICIDAD_SALUD_FERIA` pasa a `semanal`, y la migración `20260915000000_pago_salud_varios_periodos` lo cambia salvo que ya haya pagos mensuales vigentes. Un pago elige la semana inicial y la cantidad (hasta 52). Guarda `periodo_id`, `periodo_hasta_id` y `cantidad_periodos`, y crea un renglón por trabajador y semana pendiente. La deuda se calcula semana por semana, así un traslado a mitad del rango cae en la feria que corresponde. El rango se recorta a las semanas que tenían algo pendiente. No se aceptan semanas que todavía no empezaron.
-- **Monto por trabajador (pendiente 1):** parámetro `TARIFA_SALUD_TRABAJADOR_USD`, ahora **por semana**. En producción vale 0,96, lo mismo que cobra la salud en colecta. Falta que la cooperativa confirme el valor y si se aceptan pagos adelantados.
+- **Monto por trabajador (pendiente 1) · resuelto el 2026-09-16:** `TARIFA_SALUD_TRABAJADOR_USD` = **0,96 por trabajador y semana**, confirmado por la cooperativa ("se hace el pago por semana 0,96 y por cada compañero"). No es un descuento al trabajador: lo paga la feria.
 - **Traslado a mitad de período:** paga la feria de la última asignación dentro del período, así nadie aparece en dos ferias ni en ninguna. Un pago ya hecho conserva su feria aunque después se cargue un traslado.
 - **Quién debe:** los activos, y los retirados en los períodos que trabajaron. Suspendidos e inactivos no generan deuda, igual que en la ficha.
 - **Pagos parciales (pendiente 8):** no hay. Un pago cubre a todos los pendientes. Si el monto recibido difiere del esperado, se registra solo confirmando la diferencia, que queda en la auditoría.
-- **Períodos futuros:** no se registran pagos adelantados.
+- **Semanas adelantadas · resuelto el 2026-09-16:** la cooperativa cobra lo que la feria debe **más 10 semanas por adelantado**, y suelen ser 11 o 12 en total porque no dejan acumular más de dos semanas de deuda. El tope va en `SEMANAS_ADELANTO_SALUD_FERIA` (10): la pantalla avisa cuántas semanas adelanta el rango y el backend rechaza pasarse del tope.
 
 **Para desplegar:** la migración con el rol `postgres`, `sincronizar-permisos.ts --aplicar` (agrega `salud_feria`: el cajero registra y consulta, el analista consulta y solo el administrador anula), y cargar los dos parámetros.
 
 **Pendiente:** exportar las ferias pendientes a Excel y PDF (hoy se imprimen), que va con los reportes del Sprint E, y la revisión visual de la pantalla.
 
 ### Sprint C · Préstamos completos
+
+**Reglas confirmadas por la cooperativa el 2026-09-16 (pendiente 7 de la sección 20)**
+
+- Sólo va a reunión el préstamo que el socio **no cubre con su propio ahorro**. Si le
+  alcanza, se entrega directo.
+- Los fiadores cubren **sólo la diferencia** entre el monto pedido y el ahorro del socio, y
+  pueden ser varios si uno solo no alcanza. Reemplaza al `PORCENTAJE_AHORRO_FIADOR` (30%)
+  de hoy.
+- Aprueban en la **reunión ordinaria de los martes**, donde están casi todos los socios
+  trabajadores: no es junta directiva ni asamblea, y **no se anota número de acta**.
+- Mora del préstamo: **aviso a los 21 días** sin pagar y **moroso a los 30**.
+- Anular un abono lo puede hacer **cualquier cajero**, explicando el motivo, con la
+  supervisión del compañero de al lado (hoy es un permiso que el cajero no tiene).
+- Pendiente de confirmar: si el ahorro del propio socio queda bloqueado como garantía, y
+  qué pasa con los fiadores cuando se anula el abono que había saldado el préstamo.
 
 - Estados `solicitado` y `aprobado`, flujo de aprobación que genera el plan al aprobar
   (RF-PRE-04), validación de ahorrista activo.
@@ -360,6 +375,24 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
 - **Revisión visual** de las pantallas nuevas.
 
 ### Sprint F · Morosidad, suspensión y reactivación
+
+**Reglas confirmadas por la cooperativa el 2026-09-16 (pendientes 3 y 4 de la sección 20)**
+
+- El atraso se cuenta **sin pagar nada de la colecta**: salud y funeraria van juntas y no se
+  pagan por separado.
+- **Al caer en la semana 6** (cinco vencidas): suspensión de **3 días** en salud y funeraria.
+- **Al caer en la semana 11** (diez vencidas): **1 mes** de suspensión en funeraria y
+  **7 días** en salud.
+- Los días de suspensión se cumplen **aunque el socio pague por adelantado**: el servicio
+  se reactiva al terminarlos, no al pagar.
+- **Semana 41: no es suspensión, es pérdida total.** Motivo: el artículo 5 del reglamento
+  (falta de pago); la cooperativa va a pasar el parágrafo exacto. Con ese número de socio no
+  puede volver: si quiere regresar, empieza de cero.
+- Con **10 a 40 semanas** de deuda todavía puede pagarlas todas o abonar, **al precio de hoy**
+  (que es como ya calcula la colecta).
+- Hoy revisan la lista a mano para ir retirando a los que pasaron las 41 semanas: primero el
+  **reporte**, y sólo después el proceso automático.
+- Pendiente de confirmar: qué pasa con el ahorro del socio que queda fuera.
 
 - Llevar el cálculo de atraso existente al nivel del expediente.
 - Estado `suspendido` en el socio, `historial_estado_socio`, job de suspensión con la

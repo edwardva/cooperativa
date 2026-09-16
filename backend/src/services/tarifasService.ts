@@ -67,6 +67,10 @@ export const PARAMETROS_COLECTA = {
   },
   // La cooperativa no confirmó el valor (pendiente 1). En 0 no se puede
   // registrar ningún pago de salud por feria: mejor eso que inventar un monto.
+  SEMANAS_ADELANTO_SALUD_FERIA: {
+    porDefecto: 10,
+    descripcion: 'Semanas que una feria puede pagar por adelantado en el pago de salud',
+  },
   TARIFA_SALUD_TRABAJADOR_USD: {
     porDefecto: 0,
     descripcion: 'Salud por trabajador y semana que paga la feria, en USD (0 = sin configurar)',
