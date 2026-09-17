@@ -130,6 +130,14 @@ const REPORTES: Definicion[] = [
     inicial: { nivel: '41' },
   },
   {
+    clave: 'conversion-prestamos',
+    titulo: 'Prestamos vigentes con el calculo nuevo',
+    descripcion: 'Como quedaria cada prestamo ya otorgado con el interes diario y las cuotas de la tabla. Solo informa: no cambia nada.',
+    icono: DollarSign,
+    campos: [],
+    inicial: {},
+  },
+  {
     clave: 'colectas',
     titulo: 'Colectas',
     descripcion: 'Colectas por fecha, socio o semana cobrada, con totales y reversos.',
