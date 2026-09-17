@@ -335,8 +335,34 @@ Supuestos, mientras la cooperativa no confirme:
   con tasa anual: hay que rehacer el cálculo y el plan de pagos.
 - **Fiadores:** se liberan **de a poco** a medida que el socio paga, y dejan de contar cuando
   lo que debe es igual o menor que su ahorro. Hoy se liberan sólo al saldar.
-- Pendiente de confirmar: cuánto se paga en cada corte, plazo por tipo, recargo por atraso,
-  qué pasa con los préstamos vigentes y en qué orden se libera a varios fiadores.
+**Confirmado el 2026-09-17**
+
+- **Cuota:** fija según el monto, más los intereses del período, y se aceptan abonos de
+  cualquier otro monto.
+- **Cantidad de cuotas por monto** (igual para línea blanca y efectivo), de la tabla que
+  pasó la cooperativa. El pago por cuota de la tabla es el monto máximo del tramo dividido
+  entre las cuotas:
+
+  | Monto | Cuotas | Pago por cuota | % de divisas en el fondo |
+  |---|---|---|---|
+  | 5 a 25 | 1 | 25 | 10% |
+  | 26 a 50 | 2 | 25 | 10% |
+  | 51 a 120 | 5 | 24 | 20% |
+  | 121 a 220 | 6 | 36,67 | 20% |
+  | 221 a 320 | 8 | 40 | 20% |
+  | 321 a 420 | 10 | 42 | 30% |
+  | 421 a 520 | 13 | 40 | 30% |
+  | 521 a 620 | 15 | 41,33 | 30% |
+  | 621 a 720 | 18 | 40 | 30% |
+  | 721 a 1.000 | 24 | 41,67 | 50% |
+  | 1.001 a 2.000 | 30 | 66,66 | 50% |
+
+- **Sin recargo por atraso:** sólo el interés. Aviso a los 21 días y moroso a los 30.
+- **Préstamos vigentes:** pasan al cálculo nuevo.
+- **Fiadores:** hoy el sistema viejo libera a todos por partes iguales con cada pago. La
+  cooperativa no decidió si sigue así o se libera de a uno: **pendiente**.
+- **Pendiente:** qué significa exactamente la columna "% de divisas en el fondo": si es el
+  ahorro propio que el socio debe tener, o una inicial que paga al recibir el préstamo.
 
 - Estados `solicitado` y `aprobado`, flujo de aprobación que genera el plan al aprobar
   (RF-PRE-04), validación de ahorrista activo.
@@ -419,21 +445,37 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
   nacimiento se registra y avisa.
 - ✅ 2026-09-17: **60 días de espera** desde el inicio del acuerdo (`DIAS_ESPERA_FUNERARIA`),
   a la vista en la lista y el detalle.
-- **Máximo 8 beneficiarios** sin contar al titular: ya existía.
+- **Máximo 8 beneficiarios** sin contar al titular (con él, 9 personas): ya existía.
+- ✅ 2026-09-17: beneficiarios **de 0 a 75 años** (`EDAD_MAXIMA_BENEFICIARIO_FUNERARIA`).
 - ✅ 2026-09-17: parentescos que cubre la funeraria: padres, abuelos, hermanos, cónyuge,
   hijos, hijos de crianza, padrastros, sobrinos, nietos, suegros y tíos. La pantalla de
   funeraria sólo ofrece esos; salud sigue con la lista completa, porque los beneficiarios se
   comparten.
 
-### ⚠️ Numeración de semanas (pendiente 6)
+### Numeración de semanas · resuelto el 2026-09-17 (pendiente 6)
 
-La cooperativa numera de 1 a 52, sin semana 53, y los días de diciembre cuentan con la
-semana 1 de enero. El sistema usa semanas ISO, que en 2026 coinciden, pero se separan
-desde el **lunes 28/12/2026** (S53/2026 en el sistema, semana 1 de 2027 para ellos) y
-durante todo 2027. Falta confirmar con un cobro del legacy del 03/01/2022: semana 1 (ISO)
-o semana 2 (su regla).
+La duda era si la cooperativa numeraba distinto de ISO. Se resolvió con un caso donde las
+dos reglas difieren: en el sistema viejo, un cobro del **lunes 03/01/2022** marcaba
+**semana 1**, que es lo que dice ISO. El calendario del sistema queda como está.
+
+### Colecta y salud por feria · confirmado el 2026-09-17
+
+- **Colecta:** se pagan **todas las semanas atrasadas** y se adelantan **hasta 10**; pasarse
+  se rechaza. `BLOQUEAR_ADELANTO_EXCEDIDO` pasa a 1. **Al desplegar hay que actualizar el
+  parámetro en producción**, que hoy vale 0: cambiar el valor por defecto no toca las filas
+  que ya existen.
+- **Montos semanales confirmados:** ahorro 0,03, funeraria 0,75 y salud 0,96. Sin mínimo por
+  cobro: el mínimo es una semana.
+- **Salud por feria:** al trabajador que ya paga su salud **como socio** (tiene acuerdo de
+  salud activo) no se le cobra a la feria. Aparece listado aparte en la pantalla y no entra
+  en el pago. Es la lectura de "el que no se lo pagan es porque ya lo paga personalmente".
 
 ### Sprint G · Permisos finos y cierre
+
+**Confirmado el 2026-09-17:** usan cajeros y la **caja 99** (administración), más **dos
+compañeras de contabilidad de ahorro que sólo consultan e imprimen reportes**. Para ellas
+conviene un rol de sólo lectura; el `analista` de hoy puede crear y modificar socios,
+personas, trabajadores y préstamos, así que no sirve como está.
 
 - Acciones nuevas en `Rol.permisos` (`anular`, `reactivar`, `exportar`, `auditoria`) y
   actualización de `sincronizar-permisos.ts`.

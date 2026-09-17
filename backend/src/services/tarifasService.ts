@@ -47,7 +47,8 @@ export const PARAMETROS_COLECTA = {
     descripcion: 'Semanas que se pueden adelantar antes de advertir al cajero',
   },
   BLOQUEAR_ADELANTO_EXCEDIDO: {
-    porDefecto: 0,
+    // Confirmado: se pagan todas las semanas atrasadas y se adelantan hasta 10
+    porDefecto: 1,
     descripcion:
       'Si vale 1, pasar del máximo de adelanto se rechaza; si vale 0, sólo se advierte',
   },
@@ -64,6 +65,10 @@ export const PARAMETROS_COLECTA = {
   EDAD_MAXIMA_TITULAR_FUNERARIA: {
     porDefecto: 60,
     descripcion: 'Edad máxima para adquirir la funeraria como titular',
+  },
+  EDAD_MAXIMA_BENEFICIARIO_FUNERARIA: {
+    porDefecto: 75,
+    descripcion: 'Edad máxima de un beneficiario de funeraria (desde 0 años)',
   },
   DIAS_ESPERA_FUNERARIA: {
     porDefecto: 60,

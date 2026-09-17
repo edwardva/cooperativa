@@ -737,27 +737,37 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       });
     }
 
-    // Regla confirmada: la funeraria se adquiere como titular hasta los 60 años.
-    // Sin fecha de nacimiento no se puede verificar: se registra y se avisa.
+    // Reglas de edad confirmadas: el titular adquiere la funeraria hasta los 60
+    // años y un beneficiario va de 0 a 75. Sin fecha de nacimiento no se puede
+    // verificar: se registra y se avisa.
     const elegido = data.beneficiario_id
-      ? await prisma.beneficiario.findUnique({ where: { id: data.beneficiario_id }, select: { parentesco: true } })
+      ? await prisma.beneficiario.findUnique({
+          where: { id: data.beneficiario_id },
+          select: { parentesco: true, nombre: true, apellido: true, fecha_nacimiento: true },
+        })
       : null;
     const esTitular = !elegido || elegido.parentesco.trim().toLowerCase() === 'titular';
+    const inicio = data.fecha_inicio ? new Date(data.fecha_inicio) : new Date();
     const advertencias: string[] = [];
-    if (esTitular) {
-      const edadMaxima = await leerParametroNumerico('EDAD_MAXIMA_TITULAR_FUNERARIA');
-      const inicio = data.fecha_inicio ? new Date(data.fecha_inicio) : new Date();
-      if (!socio.fecha_nacimiento) {
-        advertencias.push(`El socio no tiene fecha de nacimiento cargada: no se pudo verificar que tenga hasta ${edadMaxima} años.`);
-      } else if (edadA(socio.fecha_nacimiento, inicio) > edadMaxima) {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: 'EDAD_TITULAR_EXCEDIDA',
-            message: `El titular tiene ${edadA(socio.fecha_nacimiento, inicio)} años: la funeraria se adquiere como titular hasta los ${edadMaxima}.`,
-          },
-        });
-      }
+    const quien = esTitular
+      ? { texto: 'El titular', nacimiento: socio.fecha_nacimiento, clave: 'EDAD_MAXIMA_TITULAR_FUNERARIA' as const, codigo: 'EDAD_TITULAR_EXCEDIDA' }
+      : {
+          texto: `El beneficiario ${elegido!.nombre} ${elegido!.apellido}`,
+          nacimiento: elegido!.fecha_nacimiento,
+          clave: 'EDAD_MAXIMA_BENEFICIARIO_FUNERARIA' as const,
+          codigo: 'EDAD_BENEFICIARIO_EXCEDIDA',
+        };
+    const edadMaxima = await leerParametroNumerico(quien.clave);
+    if (!quien.nacimiento) {
+      advertencias.push(`${quien.texto} no tiene fecha de nacimiento cargada: no se pudo verificar que tenga hasta ${edadMaxima} años.`);
+    } else if (edadA(quien.nacimiento, inicio) > edadMaxima) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: quien.codigo,
+          message: `${quien.texto} tiene ${edadA(quien.nacimiento, inicio)} años y la funeraria admite hasta los ${edadMaxima}.`,
+        },
+      });
     }
 
     // Obtener o crear beneficiario
