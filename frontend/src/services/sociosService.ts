@@ -119,6 +119,33 @@ export const PARENTESCOS_BENEFICIARIO = [
   'Otro',
 ] as const
 
+// Parentescos que cubre la funeraria, confirmados por la cooperativa. Los
+// beneficiarios se comparten con salud, que sigue aceptando la lista completa.
+export const PARENTESCOS_FUNERARIA = [
+  'Esposo',
+  'Esposa',
+  'Hijo',
+  'Hija',
+  'Hijo de crianza',
+  'Hija de crianza',
+  'Padre',
+  'Madre',
+  'Padrastro',
+  'Madrastra',
+  'Abuelo',
+  'Abuela',
+  'Hermano',
+  'Hermana',
+  'Nieto',
+  'Nieta',
+  'Sobrino',
+  'Sobrina',
+  'Suegro',
+  'Suegra',
+  'Tio',
+  'Tia',
+] as const
+
 export interface Beneficiario {
   id: number
   socio_id: number

@@ -179,6 +179,9 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [wizardSocio, setWizardSocio] = useState<Socio | null>(null)
   const [wizardTipoAcuerdoId, setWizardTipoAcuerdoId] = useState<number | ''>('')
   const [wizardNumeroAcuerdo, setWizardNumeroAcuerdo] = useState('')
+  // Un socio puede tener varios acuerdos: uno por persona cubierta
+  const [wizardBeneficiarios, setWizardBeneficiarios] = useState<Beneficiario[]>([])
+  const [wizardBeneficiarioId, setWizardBeneficiarioId] = useState<number | ''>('')
   const [wizardNumeroContrato, setWizardNumeroContrato] = useState('')
   const [wizardFechaInicio, setWizardFechaInicio] = useState(hoyISO())
   const [wizardEnviando, setWizardEnviando] = useState(false)
@@ -186,6 +189,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const cerrarWizard = () => {
     setWizardAbierto(false)
     setWizardPaso(1)
+    setWizardBeneficiarios([])
+    setWizardBeneficiarioId('')
     setWizardCedula('')
     setWizardError(null)
     setWizardSocio(null)
@@ -760,17 +765,36 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   // WIZARD: ACCIONES
   // ============================================
   const buscarSocioWizard = async () => {
-    if (!wizardCedula.trim()) return
+    const texto = wizardCedula.trim()
+    if (!texto) return
 
     setWizardBuscando(true)
     setWizardError(null)
 
     try {
-      const respuesta = await sociosService.buscarSocioPorCedula(wizardCedula.trim())
-      if (!respuesta.success || !respuesta.data) {
-        throw new Error('Socio no encontrado')
+      // El acuerdo se registra con el numero de EXPEDIENTE; la cedula tambien sirve
+      const porExpediente = async () => {
+        const r = await sociosService.buscarSocioPorExpediente(texto).catch(() => null)
+        return r?.success ? r.data : null
       }
-      setWizardSocio(respuesta.data[0] ?? null)
+      const porCedula = async () => {
+        const r = await sociosService.buscarSocioPorCedula(texto).catch(() => null)
+        return r?.success ? r.data?.[0] ?? null : null
+      }
+      const soloDigitos = /^\d+$/.test(texto)
+      const socio = soloDigitos
+        ? (await porCedula()) ?? (await porExpediente())
+        : (await porExpediente()) ?? (await porCedula())
+      if (!socio) throw new Error('No se encontro un socio con ese expediente ni con esa cedula')
+
+      setWizardSocio(socio)
+      setWizardBeneficiarioId('')
+      const beneficiarios = await sociosService.obtenerBeneficiarios(socio.id).catch(() => null)
+      setWizardBeneficiarios(
+        (beneficiarios?.data ?? []).filter(
+          (b) => b.estado === 'activo' && b.parentesco?.trim().toLowerCase() !== 'titular'
+        )
+      )
       setWizardPaso(2)
     } catch (err) {
       setWizardError(getErrorMessage(err) || 'Socio no encontrado')
@@ -780,7 +804,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   }
 
   const confirmarNuevoAcuerdo = async () => {
-    if (!wizardSocio || !wizardTipoAcuerdoId || !wizardNumeroAcuerdo.trim()) return
+    if (!wizardSocio || !wizardTipoAcuerdoId) return
 
     setWizardEnviando(true)
     setWizardError(null)
@@ -789,7 +813,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       const respuesta = await funerariaService.crearAcuerdo({
         socio_id: wizardSocio.id,
         tipo_acuerdo_id: wizardTipoAcuerdoId,
-        numero_acuerdo: wizardNumeroAcuerdo.trim(),
+        ...(wizardBeneficiarioId ? { beneficiario_id: wizardBeneficiarioId } : {}),
+        numero_acuerdo: wizardNumeroAcuerdo.trim() || undefined,
         numero_contrato: wizardNumeroContrato.trim() || undefined,
         fecha_inicio: new Date(wizardFechaInicio).toISOString(),
       })
@@ -798,7 +823,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
       cerrarWizard()
       await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
-      window.alert('Acuerdo de funeraria creado exitosamente')
+      const advertencias = (respuesta as { advertencias?: string[] }).advertencias ?? []
+      window.alert(['Acuerdo de funeraria creado exitosamente', ...advertencias].join('\n\n'))
     } catch (err) {
       setWizardError(getErrorMessage(err))
     } finally {
@@ -1434,6 +1460,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                       {acuerdo.estado === 'retirado' && acuerdo.fecha_retiro
                         ? formatearFecha(acuerdo.fecha_retiro)
                         : formatearFecha(acuerdo.fecha_inicio)}
+                      {acuerdo.estado !== 'retirado' && acuerdo.en_espera && acuerdo.fecha_fin_espera && (
+                        <span className="mt-1 block text-xs font-medium text-amber-700">
+                          En espera hasta {formatearFecha(acuerdo.fecha_fin_espera)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="relative inline-flex items-center justify-end">
@@ -1639,10 +1670,10 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         {wizardPaso === 1 && (
           <div className="space-y-4">
             <Input
-              label="Cédula o código del socio"
+              label="N° de expediente del socio (o su cédula)"
               value={wizardCedula}
               onChange={(e) => setWizardCedula(e.target.value)}
-              placeholder="Ej: 012345678"
+              placeholder="Ej: 00123 o 012345678"
               data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocioWizard()}
               autoFocus
             />
@@ -1680,12 +1711,27 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               </select>
             </label>
 
+            <label className="block text-sm font-medium text-neutral-700">
+              ¿Para quién es el acuerdo?
+              <select
+                value={wizardBeneficiarioId}
+                onChange={(e) => setWizardBeneficiarioId(e.target.value ? Number(e.target.value) : '')}
+                className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">El titular ({wizardSocio.nombre} {wizardSocio.apellido})</option>
+                {wizardBeneficiarios.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.nombre} {b.apellido} ({b.parentesco})
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <Input
-              label="Número de acuerdo"
+              label="N° de acuerdo de funeraria (opcional)"
               value={wizardNumeroAcuerdo}
               onChange={(e) => setWizardNumeroAcuerdo(e.target.value)}
-              placeholder="Ej: FUN-001234"
-              required
+              placeholder="Se asigna después del registro"
             />
             <Input
               label="Número de contrato (opcional)"
@@ -1706,7 +1752,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               </Button>
               <Button
                 onClick={() => setWizardPaso(3)}
-                disabled={!wizardTipoAcuerdoId || !wizardNumeroAcuerdo.trim()}
+                disabled={!wizardTipoAcuerdoId}
                 className="flex-1"
               >
                 Continuar
@@ -1720,9 +1766,24 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           <div className="space-y-4">
             <div className="rounded-lg border border-neutral-200 p-4 space-y-2 text-sm">
               <p>
+                <span className="text-neutral-500">N° de expediente:</span>{' '}
+                <span className="font-mono font-medium">{wizardSocio.codigo_socio}</span>
+              </p>
+              <p>
                 <span className="text-neutral-500">Socio:</span>{' '}
                 <span className="font-medium">
                   {wizardSocio.apellido}, {wizardSocio.nombre}
+                </span>
+              </p>
+              <p>
+                <span className="text-neutral-500">Acuerdo para:</span>{' '}
+                <span className="font-medium">
+                  {wizardBeneficiarioId
+                    ? (() => {
+                        const b = wizardBeneficiarios.find((x) => x.id === wizardBeneficiarioId)
+                        return b ? `${b.nombre} ${b.apellido} (${b.parentesco})` : 'Beneficiario'
+                      })()
+                    : 'El titular'}
                 </span>
               </p>
               <p>
@@ -1732,8 +1793,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                 </span>
               </p>
               <p>
-                <span className="text-neutral-500">Número de acuerdo:</span>{' '}
-                <span className="font-mono font-medium">{wizardNumeroAcuerdo}</span>
+                <span className="text-neutral-500">N° de acuerdo de funeraria:</span>{' '}
+                <span className="font-mono font-medium">{wizardNumeroAcuerdo || 'se asigna después'}</span>
               </p>
               <p>
                 <span className="text-neutral-500">Fecha de inicio:</span>{' '}
@@ -2201,6 +2262,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Fecha de inicio</dt>
                     <dd className="mt-1 text-sm text-neutral-700">{formatearFecha(acuerdoDetalle.fecha_inicio)}</dd>
+                    {acuerdoDetalle.en_espera && acuerdoDetalle.fecha_fin_espera && (
+                      <dd className="mt-1 text-xs font-medium text-amber-700">
+                        En espera hasta {formatearFecha(acuerdoDetalle.fecha_fin_espera)}: todavía no se puede usar
+                      </dd>
+                    )}
                   </div>
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Semanas sin pago</dt>
@@ -2391,11 +2457,16 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="">Selecciona un parentesco...</option>
-              {sociosService.PARENTESCOS_BENEFICIARIO.map((parentesco) => (
+              {sociosService.PARENTESCOS_FUNERARIA.map((parentesco) => (
                 <option key={parentesco} value={parentesco}>
                   {parentesco}
                 </option>
               ))}
+              {/* Beneficiario cargado antes con un parentesco que la funeraria no cubre */}
+              {beneficiarioForm.parentesco &&
+                !(sociosService.PARENTESCOS_FUNERARIA as readonly string[]).includes(beneficiarioForm.parentesco) && (
+                  <option value={beneficiarioForm.parentesco}>{beneficiarioForm.parentesco} (no lo cubre la funeraria)</option>
+                )}
             </select>
           </label>
           <Input

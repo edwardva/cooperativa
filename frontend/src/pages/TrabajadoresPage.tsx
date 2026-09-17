@@ -78,13 +78,6 @@ const badgeEstado = (estado: EstadoTrabajador) => {
   return <Badge variant="neutral">Inactivo</Badge>
 }
 
-const badgePrueba = (t: Trabajador) =>
-  t.prueba.cumplida ? (
-    <Badge variant="success">Cumplida</Badge>
-  ) : (
-    <Badge variant="warning">Hasta {dia(t.prueba.fin_prueba)}</Badge>
-  )
-
 /** Las ferias se nombran por su dirección, igual que en el resto del sistema */
 const nombreFeria = (f: { codigo: string; nombre: string; direccion?: string | null }) =>
   f.direccion?.trim() || f.nombre || f.codigo
@@ -415,17 +408,7 @@ export default function TrabajadoresPage() {
 
   const inscribirComoAhorrista = () => {
     if (!detalle) return
-    const { prueba, persona } = detalle
-    if (
-      !prueba.cumplida &&
-      !window.confirm(
-        `Todavia no cumple los ${prueba.meses} meses de prueba (termina el ${dia(prueba.fin_prueba)}). ` +
-          '¿Inscribirlo como ahorrista de todas formas?'
-      )
-    ) {
-      return
-    }
-    navigate(`/socios?nuevo=1&cedula=${encodeURIComponent(persona.numero_identificacion)}`)
+    navigate(`/socios?nuevo=1&cedula=${encodeURIComponent(detalle.persona.numero_identificacion)}`)
   }
 
   const operable = detalle && puedeEditar && detalle.estado !== 'retirado' && detalle.estado !== 'inactivo'
@@ -536,7 +519,6 @@ export default function TrabajadoresPage() {
                 <th className="px-4 py-3">Trabajador</th>
                 <th className="px-4 py-3">Feria actual</th>
                 <th className="px-4 py-3">Ingreso</th>
-                <th className="px-4 py-3">Prueba</th>
                 <th className="px-4 py-3">Salud</th>
                 <th className="px-4 py-3">Estado</th>
               </tr>
@@ -544,13 +526,13 @@ export default function TrabajadoresPage() {
             <tbody className="divide-y divide-neutral-100">
               {cargando ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-neutral-500">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin" />
                   </td>
                 </tr>
               ) : filas.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-neutral-500">
                     No hay trabajadores con estos filtros
                   </td>
                 </tr>
@@ -572,7 +554,6 @@ export default function TrabajadoresPage() {
                     </td>
                     <td className="px-4 py-3 text-neutral-700">{t.feria_actual ? nombreFeria(t.feria_actual) : '—'}</td>
                     <td className="px-4 py-3 text-neutral-700">{dia(t.fecha_ingreso)}</td>
-                    <td className="px-4 py-3">{badgePrueba(t)}</td>
                     <td className="px-4 py-3">
                       {t.salud.asignada ? <Badge variant="info">Asignada</Badge> : <Badge variant="neutral">No</Badge>}
                     </td>
@@ -673,19 +654,13 @@ export default function TrabajadoresPage() {
               </div>
             </section>
 
-            {/* Prueba y expediente de ahorrista (HU-04): no aplica a quien ya se retiró */}
+            {/* Expediente de ahorrista (HU-04): no aplica a quien ya se retiró */}
             {detalle.estado !== 'retirado' && (
             <section className="space-y-3 rounded-lg border border-neutral-200 px-4 py-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-medium text-neutral-900">Periodo de prueba ({detalle.prueba.meses} meses)</p>
-                {badgePrueba(detalle)}
-              </div>
-              <p className="text-neutral-600">
-                {detalle.prueba.dias_trabajados} dias trabajados.{' '}
-                {detalle.prueba.cumplida
-                  ? `Cumplio la prueba el ${dia(detalle.prueba.fin_prueba)}: puede inscribirse como ahorrista.`
-                  : `Faltan ${detalle.prueba.dias_restantes} dias (termina el ${dia(detalle.prueba.fin_prueba)}).`}
-              </p>
+              <p className="font-medium text-neutral-900">Como ahorrista</p>
+              {detalle.ahorrista.expedientes.length === 0 && (
+                <p className="text-neutral-600">Todavia no es ahorrista de la cooperativa.</p>
+              )}
               {detalle.ahorrista.expedientes.length > 0 && (
                 <p className="text-neutral-700">
                   Expedientes de ahorrista:{' '}

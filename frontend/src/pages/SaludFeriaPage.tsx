@@ -460,6 +460,12 @@ export default function SaludFeriaPage() {
                 ))}
               </div>
 
+              {deuda.pagan_aparte.length > 0 && (
+                <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-700">
+                  {deuda.pagan_aparte.length} trabajador(es) no entran en este pago porque ya pagan su salud como socios:{' '}
+                  {deuda.pagan_aparte.map((t) => `${t.nombre} (${t.codigo_trabajador})`).join(' · ')}.
+                </p>
+              )}
               {adelantadas > 0 && (
                 <p className={`rounded-lg border px-4 py-3 text-sm ${excedeAdelanto ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-sky-200 bg-sky-50 text-sky-900'}`}>
                   {excedeAdelanto

@@ -14,7 +14,7 @@ import { PrismaClient } from '@prisma/client';
 import { calcularSituacion, type SituacionServicio } from './coberturaService';
 import { redondear } from './cobroSemanalService';
 import { obtenerTarifas } from './tarifasService';
-import { formatearTrabajador, includeFerias, mesesDePrueba } from './trabajadoresService';
+import { formatearTrabajador, includeFerias } from './trabajadoresService';
 import { aOrdinal, formatearPeriodo, semanaActual } from '../utils/calendarioSemanal';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
 
@@ -128,7 +128,7 @@ interface ServicioFicha {
 }
 
 export const fichaPersona = async (personaId: number) => {
-  const [persona, tarifas, meses] = await Promise.all([cargar(personaId), obtenerTarifas(), mesesDePrueba()]);
+  const [persona, tarifas] = await Promise.all([cargar(personaId), obtenerTarifas()]);
   if (!persona) return null;
   const actual = semanaActual();
 
@@ -238,7 +238,7 @@ export const fichaPersona = async (personaId: number) => {
   const trabajadores = persona.trabajadores.map((t) => {
     const { pagos_salud, ...resto } = t;
     return {
-      ...formatearTrabajador(resto, meses),
+      ...formatearTrabajador(resto),
       pagos_salud: pagos_salud.map((p) => ({
         id: p.id,
         periodo: etiquetaPeriodo(p.periodo),

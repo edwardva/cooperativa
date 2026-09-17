@@ -85,8 +85,16 @@ export interface FilaDeudaRango {
   estado: 'pendiente' | 'parcial' | 'pagado'
 }
 
+/** Trabajador que no entra en el pago de la feria porque paga su salud como socio */
+export interface TrabajadorAparte {
+  trabajador_id: number
+  codigo_trabajador: string
+  nombre: string
+}
+
 export interface Deuda {
   feria: { id: number; codigo: string; nombre: string; direccion: string | null; responsable: string | null; estado: boolean }
+  pagan_aparte: TrabajadorAparte[]
   desde: Periodo
   hasta: Periodo
   etiqueta: string

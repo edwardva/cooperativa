@@ -194,7 +194,6 @@ export default function PersonaFichaPage() {
                 <Dato titulo="Estado">{badgeEstado(t.estado)}</Dato>
                 <Dato titulo="Ingreso">{dia(t.fecha_ingreso)}</Dato>
                 <Dato titulo="Feria actual">{t.feria_actual ? `${nombreFeria(t.feria_actual)} desde ${dia(t.feria_actual.desde)}` : '—'}</Dato>
-                <Dato titulo="Prueba">{t.prueba.cumplida ? `Cumplida el ${dia(t.prueba.fin_prueba)}` : `Hasta ${dia(t.prueba.fin_prueba)}`}</Dato>
                 {t.fecha_salida && <Dato titulo="Salida">{dia(t.fecha_salida)} · {t.motivo_salida}</Dato>}
               </div>
               <Tabla columnas={['Feria', 'Desde', 'Hasta', 'Motivo']} vacio={t.ferias.length === 0}>

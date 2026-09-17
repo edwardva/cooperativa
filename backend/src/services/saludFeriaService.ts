@@ -11,6 +11,9 @@
 //     inactivos no tienen salud (misma regla que la ficha del trabajador).
 //   - Pagado = tiene un renglón VIGENTE para ese período, en esta u otra feria.
 //     Un anulado no cuenta, y el trabajador vuelve a pendiente.
+//   - NO se le cobra a la feria el trabajador que ya paga su salud como socio
+//     (tiene un acuerdo de salud activo): confirmado por la cooperativa, "el
+//     que no se lo pagan es porque ya lo paga personalmente". Se listan aparte.
 //
 // Además se listan los que ya quedaron pagados por esta feria aunque hoy el
 // cálculo los ubique en otra (un traslado cargado después, con fecha pasada):
@@ -50,10 +53,18 @@ export interface FilaDeuda {
   pago_id: number | null;
 }
 
+/** Trabajador que no entra en el pago de la feria porque paga su salud como socio */
+export interface TrabajadorAparte {
+  trabajador_id: number;
+  codigo_trabajador: string;
+  nombre: string;
+}
+
 export interface DeudaFeria {
   periodo: RangoPeriodo & { id: number | null };
   tarifa_usd: number;
   filas: FilaDeuda[];
+  pagan_aparte: TrabajadorAparte[];
   resumen: {
     total: number;
     pagados: number;
@@ -95,7 +106,30 @@ export const calcularDeuda = async (
       ferias: { select: { feria_id: true, fecha_inicio: true, fecha_fin: true } },
     },
   });
-  const deLaFeria = candidatos.filter((t) => feriaDelPeriodo(t.ferias, rango) === feriaId);
+  const delPeriodo = candidatos.filter((t) => feriaDelPeriodo(t.ferias, rango) === feriaId);
+
+  // Quien ya tiene su acuerdo de salud como socio lo paga él: no lo cobra la feria
+  const personas = delPeriodo.map((t) => t.persona_id);
+  const conSaludPropia = new Set(
+    personas.length === 0
+      ? []
+      : (
+          await db.acuerdoSalud.findMany({
+            where: { estado: 'activo', beneficiario: { socio: { persona_id: { in: personas } } } },
+            select: { beneficiario: { select: { socio: { select: { persona_id: true } } } } },
+          })
+        )
+          .map((a) => a.beneficiario.socio.persona_id)
+          .filter((id): id is number => id !== null)
+  );
+  const deLaFeria = delPeriodo.filter((t) => !conSaludPropia.has(t.persona_id));
+  const paganAparte = delPeriodo
+    .filter((t) => conSaludPropia.has(t.persona_id))
+    .map((t) => ({
+      trabajador_id: t.id,
+      codigo_trabajador: t.codigo_trabajador,
+      nombre: `${t.persona.apellidos}, ${t.persona.nombres}`,
+    }));
 
   const vigentes = periodo
     ? await db.pagoSaludTrabajador.findMany({
@@ -139,6 +173,7 @@ export const calcularDeuda = async (
     periodo: { ...rango, id: periodo?.id ?? null },
     tarifa_usd: redondear(tarifaUsd),
     filas,
+    pagan_aparte: paganAparte,
     resumen: {
       total: filas.length,
       pagados: pagadas.length,
@@ -183,6 +218,7 @@ export interface FilaDeudaRango {
 }
 
 export interface DeudaRango {
+  pagan_aparte: TrabajadorAparte[];
   desde: RangoPeriodo;
   hasta: RangoPeriodo;
   etiqueta: string;
@@ -265,7 +301,10 @@ export const calcularDeudaRango = async (
   // `cantidad` validada arriba: al menos un período
   const primero = deudas[0]!.periodo;
   const ultimo = deudas[deudas.length - 1]!.periodo;
+  // Los que pagan su salud como socios: los mismos en todos los períodos del rango
+  const aparte = new Map(deudas.flatMap((d) => d.pagan_aparte).map((t) => [t.trabajador_id, t]));
   return {
+    pagan_aparte: [...aparte.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
     desde: primero,
     hasta: ultimo,
     etiqueta: etiquetaRango(primero, ultimo),

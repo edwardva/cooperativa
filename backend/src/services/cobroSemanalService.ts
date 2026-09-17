@@ -169,9 +169,8 @@ export function armarPaquete(opciones: {
   }
 
   // --- Advertencia de adelanto ---
-  // El cliente describe una política de hasta 10 semanas que aplica el
-  // personal. Se advierte; bloquear o no está pendiente de confirmación y se
-  // decide con el parámetro BLOQUEAR_ADELANTO_EXCEDIDO.
+  // Confirmado por la cooperativa: se pagan todas las semanas atrasadas y se
+  // adelantan hasta 10. Pasarse se rechaza (BLOQUEAR_ADELANTO_EXCEDIDO en 1).
   const pendientes = semanasParaPonerseAlDia(acuerdos);
   const adelantadas = Math.max(0, semanas - pendientes);
   if (adelantadas > tarifas.max_semanas_adelanto) {

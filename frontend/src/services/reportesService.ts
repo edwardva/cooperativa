@@ -16,6 +16,7 @@ export type ClaveReporte =
   | 'cartera-prestamos'
   | 'semanas-adelantadas'
   | 'colectas'
+  | 'atraso-socios'
 
 export type Celda = string | number | null
 

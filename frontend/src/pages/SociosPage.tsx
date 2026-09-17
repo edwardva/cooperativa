@@ -583,7 +583,7 @@ export const SociosPage = () => {
     }
 
     if (!formData.ubicacion_id) {
-      setErrorFormulario('Debe seleccionar una feria/ubicacion.')
+      setErrorFormulario('Debe seleccionar la feria o el sector del socio.')
       return false
     }
 
@@ -1229,12 +1229,6 @@ export const SociosPage = () => {
                       <p>{resumenExpedientes(identificacion)}</p>
                     </div>
                   )}
-                  {identificacion && !modoEdicion && identificacion.advertencias_ahorrista.map((aviso) => (
-                    <p key={aviso} className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                      {aviso}
-                    </p>
-                  ))}
                 </div>
 
               {/* Sección de foto - Ocupa 1 columna */}
@@ -1292,7 +1286,8 @@ export const SociosPage = () => {
                 <p className={tituloSeccionClass}>Control interno y autorizacion</p>
 
                 <label className={labelClass}>
-                  <span>Feria *</span>
+                  {/* La ubicación también sirve de sector: los trabajadores del Triunfo llevan el suyo */}
+                  <span>Feria o sector *</span>
                   <select
                     value={formData.ubicacion_id ?? ''}
                     onChange={(e) =>
@@ -1311,7 +1306,7 @@ export const SociosPage = () => {
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className={labelClass}>
-                    <span>Autorizado por</span>
+                    <span>Persona autorizada</span>
                     <input
                       value={formData.autorizado_nombre}
                       onChange={(e) => actualizarCampo('autorizado_nombre', e.target.value)}
@@ -1320,7 +1315,7 @@ export const SociosPage = () => {
                   </label>
 
                   <label className={labelClass}>
-                    <span>Cedula autorizado</span>
+                    <span>Cedula de la persona autorizada</span>
                     <input
                       value={formData.autorizado_cedula}
                       onChange={(e) => actualizarCampo('autorizado_cedula', e.target.value.replace(/\D/g, ''))}

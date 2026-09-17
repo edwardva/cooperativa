@@ -6,7 +6,7 @@
  */
 
 import apiClient from './api'
-import type { AsociacionFeria, EstadoTrabajador, FeriaActual, PruebaTrabajador, SaludTrabajador } from './trabajadoresService'
+import type { AsociacionFeria, EstadoTrabajador, FeriaActual, SaludTrabajador } from './trabajadoresService'
 
 export type TipoIdentificacion = 'V' | 'E' | 'J' | 'P'
 
@@ -51,7 +51,6 @@ export interface ExpedienteTrabajador {
   ferias: AsociacionFeria[]
   feria_actual: FeriaActual | null
   salud: SaludTrabajador
-  prueba: PruebaTrabajador
 }
 
 export interface PersonaConExpedientes extends Persona {
@@ -78,8 +77,6 @@ export interface ResultadoIdentificacion {
   numero_identificacion: string
   persona: PersonaConExpedientes | null
   socios_sin_persona: SocioSinPersona[]
-  /** Trabajador que todavia no cumple la prueba, si se lo quiere inscribir como ahorrista */
-  advertencias_ahorrista: string[]
 }
 
 interface Respuesta<T> {

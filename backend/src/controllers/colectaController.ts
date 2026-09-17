@@ -17,7 +17,8 @@ import type { Request, Response } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
-import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../middleware/errorHandler';
+import { exigirPermisoSiEsDeDiaAnterior } from '../utils/reversoDelDia';
 import { normalizarCedula } from '../utils/cedula';
 import { distribuirAbono } from '../utils/amortizacion';
 import { resolverTasa } from '../services/tasaCambioService';
@@ -46,7 +47,6 @@ import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio } from '../utils/bloqueos';
 import { etiquetaFeria } from '../services/trabajadoresService';
 import {
-  asegurarReversoConFiadores,
   liberarFiadores,
   sincronizarCuotas,
 } from '../services/abonosPrestamoService';
@@ -213,7 +213,12 @@ async function cargarAcuerdosDelSocio(
 }
 
 const responderError = (res: Response, error: unknown, mensaje: string): void => {
-  if (error instanceof BadRequestError || error instanceof ConflictError || error instanceof NotFoundError) {
+  if (
+    error instanceof BadRequestError ||
+    error instanceof ConflictError ||
+    error instanceof ForbiddenError ||
+    error instanceof NotFoundError
+  ) {
     res.status(error.statusCode).json({
       success: false,
       error: { code: error.code, message: error.message },
@@ -1407,6 +1412,9 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
     if (!colecta) throw new NotFoundError('Colecta no encontrada');
     if (colecta.reversada) throw new ConflictError('Esta colecta ya fue reversada');
 
+    // Cualquier cajero reversa lo del día; días anteriores, sólo la caja 99
+    await exigirPermisoSiEsDeDiaAnterior(req, 'colecta', colecta.fecha_colecta);
+
     // ¿Quedó dentro de un cierre de caja ya hecho?
     const cierrePosterior = await prisma.cierreCaja.findFirst({
       where: { usuario_id: colecta.usuario_id, fecha_cierre: { gte: colecta.fecha_colecta } },
@@ -1475,8 +1483,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
           });
           if (!abono) continue;
 
-          await asegurarReversoConFiadores(tx, prestamo);
-
+          // Los fiadores ya liberados siguen liberados (confirmado por la cooperativa)
           await tx.abonoPrestamo.update({
             where: { id: abono.id },
             data: {

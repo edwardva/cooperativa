@@ -38,8 +38,9 @@ const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     ahorro: TODO,
     funeraria: TODO,
     salud: TODO,
-    prestamos: [...TODO, 'approve'],
-    colecta: TODO,
+    // La caja 99: única que reversa movimientos de días anteriores
+    prestamos: [...TODO, 'approve', 'reversar_anterior'],
+    colecta: [...TODO, 'reversar_anterior'],
     asambleas: TODO,
     semanas_colecta: TODO,
     tipos_cuenta: TODO,
@@ -56,10 +57,12 @@ const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
   },
   cajero: {
     socios: ['read'],
+    // Los cajeros cobran y reversan abonos y colectas del día (confirmado)
+    prestamos: ['read', 'update', 'delete'],
     ahorro: ['create', 'read'],
     funeraria: ['create', 'read', 'update'],
     salud: ['create', 'read', 'update'],
-    colecta: ['create', 'read'],
+    colecta: ['create', 'read', 'delete'],
     asambleas: ['create', 'read'],
     semanas_colecta: ['read'],
     tipos_cuenta: ['read'],

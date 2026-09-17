@@ -3,7 +3,7 @@
  * SERVICE: TRABAJADORES DE FERIA
  * ============================================
  * Expediente de trabajador: separado del de ahorrista, con historial de ferias.
- * Feria actual, salud y periodo de prueba los calcula el backend.
+ * Feria actual y salud los calcula el backend.
  */
 
 import apiClient from './api'
@@ -36,14 +36,6 @@ export interface SaludTrabajador {
   detalle: string
 }
 
-export interface PruebaTrabajador {
-  fin_prueba: string
-  cumplida: boolean
-  dias_trabajados: number
-  dias_restantes: number
-  meses: number
-}
-
 export interface Trabajador {
   id: number
   persona_id: number
@@ -64,14 +56,12 @@ export interface Trabajador {
   ferias: AsociacionFeria[]
   feria_actual: FeriaActual | null
   salud: SaludTrabajador
-  prueba: PruebaTrabajador
 }
 
 export interface TrabajadorDetalle extends Trabajador {
   ahorrista: {
     expedientes: ExpedienteAhorrista[]
     tiene_expediente_activo: boolean
-    puede_inscribirse: boolean
   }
 }
 
