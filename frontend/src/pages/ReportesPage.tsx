@@ -87,6 +87,7 @@ const REPORTES: Definicion[] = [
     campos: [{
       nombre: 'vista', etiqueta: 'Cartera', tipo: 'select',
       opciones: [
+        { valor: 'solicitudes', texto: 'En solicitud' },
         { valor: 'por_cobrar', texto: 'Por cobrar' },
         { valor: 'morosos', texto: 'Morosos (vencidos)' },
         { valor: 'cobrados', texto: 'Cobrados' },

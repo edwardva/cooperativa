@@ -8,7 +8,14 @@
 
 import apiClient from './api'
 
-export type EstadoPrestamo = 'activo' | 'saldado' | 'moroso' | 'refinanciado' | 'cancelado'
+export type EstadoPrestamo =
+  | 'solicitado'
+  | 'aprobado'
+  | 'activo'
+  | 'saldado'
+  | 'moroso'
+  | 'refinanciado'
+  | 'cancelado'
 export type EstadoCuota = 'pendiente' | 'pagada' | 'vencida'
 
 export interface TipoPrestamo {
@@ -28,24 +35,33 @@ export interface CuotaPlan {
   numero_cuota: number
   fecha_vencimiento: string
   monto_capital_usd: string | number
-  monto_interes_usd: string | number
-  monto_total_usd: string | number
+  /** El plan guardado trae el interes estimado en monto_interes_usd */
+  monto_interes_usd?: string | number
+  monto_total_usd?: string | number
+  /** La simulacion los devuelve asi: el interes real depende del dia de pago */
+  monto_interes_estimado_usd?: number
+  monto_total_estimado_usd?: number
   estado?: EstadoCuota
   fecha_pago?: string | null
 }
 
+/** Condiciones del monto segun la tabla de la cooperativa */
 export interface Simulacion {
   tipo_prestamo: { id: number; codigo: string; nombre: string }
   monto_usd: number
-  plazo_semanas: number
-  tasa_interes_anual: number
+  cuotas: number
+  dias_por_cuota: number
+  cuota_capital_usd: number
+  cuota_capital_bs: number
+  /** Se paga al llevarse el producto, aparte de las cuotas */
+  inicial_usd: number
+  inicial_bs: number
+  inicial_porcentaje: number
+  tasa_interes_mensual: number
   tasa_cambio: number
   requiere_fiadores: boolean
-  cuota_semanal_usd: number
-  cuota_semanal_bs: number
-  total_interes_usd: number
-  total_a_pagar_usd: number
-  total_a_pagar_bs: number
+  total_interes_estimado_usd: number
+  total_a_pagar_estimado_usd: number
   plan: CuotaPlan[]
 }
 
@@ -94,8 +110,16 @@ export interface Prestamo {
   saldo_interes_usd: string | number
   saldo_mora_usd: string | number
   plazo_semanas: number
+  cantidad_cuotas?: number
+  dias_por_cuota?: number
   tasa_interes: string | number
+  tasa_interes_mensual?: string | number
+  inicial_usd?: string | number
+  inicial_ahorro_usd?: string | number
+  inicial_efectivo_usd?: string | number
   estado: EstadoPrestamo
+  fecha_solicitud?: string | null
+  fecha_aprobacion?: string | null
   fecha_desembolso: string
   fecha_vencimiento: string
   socio: SocioResumen
@@ -192,7 +216,6 @@ export const obtenerCartera = async (vista: string): Promise<Respuesta<ReporteCa
 export const simular = async (params: {
   tipo_prestamo_id: number
   monto_usd: number
-  plazo_semanas: number
   fecha_desembolso?: string
 }): Promise<Respuesta<Simulacion>> => {
   const response = await apiClient.get('/prestamos/simular', { params })
@@ -203,11 +226,31 @@ export const crearPrestamo = async (datos: {
   socio_id: number
   tipo_prestamo_id: number
   monto_usd: number
-  plazo_semanas: number
+  /** Fecha de entrega del producto */
   fecha_desembolso: string
   fiadores: { socio_id: number; monto_garantizado_usd: number }[]
+  /** Inicial: con ahorro en divisas, en bolivares, o mezclando */
+  inicial_ahorro_usd?: number
+  inicial_efectivo_usd?: number
+  inicial_efectivo_bs?: number
+  observaciones?: string | null
 }): Promise<Respuesta<PrestamoDetalle>> => {
   const response = await apiClient.post('/prestamos', datos)
+  return response.data
+}
+
+/** La reunion de los martes aprueba y entrega el prestamo que no cubre su ahorro */
+export const aprobarPrestamo = async (
+  id: number,
+  datos: {
+    fecha_entrega: string
+    inicial_ahorro_usd?: number
+    inicial_efectivo_usd?: number
+    inicial_efectivo_bs?: number
+    observaciones?: string | null
+  }
+): Promise<Respuesta<PrestamoDetalle>> => {
+  const response = await apiClient.post(`/prestamos/${id}/aprobar`, datos)
   return response.data
 }
 

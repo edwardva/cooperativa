@@ -197,6 +197,49 @@ async function actualizarMoraYCuotas(prestamoId: number): Promise<number> {
 }
 
 /**
+ * El préstamo con todo lo que muestra la pantalla: fiadores, plan, abonos y el
+ * resumen calculado. Lo devuelven la consulta, el alta y la aprobación, para
+ * que las tres respondan lo mismo.
+ */
+async function prestamoConResumen(id: number) {
+  const prestamo = await prisma.prestamo.findUnique({
+    where: { id },
+    include: {
+      socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true, telefono: true } },
+      tipo_prestamo: true,
+      fiadores: {
+        include: { socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true } } },
+      },
+      plan_pagos: { orderBy: { numero_cuota: 'asc' } },
+      abonos: { orderBy: { fecha_abono: 'desc' } },
+    },
+  });
+  if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
+
+  const cuotasPagadas = prestamo.plan_pagos.filter((c) => c.estado === 'pagada').length;
+  const cuotasVencidas = prestamo.plan_pagos.filter((c) => c.estado === 'vencida').length;
+  // Los abonos reversados siguen en la lista, pero ya no cuentan como pagados
+  const totalAbonado = prestamo.abonos.filter((ab) => !ab.reversado).reduce((a, ab) => a + Number(ab.monto_usd), 0);
+
+  return {
+    ...prestamo,
+    resumen: {
+      cuotas_totales: prestamo.plan_pagos.length,
+      cuotas_pagadas: cuotasPagadas,
+      cuotas_vencidas: cuotasVencidas,
+      total_abonado_usd: redondear(totalAbonado),
+      deuda_total_usd: redondear(
+        Number(prestamo.saldo_capital_usd) + Number(prestamo.saldo_interes_usd) + Number(prestamo.saldo_mora_usd)
+      ),
+      avance_porcentaje:
+        prestamo.plan_pagos.length > 0
+          ? Math.round((cuotasPagadas / prestamo.plan_pagos.length) * 1000) / 10
+          : 0,
+    },
+  };
+}
+
+/**
  * Entrega del préstamo: se cobra la inicial, se bloquea el ahorro que lo
  * respalda —el del socio y el de sus fiadores— y se arma el plan de cuotas.
  *
@@ -230,6 +273,18 @@ async function entregarPrestamo(
         `y se están cubriendo $${cubierta}`
     );
   }
+  // Se admite la diferencia del cambio a bolívares, pero un exceso grande suele
+  // ser un monto mal tecleado: mejor avisar que guardarlo
+  const tolerancia = Math.max(1, redondear(condiciones.inicial_usd * 0.01));
+  if (cubierta > condiciones.inicial_usd + tolerancia) {
+    throw new BadRequestError(
+      `Se están pagando $${cubierta} de inicial y corresponden $${condiciones.inicial_usd}. ` +
+        'Revise el monto.'
+    );
+  }
+  // Lo que se guarda es lo que cubre la inicial: el ahorro primero
+  const ahorroAplicado = Math.min(redondear(inicial.ahorro_usd), condiciones.inicial_usd);
+  const efectivoAplicado = redondear(Math.min(efectivoUsd, condiciones.inicial_usd - ahorroAplicado));
 
   // El ahorro del socio respalda su préstamo. Lo que puso de inicial con ese
   // ahorro ya queda dentro de lo bloqueado: no se bloquea dos veces.
@@ -273,8 +328,8 @@ async function entregarPrestamo(
       // Desde acá el interés corre por día sobre el saldo
       interes_calculado_hasta: fechaEntrega,
       inicial_usd: condiciones.inicial_usd,
-      inicial_ahorro_usd: inicial.ahorro_usd,
-      inicial_efectivo_usd: efectivoUsd,
+      inicial_ahorro_usd: ahorroAplicado,
+      inicial_efectivo_usd: efectivoAplicado,
       inicial_efectivo_bs: inicial.efectivo_bs,
     },
   });
@@ -525,17 +580,7 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
       `Préstamo ${numero}: $${datos.monto_usd} en ${condiciones.cuotas} cuotas` +
         (requiereAprobacion ? ' — EN SOLICITUD, espera la reunión' : ' — entregado')
     );
-    const completo = await prisma.prestamo.findUnique({
-      where: { id: prestamo.id },
-      include: {
-        socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true } },
-        tipo_prestamo: true,
-        fiadores: { include: { socio: { select: { codigo_socio: true, nombre: true, apellido: true } } } },
-        plan_pagos: { orderBy: { numero_cuota: 'asc' } },
-      },
-    });
-
-    res.status(201).json({ success: true, data: completo });
+    res.status(201).json({ success: true, data: await prestamoConResumen(prestamo.id) });
   } catch (error) {
     responderError(res, error, 'Error al otorgar el préstamo');
   }
@@ -619,17 +664,11 @@ export const aprobarPrestamo = async (req: Request, res: Response): Promise<void
       });
     });
 
-    const completo = await prisma.prestamo.findUnique({
-      where: { id },
-      include: {
-        socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true } },
-        tipo_prestamo: true,
-        fiadores: { include: { socio: { select: { codigo_socio: true, nombre: true, apellido: true } } } },
-        plan_pagos: { orderBy: { numero_cuota: 'asc' } },
-      },
+    res.json({
+      success: true,
+      data: await prestamoConResumen(id),
+      message: 'Préstamo aprobado y entregado',
     });
-
-    res.json({ success: true, data: completo, message: 'Préstamo aprobado y entregado' });
   } catch (error) {
     responderError(res, error, 'Error al aprobar el préstamo');
   }
@@ -709,49 +748,7 @@ export const obtenerPrestamo = async (req: Request, res: Response): Promise<void
     // La mora depende de la fecha, así que se recalcula al consultar
     await actualizarMoraYCuotas(id);
 
-    const prestamo = await prisma.prestamo.findUnique({
-      where: { id },
-      include: {
-        socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true, telefono: true } },
-        tipo_prestamo: true,
-        fiadores: {
-          include: { socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true } } },
-        },
-        plan_pagos: { orderBy: { numero_cuota: 'asc' } },
-        abonos: { orderBy: { fecha_abono: 'desc' } },
-      },
-    });
-
-    if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
-
-    const cuotasPagadas = prestamo.plan_pagos.filter((c) => c.estado === 'pagada').length;
-    const cuotasVencidas = prestamo.plan_pagos.filter((c) => c.estado === 'vencida').length;
-    // Los abonos reversados siguen en la lista, pero ya no cuentan como pagados
-    const totalAbonado = prestamo.abonos
-      .filter((ab) => !ab.reversado)
-      .reduce((a, ab) => a + Number(ab.monto_usd), 0);
-
-    res.json({
-      success: true,
-      data: {
-        ...prestamo,
-        resumen: {
-          cuotas_totales: prestamo.plan_pagos.length,
-          cuotas_pagadas: cuotasPagadas,
-          cuotas_vencidas: cuotasVencidas,
-          total_abonado_usd: redondear(totalAbonado),
-          deuda_total_usd: redondear(
-            Number(prestamo.saldo_capital_usd) +
-              Number(prestamo.saldo_interes_usd) +
-              Number(prestamo.saldo_mora_usd)
-          ),
-          avance_porcentaje:
-            prestamo.plan_pagos.length > 0
-              ? Math.round((cuotasPagadas / prestamo.plan_pagos.length) * 1000) / 10
-              : 0,
-        },
-      },
-    });
+    res.json({ success: true, data: await prestamoConResumen(id) });
   } catch (error) {
     responderError(res, error, 'Error al obtener el préstamo');
   }

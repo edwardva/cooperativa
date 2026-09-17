@@ -14,6 +14,8 @@ import { redondear } from './cobroSemanalService';
 const prisma = new PrismaClient();
 
 export const VISTAS_CARTERA = {
+  // Los que esperan la reunión de los martes para entregarse
+  solicitudes: 'En solicitud',
   por_cobrar: 'Por cobrar',
   morosos: 'Morosos (vencidos)',
   cobrados: 'Cobrados',
@@ -23,6 +25,7 @@ export const VISTAS_CARTERA = {
 export type VistaCartera = keyof typeof VISTAS_CARTERA;
 
 const FILTROS: Record<VistaCartera, Prisma.PrestamoWhereInput> = {
+  solicitudes: { estado: { in: ['solicitado', 'aprobado'] } },
   por_cobrar: { estado: { in: ['activo', 'moroso'] } },
   morosos: { estado: 'moroso' },
   cobrados: { estado: 'saldado' },
