@@ -14,6 +14,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { registrarAuditoria } from '../services/auditoriaService';
+import { leerParametroNumerico } from '../services/tarifasService';
 
 const prisma = new PrismaClient();
 
@@ -63,6 +64,23 @@ const listarAcuerdosSchema = z.object({
 /**
  * Obtener o crear beneficiario para un socio
  */
+const DIA_MS = 86_400_000;
+
+/** Espera antes de poder usar la funeraria: se cuenta desde el inicio del acuerdo */
+const esperaFuneraria = (inicio: Date, dias: number, hoy: Date = new Date()) => {
+  const fin = new Date(inicio.getTime() + dias * DIA_MS);
+  return { fecha_fin_espera: fin, en_espera: fin > hoy };
+};
+
+/** Años cumplidos a una fecha (columnas DATE: se comparan en UTC) */
+const edadA = (nacimiento: Date, fecha: Date): number => {
+  const edad = fecha.getUTCFullYear() - nacimiento.getUTCFullYear();
+  const antesDelCumple =
+    fecha.getUTCMonth() < nacimiento.getUTCMonth() ||
+    (fecha.getUTCMonth() === nacimiento.getUTCMonth() && fecha.getUTCDate() < nacimiento.getUTCDate());
+  return antesDelCumple ? edad - 1 : edad;
+};
+
 async function obtenerOCrearBeneficiario(socioId: number): Promise<number> {
   const socio = await prisma.socio.findUnique({
     where: { id: socioId },
@@ -177,6 +195,7 @@ export const listarTiposAcuerdo = async (_req: Request, res: Response): Promise<
  */
 export const listarAcuerdos = async (req: Request, res: Response): Promise<void> => {
   try {
+    const diasEspera = await leerParametroNumerico('DIAS_ESPERA_FUNERARIA');
     const params = listarAcuerdosSchema.parse({
       estado: req.query.estado,
       tipo_acuerdo_id: req.query.tipo_acuerdo_id ? parseInt(req.query.tipo_acuerdo_id as string) : undefined,
@@ -284,6 +303,7 @@ export const listarAcuerdos = async (req: Request, res: Response): Promise<void>
       fecha_retiro: acuerdo.fecha_retiro,
       motivo_retiro: acuerdo.motivo_retiro,
       fecha_inicio: acuerdo.fecha_inicio,
+      ...esperaFuneraria(acuerdo.fecha_inicio, diasEspera),
       created_at: acuerdo.created_at,
       updated_at: acuerdo.updated_at,
     }));
@@ -411,6 +431,7 @@ export const obtenerEstadisticas = async (_req: Request, res: Response): Promise
  */
 export const obtenerAcuerdosPorSocio = async (req: Request, res: Response): Promise<void> => {
   try {
+    const diasEspera = await leerParametroNumerico('DIAS_ESPERA_FUNERARIA');
     const socioId = parseInt(req.params.socioId!);
 
     if (isNaN(socioId)) {
@@ -487,6 +508,7 @@ export const obtenerAcuerdosPorSocio = async (req: Request, res: Response): Prom
         semanas_sin_pago: acuerdo.semanas_sin_pago,
         fecha_suspension: acuerdo.fecha_suspension,
         fecha_inicio: acuerdo.fecha_inicio,
+        ...esperaFuneraria(acuerdo.fecha_inicio, diasEspera),
       })),
     });
 
@@ -549,6 +571,7 @@ export const listarSuspendidosParaImpresion = async (req: Request, res: Response
  */
 export const obtenerAcuerdo = async (req: Request, res: Response): Promise<void> => {
   try {
+    const diasEspera = await leerParametroNumerico('DIAS_ESPERA_FUNERARIA');
     const acuerdoId = parseInt(req.params.id!);
 
     if (isNaN(acuerdoId)) {
@@ -636,6 +659,7 @@ export const obtenerAcuerdo = async (req: Request, res: Response): Promise<void>
         motivo_retiro: acuerdo.motivo_retiro,
         fecha_suspension: acuerdo.fecha_suspension,
         fecha_inicio: acuerdo.fecha_inicio,
+        ...esperaFuneraria(acuerdo.fecha_inicio, diasEspera),
         movimientos: acuerdo.movimientos.map((mov) => ({
           id: mov.id,
           fecha_movimiento: mov.fecha_movimiento,
@@ -713,6 +737,29 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       });
     }
 
+    // Regla confirmada: la funeraria se adquiere como titular hasta los 60 años.
+    // Sin fecha de nacimiento no se puede verificar: se registra y se avisa.
+    const elegido = data.beneficiario_id
+      ? await prisma.beneficiario.findUnique({ where: { id: data.beneficiario_id }, select: { parentesco: true } })
+      : null;
+    const esTitular = !elegido || elegido.parentesco.trim().toLowerCase() === 'titular';
+    const advertencias: string[] = [];
+    if (esTitular) {
+      const edadMaxima = await leerParametroNumerico('EDAD_MAXIMA_TITULAR_FUNERARIA');
+      const inicio = data.fecha_inicio ? new Date(data.fecha_inicio) : new Date();
+      if (!socio.fecha_nacimiento) {
+        advertencias.push(`El socio no tiene fecha de nacimiento cargada: no se pudo verificar que tenga hasta ${edadMaxima} años.`);
+      } else if (edadA(socio.fecha_nacimiento, inicio) > edadMaxima) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'EDAD_TITULAR_EXCEDIDA',
+            message: `El titular tiene ${edadA(socio.fecha_nacimiento, inicio)} años: la funeraria se adquiere como titular hasta los ${edadMaxima}.`,
+          },
+        });
+      }
+    }
+
     // Obtener o crear beneficiario
     const beneficiarioId = data.beneficiario_id || await obtenerOCrearBeneficiario(data.socio_id);
 
@@ -786,7 +833,9 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
         },
         estado: nuevoAcuerdo.estado,
         fecha_inicio: nuevoAcuerdo.fecha_inicio,
+        ...esperaFuneraria(nuevoAcuerdo.fecha_inicio, await leerParametroNumerico('DIAS_ESPERA_FUNERARIA')),
       },
+      ...(advertencias.length > 0 ? { advertencias } : {}),
     });
 
     logger.info(`Acuerdo funeraria ${nuevoAcuerdo.id} creado para socio ${data.socio_id}`);

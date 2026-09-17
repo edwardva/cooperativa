@@ -10,7 +10,6 @@
 // común vive aquí.
 
 import type { Prisma } from '@prisma/client';
-import { ConflictError } from '../middleware/errorHandler';
 import { estadosDeCuotas } from '../utils/amortizacion';
 
 const redondear = (valor: number): number => Math.round(valor * 100) / 100;
@@ -97,26 +96,4 @@ export const liberarFiadores = async (
       data: { estado: 'liberado', fecha_liberacion: new Date() },
     });
   }
-};
-
-/**
- * Un reverso sobre un préstamo SALDADO lo reabre. Si al saldarse los fiadores
- * ya recuperaron su ahorro, la deuda reabierta quedaría sin garantía — y
- * volver a bloquearles el ahorro puede ser imposible si ya lo retiraron. Se
- * rechaza y se pide un ajuste: es una decisión que tiene que tomar una persona.
- */
-export const asegurarReversoConFiadores = async (
-  tx: Prisma.TransactionClient,
-  prestamo: { id: number; numero_prestamo: string; estado: string }
-): Promise<void> => {
-  if (prestamo.estado !== 'saldado') return;
-
-  const liberados = await tx.fiador.count({ where: { prestamo_id: prestamo.id, estado: 'liberado' } });
-  if (liberados === 0) return;
-
-  throw new ConflictError(
-    `El préstamo ${prestamo.numero_prestamo} quedó saldado y ${liberados} fiador(es) ya ` +
-      'recuperaron su ahorro bloqueado. Reversar el pago dejaría la deuda sin garantía; ' +
-      'corresponde un ajuste, no un reverso.'
-  );
 };

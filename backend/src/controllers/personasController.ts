@@ -14,10 +14,8 @@ import { ConflictError, NotFoundError, BadRequestError } from '../middleware/err
 import { registrarAuditoria } from '../services/auditoriaService';
 import { normalizarIdentificacion, propagarPersonaASocios } from '../services/personasService';
 import {
-  advertenciasParaAhorrista,
   formatearTrabajador,
   includeFerias,
-  mesesDePrueba,
 } from '../services/trabajadoresService';
 import { fichaPersona } from '../services/fichaPersonaService';
 import { responderError, responderInvalido } from '../utils/responderError';
@@ -78,9 +76,9 @@ const includeExpedientes = {
 
 type PersonaConExpedientes = Prisma.PersonaGetPayload<{ include: typeof includeExpedientes }>;
 
-const formatearPersona = (p: PersonaConExpedientes, meses: number) => ({
+const formatearPersona = (p: PersonaConExpedientes) => ({
   ...p,
-  trabajadores: p.trabajadores.map((t) => formatearTrabajador(t, meses)),
+  trabajadores: p.trabajadores.map((t) => formatearTrabajador(t)),
 });
 
 const idDeRuta = (req: Request): number => {
@@ -147,7 +145,7 @@ export const buscarPorIdentificacion = async (req: Request, res: Response): Prom
     const tipo = z.enum(['V', 'E', 'J', 'P']).catch('V').parse(req.query.tipo);
     const numero = normalizarIdentificacion(tipo, String(req.params.numero ?? ''));
 
-    const [persona, sociosSinPersona, meses] = await Promise.all([
+    const [persona, sociosSinPersona] = await Promise.all([
       prisma.persona.findUnique({ where: { numero_identificacion: numero }, include: includeExpedientes }),
       prisma.socio.findMany({
         where: { cedula: numero, persona_id: null },
@@ -166,16 +164,14 @@ export const buscarPorIdentificacion = async (req: Request, res: Response): Prom
         },
         orderBy: { fecha_inscripcion: 'desc' },
       }),
-      mesesDePrueba(),
     ]);
 
     res.json({
       success: true,
       data: {
         numero_identificacion: numero,
-        persona: persona ? formatearPersona(persona, meses) : null,
+        persona: persona ? formatearPersona(persona) : null,
         socios_sin_persona: sociosSinPersona,
-        advertencias_ahorrista: persona ? await advertenciasParaAhorrista(prisma, persona.id) : [],
       },
     });
   } catch (error) {
@@ -187,12 +183,11 @@ export const buscarPorIdentificacion = async (req: Request, res: Response): Prom
 export const obtenerPersona = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = idDeRuta(req);
-    const [persona, meses] = await Promise.all([
+    const [persona] = await Promise.all([
       prisma.persona.findUnique({ where: { id }, include: includeExpedientes }),
-      mesesDePrueba(),
     ]);
     if (!persona) throw new NotFoundError('Persona no encontrada');
-    res.json({ success: true, data: formatearPersona(persona, meses) });
+    res.json({ success: true, data: formatearPersona(persona) });
   } catch (error) {
     responderError(res, error, 'Error al obtener la persona');
   }

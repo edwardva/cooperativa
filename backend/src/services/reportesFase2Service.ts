@@ -14,7 +14,8 @@ import { carteraPrestamos, VISTAS_CARTERA } from './carteraService';
 import { redondear } from './cobroSemanalService';
 import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
 import { etiquetaFeria } from './trabajadoresService';
-import { formatearPeriodo, semanaDeFecha } from '../utils/calendarioSemanal';
+import { aOrdinal, formatearPeriodo, semanaActual, semanaDeFecha, type Periodo } from '../utils/calendarioSemanal';
+import { coberturaDe, semanasSinPagoDerivadas, type AcuerdoConCobertura } from './coberturaService';
 import { fechaDia } from '../utils/fechaDia';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
 import { adelantoDelRenglon, type Reporte } from '../utils/reportes';
@@ -28,6 +29,7 @@ export const REPORTES = {
   'cartera-prestamos': 'Cartera de préstamos',
   'semanas-adelantadas': 'Semanas pagadas por adelantado',
   colectas: 'Colectas',
+  'atraso-socios': 'Socios por semanas de atraso',
 } as const;
 
 export type ClaveReporte = keyof typeof REPORTES;
@@ -441,6 +443,131 @@ const colectas = async (p: Parametros): Promise<Reporte> => {
 };
 
 // ============================================
+// Socios por semanas de atraso (morosidad, Sprint F)
+// ============================================
+//
+// Reglas confirmadas por la cooperativa: el atraso se cuenta sin pagar NADA de
+// la colecta, porque salud y funeraria van juntas. Al caer en la semana 6 hay
+// 3 días de suspensión; en la 11, un mes en funeraria y 7 días en salud; en la
+// 41 el socio lo pierde todo. Hoy revisan la lista a mano antes de retirar a
+// nadie: este reporte es esa lista y no cambia ningún estado.
+
+const NIVELES_ATRASO = [
+  { clave: '41', desde: 41, hasta: Infinity, texto: 'Semana 41 o más: pierde los servicios' },
+  { clave: '36', desde: 36, hasta: 40, texto: 'Próximo a la semana 41' },
+  { clave: '11', desde: 11, hasta: 35, texto: 'Suspensión de 1 mes en funeraria y 7 días en salud' },
+  { clave: '6', desde: 6, hasta: 10, texto: 'Suspensión de 3 días' },
+  { clave: '1', desde: 1, hasta: 5, texto: 'Atrasado' },
+] as const;
+
+const nivelDeAtraso = (semanas: number) => NIVELES_ATRASO.find((n) => semanas >= n.desde && semanas <= n.hasta);
+
+const atrasoSocios = async (p: Parametros): Promise<Reporte> => {
+  const nivel = texto(p, 'nivel') || '41';
+  const rango =
+    nivel === 'todos'
+      ? { desde: 6, hasta: Infinity, texto: 'Todos con 6 semanas de atraso o más' }
+      : NIVELES_ATRASO.find((n) => n.clave === nivel);
+  if (!rango) throw new BadRequestError('Nivel de atraso inválido');
+  const feriaId = texto(p, 'feria_id');
+  const actual = semanaActual();
+
+  const campos = {
+    ano_pagado_hasta: true,
+    semana_pagada_hasta: true,
+    fecha_ultimo_pago: true,
+    semanas_sin_pago: true,
+    fecha_inicio: true,
+    estado: true,
+    beneficiario: { select: { socio_id: true } },
+  } as const;
+  const vigentes = { estado: { in: ['activo' as const, 'suspendido' as const] } };
+  const [funerarias, saludes] = await Promise.all([
+    prisma.acuerdoFuneraria.findMany({ where: vigentes, select: campos }),
+    prisma.acuerdoSalud.findMany({ where: vigentes, select: campos }),
+  ]);
+
+  // Por socio, la cobertura más adelantada de sus acuerdos: paga todo junto
+  const porSocio = new Map<number, { cobertura: Periodo; servicios: Set<string>; suspendido: boolean }>();
+  const sumar = (servicio: string, a: AcuerdoConCobertura & { beneficiario: { socio_id: number } }) => {
+    const cobertura = coberturaDe(a, actual);
+    if (!cobertura) return;
+    const previo = porSocio.get(a.beneficiario.socio_id);
+    if (!previo) {
+      porSocio.set(a.beneficiario.socio_id, { cobertura, servicios: new Set([servicio]), suspendido: a.estado === 'suspendido' });
+      return;
+    }
+    if (aOrdinal(cobertura) > aOrdinal(previo.cobertura)) previo.cobertura = cobertura;
+    previo.servicios.add(servicio);
+    previo.suspendido ||= a.estado === 'suspendido';
+  };
+  funerarias.forEach((a) => sumar('Funeraria', a));
+  saludes.forEach((a) => sumar('Salud', a));
+
+  const candidatos = [...porSocio.entries()]
+    .map(([socioId, s]) => ({ socioId, ...s, atraso: semanasSinPagoDerivadas(s.cobertura, actual) }))
+    .filter((c) => c.atraso >= rango.desde && c.atraso <= rango.hasta);
+  acotar(candidatos.length);
+
+  const socios = candidatos.length
+    ? await prisma.socio.findMany({
+        where: {
+          id: { in: candidatos.map((c) => c.socioId) },
+          estado: 'activo',
+          ...(feriaId ? { ubicacion_id: Number(feriaId) } : {}),
+        },
+        select: {
+          id: true,
+          codigo_socio: true,
+          nombre: true,
+          apellido: true,
+          cedula: true,
+          telefono: true,
+          ubicacion: { select: { codigo: true, nombre: true, direccion: true } },
+        },
+      })
+    : [];
+  const datos = new Map(socios.map((s) => [s.id, s]));
+  const filas = candidatos
+    .flatMap((c) => {
+      const socio = datos.get(c.socioId);
+      return socio ? [{ ...c, socio }] : [];
+    })
+    .sort((a, b) => b.atraso - a.atraso || a.socio.codigo_socio.localeCompare(b.socio.codigo_socio, 'es', { numeric: true }));
+
+  const cuantos = (clave: string) => filas.filter((f) => nivelDeAtraso(f.atraso)?.clave === clave).length;
+
+  return {
+    clave: 'atraso-socios',
+    titulo: REPORTES['atraso-socios'],
+    subtitulo: `${rango.texto} · semana en curso ${formatearPeriodo(actual)}${feriaId ? ' · una feria' : ''}`,
+    columnas: ['Expediente', 'Socio', 'Cédula', 'Teléfono', 'Feria', 'Cubierto hasta', 'Semanas de atraso', 'Situación', 'Servicios'],
+    filas: filas.map((f) => [
+      f.socio.codigo_socio,
+      `${f.socio.apellido}, ${f.socio.nombre}`,
+      f.socio.cedula,
+      f.socio.telefono ?? '',
+      f.socio.ubicacion ? etiquetaFeria(f.socio.ubicacion) : '',
+      formatearPeriodo(f.cobertura),
+      f.atraso,
+      nivelDeAtraso(f.atraso)?.texto ?? '',
+      `${[...f.servicios].join(' y ')}${f.suspendido ? ' (con suspensión registrada)' : ''}`,
+    ]),
+    totales: [
+      { etiqueta: 'Socios', valor: filas.length },
+      ...(nivel === 'todos'
+        ? [
+            { etiqueta: '41 semanas o más', valor: cuantos('41') },
+            { etiqueta: 'Próximos (36 a 40)', valor: cuantos('36') },
+            { etiqueta: '11 a 35', valor: cuantos('11') },
+            { etiqueta: '6 a 10', valor: cuantos('6') },
+          ]
+        : []),
+    ],
+  };
+};
+
+// ============================================
 
 const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   'ferias-pendientes': feriasPendientes,
@@ -449,6 +576,7 @@ const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   'cartera-prestamos': carteraPrestamosReporte,
   'semanas-adelantadas': semanasAdelantadas,
   colectas,
+  'atraso-socios': atrasoSocios,
 };
 
 export const esClaveReporte = (clave: string): clave is ClaveReporte => clave in GENERADORES;

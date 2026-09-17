@@ -59,18 +59,21 @@ export const PARAMETROS_COLECTA = {
     porDefecto: 6,
     descripcion: 'Semanas de atraso que suspenden el servicio de salud',
   },
-  // No es de colecta, pero se siembra y se lee igual. La cooperativa no
-  // confirmó si son meses o días calendario (pendiente 10): son meses.
-  MESES_PRUEBA_TRABAJADOR: {
-    porDefecto: 3,
-    descripcion: 'Meses de prueba antes de que un trabajador pueda inscribirse como ahorrista',
+  // No son de colecta, pero se siembran y se leen igual. Reglas de la
+  // funeraria confirmadas por la cooperativa.
+  EDAD_MAXIMA_TITULAR_FUNERARIA: {
+    porDefecto: 60,
+    descripcion: 'Edad máxima para adquirir la funeraria como titular',
   },
-  // La cooperativa no confirmó el valor (pendiente 1). En 0 no se puede
-  // registrar ningún pago de salud por feria: mejor eso que inventar un monto.
+  DIAS_ESPERA_FUNERARIA: {
+    porDefecto: 60,
+    descripcion: 'Días de espera desde el inicio del acuerdo antes de poder usar la funeraria',
+  },
   SEMANAS_ADELANTO_SALUD_FERIA: {
     porDefecto: 10,
     descripcion: 'Semanas que una feria puede pagar por adelantado en el pago de salud',
   },
+  // En 0 no se puede registrar ningún pago de salud por feria (confirmado: 0,96)
   TARIFA_SALUD_TRABAJADOR_USD: {
     porDefecto: 0,
     descripcion: 'Salud por trabajador y semana que paga la feria, en USD (0 = sin configurar)',

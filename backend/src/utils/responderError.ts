@@ -11,7 +11,7 @@ import type { Response } from 'express';
 import { Prisma } from '@prisma/client';
 import type { ZodError } from 'zod';
 import { logger } from './logger';
-import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../middleware/errorHandler';
 
 export const responderInvalido = (res: Response, error: ZodError): void => {
   const primero = error.errors[0];
@@ -32,6 +32,10 @@ export const responderError = (res: Response, error: unknown, mensaje: string): 
       success: false,
       error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) },
     });
+    return;
+  }
+  if (error instanceof ForbiddenError) {
+    res.status(error.statusCode).json({ success: false, error: { code: error.code, message: error.message } });
     return;
   }
   if (error instanceof NotFoundError) {

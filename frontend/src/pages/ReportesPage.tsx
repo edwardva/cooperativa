@@ -108,6 +108,27 @@ const REPORTES: Definicion[] = [
     inicial: { desde: inicioMes, hasta: hoyISO },
   },
   {
+    clave: 'atraso-socios',
+    titulo: 'Socios por semanas de atraso',
+    descripcion: 'Quienes llegaron a la semana 41, quienes estan cerca y quienes caen en suspension. Solo informa: no cambia estados.',
+    icono: AlertTriangle,
+    campos: [
+      {
+        nombre: 'nivel', etiqueta: 'Atraso', tipo: 'select',
+        opciones: [
+          { valor: '41', texto: '41 semanas o mas: pierden los servicios' },
+          { valor: '36', texto: '36 a 40: proximos a la semana 41' },
+          { valor: '11', texto: '11 a 35: suspension de 1 mes y 7 dias' },
+          { valor: '6', texto: '6 a 10: suspension de 3 dias' },
+          { valor: '1', texto: '1 a 5: atrasados' },
+          { valor: 'todos', texto: 'Todos con 6 semanas o mas' },
+        ],
+      },
+      { nombre: 'feria_id', etiqueta: 'Feria', tipo: 'feria' },
+    ],
+    inicial: { nivel: '41' },
+  },
+  {
     clave: 'colectas',
     titulo: 'Colectas',
     descripcion: 'Colectas por fecha, socio o semana cobrada, con totales y reversos.',

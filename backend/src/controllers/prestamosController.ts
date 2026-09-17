@@ -13,14 +13,14 @@ import type { Request, Response } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
-import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../middleware/errorHandler';
+import { exigirPermisoSiEsDeDiaAnterior } from '../utils/reversoDelDia';
 import { generarPlanPagos, calcularMora, distribuirAbono } from '../utils/amortizacion';
 import { resolverTasa } from '../services/tasaCambioService';
 import { carteraPrestamos } from '../services/carteraService';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio, bloquearSocios } from '../utils/bloqueos';
 import {
-  asegurarReversoConFiadores,
   liberarFiadores,
   sincronizarCuotas,
 } from '../services/abonosPrestamoService';
@@ -68,7 +68,12 @@ const reversarAbonoSchema = z.object({
 const redondear = (valor: number): number => Math.round(valor * 100) / 100;
 
 const responderError = (res: Response, error: unknown, mensaje: string): void => {
-  if (error instanceof BadRequestError || error instanceof ConflictError || error instanceof NotFoundError) {
+  if (
+    error instanceof BadRequestError ||
+    error instanceof ConflictError ||
+    error instanceof ForbiddenError ||
+    error instanceof NotFoundError
+  ) {
     res.status(error.statusCode).json({
       success: false,
       error: { code: error.code, message: error.message },
@@ -730,7 +735,11 @@ export const reversarAbono = async (req: Request, res: Response): Promise<void> 
         );
       }
       if (prestamo.estado === 'cancelado') throw new ConflictError('El préstamo está cancelado');
-      await asegurarReversoConFiadores(tx, prestamo);
+      // Cualquier cajero reversa lo del día; días anteriores, sólo la caja 99
+      await exigirPermisoSiEsDeDiaAnterior(req, 'prestamos', abono.fecha_abono);
+      // Si el abono había saldado el préstamo, la deuda se reabre y los fiadores
+      // ya liberados siguen liberados: la cooperativa confirmó que no se les
+      // vuelve a bloquear el ahorro.
 
       await tx.abonoPrestamo.update({
         where: { id: abonoId },

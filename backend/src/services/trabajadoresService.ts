@@ -3,21 +3,19 @@
 // Expediente de trabajador: vistas derivadas
 // ============================================
 //
-// Tres datos del trabajador no se guardan, se derivan, para que no puedan
+// Dos datos del trabajador no se guardan, se derivan, para que no puedan
 // quedar desincronizados:
 //
 //   - Feria actual: la asociación con `fecha_fin` nula.
 //   - Salud: RF-SER-05 la da por el solo hecho de ser trabajador ACTIVO con
-//     feria. Suspendido, retirado o sin feria, no tiene. (La cooperativa no
-//     confirmó si el retirado la conserva un tiempo: pendiente 11.)
-//   - Período de prueba: sale de la fecha de ingreso y del parámetro de meses.
+//     feria. Suspendido, retirado o sin feria, no tiene. Confirmado por la
+//     cooperativa: el retirado la pierde, salvo que además sea socio, y ahí
+//     sigue con los servicios de su expediente de socio.
+//
+// El período de prueba de 90 días no lo controla el sistema (confirmado): la
+// feria manda a su trabajador a inscribirse como ahorrista cuando corresponde.
 
-import type { EstadoTrabajador, Prisma, PrismaClient } from '@prisma/client';
-import { leerParametroNumerico } from './tarifasService';
-import { situacionPrueba } from '../utils/periodoPrueba';
-import { textoDia } from '../utils/fechaDia';
-
-export const mesesDePrueba = (): Promise<number> => leerParametroNumerico('MESES_PRUEBA_TRABAJADOR');
+import type { EstadoTrabajador, Prisma } from '@prisma/client';
 
 export const includeFerias = {
   orderBy: { fecha_inicio: 'desc' },
@@ -63,38 +61,12 @@ export const saludDelTrabajador = (estado: EstadoTrabajador, feria: FeriaResumen
   return { asignada: false, detalle: `Sin salud: trabajador ${estado}` };
 };
 
-export const formatearTrabajador = <T extends TrabajadorBase>(trabajador: T, meses: number, hoy: Date = new Date()) => {
+export const formatearTrabajador = <T extends TrabajadorBase>(trabajador: T) => {
   const abierta = trabajador.ferias.find((f) => f.fecha_fin === null) ?? null;
-  const prueba = situacionPrueba(trabajador.fecha_ingreso, meses, hoy);
 
   return {
     ...trabajador,
     feria_actual: abierta ? { ...abierta.feria, desde: abierta.fecha_inicio } : null,
     salud: saludDelTrabajador(trabajador.estado, abierta?.feria ?? null),
-    prueba: { ...prueba, meses },
   };
-};
-
-/**
- * HU-04, criterio 6: al inscribir como ahorrista a quien todavía está en
- * prueba se ADVIERTE, no se bloquea. La decisión es de la persona que atiende.
- */
-export const advertenciasParaAhorrista = async (
-  db: PrismaClient | Prisma.TransactionClient,
-  personaId: number
-): Promise<string[]> => {
-  const trabajadores = await db.socioTrabajador.findMany({
-    where: { persona_id: personaId, estado: { not: 'retirado' } },
-  });
-  if (trabajadores.length === 0) return [];
-
-  const meses = await mesesDePrueba();
-  return trabajadores
-    .map((t) => ({ t, prueba: situacionPrueba(t.fecha_ingreso, meses) }))
-    .filter(({ prueba }) => !prueba.cumplida)
-    .map(
-      ({ t, prueba }) =>
-        `Es trabajador (${t.codigo_trabajador}) y todavía no cumple los ${meses} meses de prueba: ` +
-        `termina el ${textoDia(prueba.fin_prueba).split('-').reverse().join('/')}.`
-    );
 };

@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { validarCedula } from '../utils/cedula';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
-import { advertenciasParaAhorrista, etiquetaFeria } from '../services/trabajadoresService';
+import { etiquetaFeria } from '../services/trabajadoresService';
 
 const prisma = new PrismaClient();
 
@@ -626,11 +626,8 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
       return { socio, vinculo };
     });
 
-    // Se avisa, no se bloquea: cédula de otra persona, o trabajador en prueba (HU-04)
-    const advertencias = [
-      ...(vinculo.conflicto ? [vinculo.conflicto] : []),
-      ...(vinculo.persona_id ? await advertenciasParaAhorrista(prisma, vinculo.persona_id) : []),
-    ];
+    // Se avisa, no se bloquea: la cédula ya es de otra persona
+    const advertencias = vinculo.conflicto ? [vinculo.conflicto] : [];
 
     logger.info(`Socio creado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
 

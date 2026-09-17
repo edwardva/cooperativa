@@ -798,7 +798,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
       cerrarWizard()
       await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
-      window.alert('Acuerdo de funeraria creado exitosamente')
+      const advertencias = (respuesta as { advertencias?: string[] }).advertencias ?? []
+      window.alert(['Acuerdo de funeraria creado exitosamente', ...advertencias].join('\n\n'))
     } catch (err) {
       setWizardError(getErrorMessage(err))
     } finally {
@@ -1434,6 +1435,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                       {acuerdo.estado === 'retirado' && acuerdo.fecha_retiro
                         ? formatearFecha(acuerdo.fecha_retiro)
                         : formatearFecha(acuerdo.fecha_inicio)}
+                      {acuerdo.estado !== 'retirado' && acuerdo.en_espera && acuerdo.fecha_fin_espera && (
+                        <span className="mt-1 block text-xs font-medium text-amber-700">
+                          En espera hasta {formatearFecha(acuerdo.fecha_fin_espera)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="relative inline-flex items-center justify-end">
@@ -2201,6 +2207,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Fecha de inicio</dt>
                     <dd className="mt-1 text-sm text-neutral-700">{formatearFecha(acuerdoDetalle.fecha_inicio)}</dd>
+                    {acuerdoDetalle.en_espera && acuerdoDetalle.fecha_fin_espera && (
+                      <dd className="mt-1 text-xs font-medium text-amber-700">
+                        En espera hasta {formatearFecha(acuerdoDetalle.fecha_fin_espera)}: todavía no se puede usar
+                      </dd>
+                    )}
                   </div>
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Semanas sin pago</dt>
@@ -2391,11 +2402,16 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="">Selecciona un parentesco...</option>
-              {sociosService.PARENTESCOS_BENEFICIARIO.map((parentesco) => (
+              {sociosService.PARENTESCOS_FUNERARIA.map((parentesco) => (
                 <option key={parentesco} value={parentesco}>
                   {parentesco}
                 </option>
               ))}
+              {/* Beneficiario cargado antes con un parentesco que la funeraria no cubre */}
+              {beneficiarioForm.parentesco &&
+                !(sociosService.PARENTESCOS_FUNERARIA as readonly string[]).includes(beneficiarioForm.parentesco) && (
+                  <option value={beneficiarioForm.parentesco}>{beneficiarioForm.parentesco} (no lo cubre la funeraria)</option>
+                )}
             </select>
           </label>
           <Input

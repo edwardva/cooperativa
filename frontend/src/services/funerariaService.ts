@@ -67,6 +67,9 @@ export interface AcuerdoDetalle {
   fecha_retiro?: string | null;
   motivo_retiro?: string | null;
   fecha_inicio: string;
+  /** Fin de los días de espera: antes no se puede usar la funeraria */
+  fecha_fin_espera?: string;
+  en_espera?: boolean;
   movimientos: MovimientoFuneraria[];
   created_at: string;
   updated_at: string;
@@ -78,6 +81,9 @@ export interface AcuerdoFuneraria {
   numero_contrato: string | null;
   estado: 'activo' | 'suspendido' | 'retirado';
   fecha_inicio: string;
+  /** Fin de los días de espera: antes no se puede usar la funeraria */
+  fecha_fin_espera?: string;
+  en_espera?: boolean;
   semanas_sin_pago: number;
   fecha_suspension?: string | null;
   fecha_retiro?: string | null;
@@ -231,6 +237,9 @@ export interface AcuerdoFunerariaPorSocio {
   semanas_sin_pago: number;
   fecha_suspension: string | null;
   fecha_inicio: string;
+  /** Fin de los días de espera: antes no se puede usar la funeraria */
+  fecha_fin_espera?: string;
+  en_espera?: boolean;
 }
 
 /**
@@ -384,6 +393,9 @@ export interface FichaAcuerdoFunerariaData {
   numero_acuerdo: string;
   numero_contrato?: string;
   fecha_inicio: string;
+  /** Fin de los días de espera: antes no se puede usar la funeraria */
+  fecha_fin_espera?: string;
+  en_espera?: boolean;
   socio: {
     codigo: string;
     cedula: string;

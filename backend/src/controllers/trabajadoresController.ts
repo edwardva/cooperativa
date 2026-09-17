@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { normalizarIdentificacion } from '../services/personasService';
-import { etiquetaFeria, formatearTrabajador, includeTrabajador, mesesDePrueba } from '../services/trabajadoresService';
+import { etiquetaFeria, formatearTrabajador, includeTrabajador } from '../services/trabajadoresService';
 import { datosPersona, personaSchema } from './personasController';
 import { bloquearTrabajador } from '../utils/bloqueos';
 import { fechaDia, hoyDia, textoDia } from '../utils/fechaDia';
@@ -99,7 +99,7 @@ const siguienteCodigo = async (tx: Prisma.TransactionClient): Promise<string> =>
 };
 
 const cargarDetalle = async (id: number) => {
-  const [trabajador, meses] = await Promise.all([
+  const [trabajador] = await Promise.all([
     prisma.socioTrabajador.findUnique({
       where: { id },
       include: {
@@ -114,19 +114,17 @@ const cargarDetalle = async (id: number) => {
         },
       },
     }),
-    mesesDePrueba(),
   ]);
   if (!trabajador) throw new NotFoundError('Trabajador no encontrado');
 
-  const formateado = formatearTrabajador(trabajador, meses);
+  const formateado = formatearTrabajador(trabajador);
   const expedientes = trabajador.persona.socios;
   return {
     ...formateado,
-    // HU-04: la ficha dice si ya puede inscribirse como ahorrista
+    // HU-04: expedientes de ahorrista de la misma persona
     ahorrista: {
       expedientes,
       tiene_expediente_activo: expedientes.some((s) => s.estado === 'activo'),
-      puede_inscribirse: formateado.prueba.cumplida,
     },
   };
 };
@@ -183,7 +181,7 @@ export const listarTrabajadores = async (req: Request, res: Response): Promise<v
       ];
     }
 
-    const [total, filas, meses] = await Promise.all([
+    const [total, filas] = await Promise.all([
       prisma.socioTrabajador.count({ where }),
       prisma.socioTrabajador.findMany({
         where,
@@ -192,12 +190,11 @@ export const listarTrabajadores = async (req: Request, res: Response): Promise<v
         skip: (page - 1) * limit,
         take: limit,
       }),
-      mesesDePrueba(),
     ]);
 
     res.json({
       success: true,
-      data: filas.map((t) => formatearTrabajador(t, meses)),
+      data: filas.map((t) => formatearTrabajador(t)),
       meta: { total, page, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -205,7 +202,7 @@ export const listarTrabajadores = async (req: Request, res: Response): Promise<v
   }
 };
 
-/** GET /api/trabajadores/:id — ficha con historial de ferias, prueba y expedientes ahorristas */
+/** GET /api/trabajadores/:id — ficha con historial de ferias y expedientes ahorristas */
 export const obtenerTrabajador = async (req: Request, res: Response): Promise<void> => {
   try {
     res.json({ success: true, data: await cargarDetalle(idDeRuta(req)) });

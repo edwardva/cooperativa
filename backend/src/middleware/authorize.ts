@@ -42,6 +42,10 @@ async function getRolPermisos(rolId: number): Promise<Record<string, string[]>> 
   return permisos
 }
 
+/** Para controles dentro de un controlador: ¿el rol tiene esta acción en el módulo? */
+export const tienePermiso = async (rolId: number, modulo: string, accion: string): Promise<boolean> =>
+  (await getRolPermisos(rolId))[modulo]?.includes(accion) ?? false
+
 /**
  * Middleware para verificar que el usuario tenga permiso para una acción en un módulo
  * 
