@@ -5,14 +5,15 @@
 
 import { Router } from 'express';
 import {
-  simularPrestamo,
+  aprobarPrestamo,
   crearPrestamo,
   listarPrestamos,
   obtenerPrestamo,
-  registrarAbono,
-  reversarAbono,
-  reporteCartera,
   prestamosPorSocio,
+  registrarAbono,
+  reporteCartera,
+  reversarAbono,
+  simularPrestamo,
 } from '../controllers/prestamosController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
@@ -61,6 +62,13 @@ router.get('/:id', authorize('prestamos', 'read'), obtenerPrestamo);
  * POST /api/prestamos/:id/abonos
  * Aplica el pago en orden mora -> interes -> capital
  */
+/**
+ * POST /api/prestamos/:id/aprobar
+ * La reunión de los martes aprueba y entrega el préstamo que el socio no cubre
+ * con su propio ahorro
+ */
+router.post('/:id/aprobar', authorize('prestamos', 'approve'), aprobarPrestamo);
+
 router.post('/:id/abonos', authorize('prestamos', 'update'), registrarAbono);
 
 /**
