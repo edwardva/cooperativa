@@ -26,7 +26,8 @@ const crearAcuerdoSchema = z.object({
   socio_id: z.number().int().positive(),
   tipo_acuerdo_id: z.number().int().positive(),
   beneficiario_id: z.number().int().positive().optional(),
-  numero_acuerdo: z.string().trim().min(1, 'El número de acuerdo es requerido').max(20),
+  // El número de acuerdo se asigna después de registrarlo: puede venir vacío
+  numero_acuerdo: z.preprocess((v) => (v === '' ? null : v), z.string().trim().max(20).optional().nullable()),
   numero_contrato: z.string().trim().max(20).optional(),
   fecha_inicio: z.string().datetime().optional(),
 });
@@ -723,9 +724,9 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
     }
 
     // Verificar que el número de acuerdo no esté en uso
-    const numeroAcuerdoExistente = await prisma.acuerdoFuneraria.findUnique({
-      where: { numero_acuerdo: data.numero_acuerdo },
-    });
+    const numeroAcuerdoExistente = data.numero_acuerdo
+      ? await prisma.acuerdoFuneraria.findUnique({ where: { numero_acuerdo: data.numero_acuerdo } })
+      : null;
 
     if (numeroAcuerdoExistente) {
       return res.status(409).json({
@@ -798,7 +799,7 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       data: {
         beneficiario_id: beneficiarioId,
         tipo_acuerdo_id: data.tipo_acuerdo_id,
-        numero_acuerdo: data.numero_acuerdo,
+        numero_acuerdo: data.numero_acuerdo ?? null,
         numero_contrato: data.numero_contrato,
         estado: 'activo',
         semanas_sin_pago: 0,

@@ -13,23 +13,30 @@ const prisma = new PrismaClient();
 // SCHEMAS DE VALIDACIÓN
 // ============================================
 
+/**
+ * La pantalla manda cadena vacía donde el socio no tiene el dato (sexo, fecha de
+ * nacimiento, correo...). Se guarda como NULO: antes el alta y la edición
+ * fallaban, la de sexo con "Datos inválidos" y la de fecha con un error 500.
+ */
+const vacioANulo = <T extends z.ZodTypeAny>(esquema: T) => z.preprocess((v) => (v === '' ? null : v), esquema);
+
 const crearSocioSchema = z.object({
   codigo_socio: z.string().min(1, 'Código de socio requerido').max(20),
   // El formato lo valida revisarCedula(): acepta 'V-12.345.678' y normaliza a dígitos
   cedula: z.string().min(1, 'Cédula requerida').max(20),
   nombre: z.string().min(2, 'Nombre debe tener al menos 2 caracteres').max(100),
   apellido: z.string().min(2, 'Apellido debe tener al menos 2 caracteres').max(100),
-  sexo: z.enum(['M', 'F']).optional().nullable(),
-  fecha_nacimiento: z.string().optional().nullable(),
-  direccion: z.string().max(500).optional().nullable(),
-  telefono: z.string().max(20).optional().nullable(),
-  email: z.string().email('Email inválido').max(100).optional().nullable().or(z.literal('')),
+  sexo: vacioANulo(z.enum(['M', 'F']).optional().nullable()),
+  fecha_nacimiento: vacioANulo(z.string().optional().nullable()),
+  direccion: vacioANulo(z.string().max(500).optional().nullable()),
+  telefono: vacioANulo(z.string().max(20).optional().nullable()),
+  email: vacioANulo(z.string().email('Email inválido').max(100).optional().nullable()),
   fecha_inscripcion: z.string(),
   ubicacion_id: z.number().int().positive().optional().nullable(),
-  autorizado_nombre: z.string().max(100).optional().nullable(),
-  autorizado_cedula: z.string().max(11).regex(/^\d*$/, 'Cédula solo debe contener números').optional().nullable().or(z.literal('')),
-  notas: z.string().optional().nullable(),
-  foto_url: z.string().max(255).optional().nullable(),
+  autorizado_nombre: vacioANulo(z.string().max(100).optional().nullable()),
+  autorizado_cedula: vacioANulo(z.string().max(11).regex(/^\d*$/, 'Cédula solo debe contener números').optional().nullable()),
+  notas: vacioANulo(z.string().optional().nullable()),
+  foto_url: vacioANulo(z.string().max(255).optional().nullable()),
   foto: z.string().optional(), // Base64 de la foto
   es_delegado: z.boolean().optional(),
 });
@@ -39,17 +46,17 @@ const actualizarSocioSchema = z.object({
   cedula: z.string().min(1).max(20).optional(),
   nombre: z.string().min(2).max(100).optional(),
   apellido: z.string().min(2).max(100).optional(),
-  sexo: z.enum(['M', 'F']).optional().nullable(),
-  fecha_nacimiento: z.string().optional().nullable(),
-  direccion: z.string().max(500).optional().nullable(),
-  telefono: z.string().max(20).optional().nullable(),
-  email: z.string().email('Email inválido').max(100).optional().nullable().or(z.literal('')),
+  sexo: vacioANulo(z.enum(['M', 'F']).optional().nullable()),
+  fecha_nacimiento: vacioANulo(z.string().optional().nullable()),
+  direccion: vacioANulo(z.string().max(500).optional().nullable()),
+  telefono: vacioANulo(z.string().max(20).optional().nullable()),
+  email: vacioANulo(z.string().email('Email inválido').max(100).optional().nullable()),
   fecha_inscripcion: z.string().optional(),
   ubicacion_id: z.number().int().positive().optional().nullable(),
-  autorizado_nombre: z.string().max(100).optional().nullable(),
-  autorizado_cedula: z.string().max(11).regex(/^\d*$/).optional().nullable().or(z.literal('')),
-  notas: z.string().optional().nullable(),
-  foto_url: z.string().max(255).optional().nullable(),
+  autorizado_nombre: vacioANulo(z.string().max(100).optional().nullable()),
+  autorizado_cedula: vacioANulo(z.string().max(11).regex(/^\d*$/, 'Cédula solo debe contener números').optional().nullable()),
+  notas: vacioANulo(z.string().optional().nullable()),
+  foto_url: vacioANulo(z.string().max(255).optional().nullable()),
   foto: z.string().optional(), // Base64 de la foto
   es_delegado: z.boolean().optional(),
   estado: z.enum(['activo', 'retirado', 'invalido']).optional(),

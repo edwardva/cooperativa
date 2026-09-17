@@ -161,7 +161,8 @@ export interface CrearAcuerdoData {
   socio_id: number;
   tipo_acuerdo_id: number;
   beneficiario_id?: number;
-  numero_acuerdo: string;
+  /** Se asigna después de registrarlo: puede ir vacío */
+  numero_acuerdo?: string;
   numero_contrato?: string;
   fecha_inicio?: string;
 }

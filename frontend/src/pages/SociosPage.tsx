@@ -583,7 +583,7 @@ export const SociosPage = () => {
     }
 
     if (!formData.ubicacion_id) {
-      setErrorFormulario('Debe seleccionar una feria/ubicacion.')
+      setErrorFormulario('Debe seleccionar la feria o el sector del socio.')
       return false
     }
 
@@ -1286,7 +1286,8 @@ export const SociosPage = () => {
                 <p className={tituloSeccionClass}>Control interno y autorizacion</p>
 
                 <label className={labelClass}>
-                  <span>Feria *</span>
+                  {/* La ubicación también sirve de sector: los trabajadores del Triunfo llevan el suyo */}
+                  <span>Feria o sector *</span>
                   <select
                     value={formData.ubicacion_id ?? ''}
                     onChange={(e) =>
@@ -1305,7 +1306,7 @@ export const SociosPage = () => {
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className={labelClass}>
-                    <span>Autorizado por</span>
+                    <span>Persona autorizada</span>
                     <input
                       value={formData.autorizado_nombre}
                       onChange={(e) => actualizarCampo('autorizado_nombre', e.target.value)}
@@ -1314,7 +1315,7 @@ export const SociosPage = () => {
                   </label>
 
                   <label className={labelClass}>
-                    <span>Cedula autorizado</span>
+                    <span>Cedula de la persona autorizada</span>
                     <input
                       value={formData.autorizado_cedula}
                       onChange={(e) => actualizarCampo('autorizado_cedula', e.target.value.replace(/\D/g, ''))}
