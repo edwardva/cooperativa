@@ -259,8 +259,8 @@ producción, y préstamos va antes que salud masiva porque ya está a medio cami
 
 Supuestos tomados mientras la cooperativa no confirme (sección 20):
 
-- **Prueba (pendiente 10):** meses de calendario, con el parámetro `MESES_PRUEBA_TRABAJADOR` (3 por defecto).
-- **Salud del trabajador (pendiente 11):** se **deriva**; no es una tabla. La tiene el trabajador activo con feria; el suspendido y el retirado no. Las tablas de pago son del Sprint B.
+- **Prueba (pendiente 10) · resuelto el 2026-09-16:** son 90 días, pero **no los controla el sistema**: la feria manda al trabajador a inscribirse como ahorrista. Se quitaron el aviso al inscribirlo, la columna de prueba y el parámetro `MESES_PRUEBA_TRABAJADOR` (2026-09-17).
+- **Salud del trabajador (pendiente 11) · confirmado el 2026-09-16:** se **deriva**; no es una tabla. La tiene el trabajador activo con feria; el suspendido y el retirado no. Si además es socio de El Triunfo, sigue pagando sus servicios como socio.
 - **Traslado:** la feria anterior cierra y la nueva abre el mismo día. El Sprint B tiene que decidir a qué feria le toca ese período.
 - **Reingreso:** quien vuelve a trabajar recibe un expediente nuevo; el retirado conserva su historial.
 
@@ -324,9 +324,19 @@ Supuestos, mientras la cooperativa no confirme:
   trabajadores: no es junta directiva ni asamblea, y **no se anota número de acta**.
 - Mora del préstamo: **aviso a los 21 días** sin pagar y **moroso a los 30**.
 - Anular un abono lo puede hacer **cualquier cajero**, explicando el motivo, con la
-  supervisión del compañero de al lado (hoy es un permiso que el cajero no tiene).
-- Pendiente de confirmar: si el ahorro del propio socio queda bloqueado como garantía, y
-  qué pasa con los fiadores cuando se anula el abono que había saldado el préstamo.
+  supervisión del compañero de al lado. ✅ 2026-09-17: el cajero reversa abonos y colectas
+  **del día**; los de días anteriores sólo la **caja 99** (acción `reversar_anterior`, rol
+  admin).
+- Al anular el abono que había saldado el préstamo, **no se vuelve a bloquear a los
+  fiadores**. ✅ 2026-09-17: el reverso reabre la deuda y los fiadores siguen liberados (antes
+  se rechazaba).
+- **Interés:** 1,5% mensual en línea blanca y 1% en efectivo, calculado **a diario sobre el
+  saldo**, con **cuotas cada 21 días** y fecha de corte. Hoy el sistema usa cuota fija semanal
+  con tasa anual: hay que rehacer el cálculo y el plan de pagos.
+- **Fiadores:** se liberan **de a poco** a medida que el socio paga, y dejan de contar cuando
+  lo que debe es igual o menor que su ahorro. Hoy se liberan sólo al saldar.
+- Pendiente de confirmar: cuánto se paga en cada corte, plazo por tipo, recargo por atraso,
+  qué pasa con los préstamos vigentes y en qué orden se libera a varios fiadores.
 
 - Estados `solicitado` y `aprobado`, flujo de aprobación que genera el plan al aprobar
   (RF-PRE-04), validación de ahorrista activo.
@@ -391,7 +401,9 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
 - Con **10 a 40 semanas** de deuda todavía puede pagarlas todas o abonar, **al precio de hoy**
   (que es como ya calcula la colecta).
 - Hoy revisan la lista a mano para ir retirando a los que pasaron las 41 semanas: primero el
-  **reporte**, y sólo después el proceso automático.
+  **reporte**, y sólo después el proceso automático. ✅ 2026-09-17: reporte **Socios por
+  semanas de atraso** (41 o más, 36 a 40, 11 a 35, 6 a 10, 1 a 5), exportable y por feria.
+  Toma la cobertura más reciente de salud y funeraria de cada socio y no cambia estados.
 - Pendiente de confirmar: qué pasa con el ahorro del socio que queda fuera.
 
 - Llevar el cálculo de atraso existente al nivel del expediente.
@@ -400,6 +412,26 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
 - Restricciones de operación para suspendidos, salvo las de regularización.
 - Reactivación con motivo, condiciones cumplidas e historial preservado.
 - Pantalla de morosidad por nivel de riesgo y próximos a suspensión.
+
+### Reglas de funeraria · confirmadas el 2026-09-16 (pendiente 9)
+
+- ✅ 2026-09-17: titular **hasta 60 años** (`EDAD_MAXIMA_TITULAR_FUNERARIA`). Sin fecha de
+  nacimiento se registra y avisa.
+- ✅ 2026-09-17: **60 días de espera** desde el inicio del acuerdo (`DIAS_ESPERA_FUNERARIA`),
+  a la vista en la lista y el detalle.
+- **Máximo 8 beneficiarios** sin contar al titular: ya existía.
+- ✅ 2026-09-17: parentescos que cubre la funeraria: padres, abuelos, hermanos, cónyuge,
+  hijos, hijos de crianza, padrastros, sobrinos, nietos, suegros y tíos. La pantalla de
+  funeraria sólo ofrece esos; salud sigue con la lista completa, porque los beneficiarios se
+  comparten.
+
+### ⚠️ Numeración de semanas (pendiente 6)
+
+La cooperativa numera de 1 a 52, sin semana 53, y los días de diciembre cuentan con la
+semana 1 de enero. El sistema usa semanas ISO, que en 2026 coinciden, pero se separan
+desde el **lunes 28/12/2026** (S53/2026 en el sistema, semana 1 de 2027 para ellos) y
+durante todo 2027. Falta confirmar con un cobro del legacy del 03/01/2022: semana 1 (ISO)
+o semana 2 (su regla).
 
 ### Sprint G · Permisos finos y cierre
 
