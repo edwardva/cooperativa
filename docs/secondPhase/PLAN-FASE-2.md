@@ -470,12 +470,15 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
 
 **Pendiente**
 
-- Llevar el cálculo de atraso existente al nivel del expediente.
-- Estado `suspendido` en el socio, `historial_estado_socio`, job de suspensión con la
-  regla de la semana 41 ya confirmada, idempotente (reejecución no duplica historial).
-- Restricciones de operación para suspendidos, salvo las de regularización.
-- Reactivación con motivo, condiciones cumplidas e historial preservado.
-- Pantalla de morosidad por nivel de riesgo y próximos a suspensión.
+- **Retiro de la semana 41**: espera saber si lo hace el sistema o una persona, y qué pasa
+  con el ahorro del socio que queda fuera.
+- **Si al cumplir los días sin pagar se vuelve a suspender** (pregunta 9 al cliente).
+- **Reactivación a mano** con motivo, para el caso que no resuelve el proceso automático.
+- **Restricciones de operación** para suspendidos, salvo las de regularización: falta definir
+  cuáles, porque hoy el suspendido sigue pudiendo pagar su colecta (que es lo que se busca).
+- **Pantalla de morosidad**: correr el proceso, ver la simulación y el historial. Conviene
+  diseñarla sabiendo lo del retiro de la 41.
+- **Reporte de socios suspendidos** (RF-REP-07): ahora que el estado existe, ya se puede.
 
 ### Reglas de funeraria · confirmadas el 2026-09-16 (pendiente 9)
 
