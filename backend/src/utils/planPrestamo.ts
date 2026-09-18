@@ -6,13 +6,14 @@
 // Reglas confirmadas por la cooperativa (2026-09-16/17), que reemplazan a la
 // cuota fija semanal del sistema francés:
 //
-//   - La CANTIDAD DE CUOTAS sale de una tabla por monto, igual para línea
-//     blanca y para efectivo. La cuota de capital es el monto entre las cuotas:
-//     es lo que dice la columna "pagos x cuota" de la tabla (120 en 5 cuotas de
-//     24; 1.000 en 24 cuotas de 41,67).
-//   - La INICIAL ("% de divisas en el fondo") se paga APARTE al llevarse el
-//     producto: con ahorro en divisas, que queda bloqueado, en bolívares, o
-//     mezclando las dos. No se descuenta de las cuotas.
+//   - La CANTIDAD DE CUOTAS sale de una tabla por monto, igual para todos los
+//     tipos (línea blanca, efectivo y gastos médicos).
+//   - La INICIAL ("% de divisas en el fondo") se paga al llevarse el producto:
+//     con ahorro en divisas, que queda bloqueado, en bolívares, o mezclando.
+//   - Las cuotas reparten el SALDO DEUDOR que queda después de la inicial
+//     (confirmado el 2026-09-18): con 1.000 hay 500 de inicial y los otros 500
+//     se pagan en 24 cuotas. La columna "pagos x cuota" de la tabla, que dividía
+//     el monto completo, no es la que se usa.
 //   - El INTERÉS es mensual por tipo de préstamo (1,5% línea blanca, 1%
 //     efectivo) y se calcula DIARIO sobre el saldo que se debe, así que pagar
 //     antes abarata el préstamo y pagar tarde lo encarece.
@@ -64,15 +65,15 @@ export interface CondicionesPrestamo {
   cuotas: number;
   /** Capital de cada cuota; la última absorbe el redondeo */
   cuota_capital_usd: number;
-  /** Se paga al llevarse el producto, aparte de las cuotas */
+  /** Se paga al llevarse el producto */
   inicial_usd: number;
-  /** Lo que se paga en cuotas: el monto completo */
+  /** Saldo deudor que se paga en cuotas: el monto menos la inicial */
   financiado_usd: number;
 }
 
 /**
- * Condiciones de un monto: cuántas cuotas, de cuánto es cada una y cuánto se
- * paga de inicial. Las cuotas reparten el monto completo; la inicial es aparte.
+ * Condiciones de un monto: cuántas cuotas, cuánto de inicial y de cuánto es
+ * cada cuota. Las cuotas reparten lo que queda después de la inicial.
  */
 export const condicionesDelMonto = (montoUsd: number): CondicionesPrestamo => {
   const tramo = tramoDelMonto(montoUsd);
@@ -81,12 +82,14 @@ export const condicionesDelMonto = (montoUsd: number): CondicionesPrestamo => {
     const mayor = TABLA_PRESTAMOS[TABLA_PRESTAMOS.length - 1]!;
     throw new Error(`El monto $${montoUsd} está fuera de la tabla: va de $${menor.desde} a $${mayor.hasta}`);
   }
+  const inicial = redondear((montoUsd * tramo.inicial_porcentaje) / 100);
+  const financiado = redondear(montoUsd - inicial);
   return {
     tramo,
     cuotas: tramo.cuotas,
-    cuota_capital_usd: redondear(montoUsd / tramo.cuotas),
-    inicial_usd: redondear((montoUsd * tramo.inicial_porcentaje) / 100),
-    financiado_usd: redondear(montoUsd),
+    cuota_capital_usd: redondear(financiado / tramo.cuotas),
+    inicial_usd: inicial,
+    financiado_usd: financiado,
   };
 };
 

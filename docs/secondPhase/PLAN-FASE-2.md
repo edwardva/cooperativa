@@ -368,6 +368,20 @@ Supuestos, mientras la cooperativa no confirme:
   Falta que la cooperativa lo confirme con el ejemplo de 1.000 (500 de inicial más 24 cuotas
   de 41,67).
 
+**Confirmado y hecho el 2026-09-18 (segunda ronda)**
+
+- ✅ **Inicial:** las cuotas reparten el **saldo deudor después de la inicial** (1.000 son 500
+  de inicial y 500 en 24 cuotas). Lo programado antes, que dividía el monto completo, estaba
+  mal; en producción no había préstamos, así que no afectó a nadie.
+- ✅ **Fiadores de a uno**, en el orden que se elige al otorgar el préstamo. Cubren la parte
+  del saldo que no cubre el ahorro que le queda al socio después de la inicial.
+- ✅ **Hasta un préstamo abierto por tipo** (línea blanca, efectivo, gastos médicos).
+- ✅ Al saldar se devuelve el ahorro propio bloqueado (antes quedaba bloqueado).
+- **Tipos en uso:** línea blanca 1,5%, efectivo 1% y gastos médicos 1%, todos mensuales con
+  cálculo diario. En producción se corrigieron línea blanca y efectivo; falta gastos médicos
+  y decidir si se desactivan los demás tipos.
+- **Atraso:** sin recargo; los días de atraso se pagan como interés al ponerse al día.
+
 **Hecho el 2026-09-17 y 18**
 
 - ✅ Motor de cálculo (`utils/planPrestamo.ts`): tabla de tramos, cuotas cada 21 días,
@@ -468,14 +482,29 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
 - ✅ Socios muestra el estado suspendido y permite filtrarlo. La colecta no filtra por estado,
   así que un socio suspendido sigue pudiendo pagar.
 
+**Confirmado y hecho el 2026-09-18 (segunda ronda)**
+
+- ✅ **Semana 41: retiro automático** por el artículo 5, literal c del estatuto ("pasividad
+  mayor a seis meses"). El socio queda retirado con una nota, pierde sus acuerdos de salud y
+  funeraria (motivo "Art. 5") y el expediente queda guardado; si vuelve, entra con número
+  nuevo y sin vínculo.
+- ✅ **Reporte "Retiros por pasividad (semana 41)"** para archivar como soporte: fecha,
+  socio, semanas, ahorro por devolver, hasta cuándo puede retirarlo (un año) y si debe un
+  préstamo, que se lleva a la reunión de delegados.
+- ✅ **Desde y hasta** de cada suspensión, visibles en Socios.
+- ✅ Cumplidos los días sin pagar, **sigue suspendido de corrido**; al llegar a la semana 11 la
+  suspensión pasa a un mes.
+- Durante la suspensión el socio **puede pagar** su colecta; lo que no puede es recibir los
+  servicios.
+
 **Pendiente**
 
-- Llevar el cálculo de atraso existente al nivel del expediente.
-- Estado `suspendido` en el socio, `historial_estado_socio`, job de suspensión con la
-  regla de la semana 41 ya confirmada, idempotente (reejecución no duplica historial).
-- Restricciones de operación para suspendidos, salvo las de regularización.
-- Reactivación con motivo, condiciones cumplidas e historial preservado.
-- Pantalla de morosidad por nivel de riesgo y próximos a suspensión.
+- **Reactivación a mano** con motivo, para el caso que no resuelve el proceso automático.
+- **Restricciones de operación** para suspendidos, salvo las de regularización: falta definir
+  cuáles, porque hoy el suspendido sigue pudiendo pagar su colecta (que es lo que se busca).
+- **Pantalla de morosidad**: correr el proceso, ver la simulación y el historial. Conviene
+  diseñarla sabiendo lo del retiro de la 41.
+- **Reporte de socios suspendidos** (RF-REP-07): ahora que el estado existe, ya se puede.
 
 ### Reglas de funeraria · confirmadas el 2026-09-16 (pendiente 9)
 

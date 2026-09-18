@@ -51,7 +51,8 @@ interface Socio {
   email: string | null
   fecha_inscripcion: string
   estado: 'activo' | 'suspendido' | 'retirado' | 'invalido'
-  /** Hasta cuando corren los dias de suspension por atraso */
+  /** Desde y hasta cuando corren los dias de suspension por atraso */
+  suspendido_desde?: string | null
   suspendido_hasta?: string | null
   es_delegado: boolean
   ubicacion_id: number | null
@@ -906,7 +907,16 @@ export const SociosPage = () => {
                         <td className="px-4 py-3">
                           <p className="font-medium text-neutral-800">{formatearFecha(socio.fecha_inscripcion)}</p>
                         </td>
-                        <td className="px-4 py-3">{getEstadoBadge(socio.estado)}</td>
+                        <td className="px-4 py-3">
+                          {getEstadoBadge(socio.estado)}
+                          {/* Confirmado: se muestra desde y hasta cuando esta suspendido */}
+                          {socio.estado === 'suspendido' && socio.suspendido_hasta && (
+                            <p className="mt-1 whitespace-nowrap text-xs text-amber-700">
+                              {socio.suspendido_desde ? `${formatearFecha(socio.suspendido_desde)} al ` : 'hasta '}
+                              {formatearFecha(socio.suspendido_hasta)}
+                            </p>
+                          )}
+                        </td>
                         <td className="px-2 py-3">
                           <div className="relative flex items-center justify-end">
                             <button
@@ -1128,7 +1138,10 @@ export const SociosPage = () => {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className={labelClass}>
                     <span>Expediente *</span>
+                    {/* El cursor arranca aquí: sin esto quedaba en el botón "Nuevo socio" de
+                        atrás, y el primer Enter lo volvía a apretar en vez de pasar de campo */}
                     <input
+                      autoFocus
                       value={formData.codigo_socio}
                       onChange={(e) => actualizarCampo('codigo_socio', e.target.value)}
                       className={controlClass}

@@ -29,21 +29,19 @@ describe('tabla de préstamos', () => {
     expect(() => condicionesDelMonto(2500)).toThrow(/fuera de la tabla/);
   });
 
-  it('el pago por cuota del tope de cada tramo es el de la tabla', () => {
-    const esperado: Record<number, number> = {
-      25: 25, 50: 25, 120: 24, 220: 36.67, 320: 40, 420: 42,
-      520: 40, 620: 41.33, 720: 40, 1000: 41.67, 2000: 66.67,
-    };
-    for (const tramo of TABLA_PRESTAMOS) {
-      expect(condicionesDelMonto(tramo.hasta).cuota_capital_usd).toBe(esperado[tramo.hasta]);
-    }
+  it('las cuotas reparten el saldo que queda después de la inicial', () => {
+    // Confirmado: 1.000 son 500 de inicial y 500 en 24 cuotas
+    const mil = condicionesDelMonto(1000);
+    expect([mil.inicial_usd, mil.financiado_usd, mil.cuotas, mil.cuota_capital_usd]).toEqual([500, 500, 24, 20.83]);
+    const ciento = condicionesDelMonto(120);
+    expect([ciento.inicial_usd, ciento.financiado_usd, ciento.cuotas, ciento.cuota_capital_usd]).toEqual([24, 96, 5, 19.2]);
   });
 
-  it('la inicial es el porcentaje del tramo y va aparte de las cuotas', () => {
-    const mil = condicionesDelMonto(1000);
-    expect([mil.inicial_usd, mil.cuotas, mil.financiado_usd]).toEqual([500, 24, 1000]);
-    const ciento = condicionesDelMonto(120);
-    expect([ciento.inicial_usd, ciento.cuotas]).toEqual([24, 5]);
+  it('en todos los tramos inicial más saldo es el monto', () => {
+    for (const tramo of TABLA_PRESTAMOS) {
+      const c = condicionesDelMonto(tramo.hasta);
+      expect(Math.round((c.inicial_usd + c.financiado_usd) * 100) / 100).toBe(tramo.hasta);
+    }
   });
 });
 
