@@ -453,6 +453,23 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
   Toma la cobertura más reciente de salud y funeraria de cada socio y no cambia estados.
 - Pendiente de confirmar: qué pasa con el ahorro del socio que queda fuera.
 
+**Hecho el 2026-09-18**
+
+- ✅ El cálculo de atraso vive en `services/atrasoSociosService.ts` y lo usan el reporte y el
+  proceso, así que los dos dicen el mismo número.
+- ✅ Migración `20260919000000_morosidad_socio`: estado `suspendido` del socio,
+  `suspendido_hasta` y la tabla `historial_estado_socio` (DB-017).
+- ✅ `POST /api/morosidad/revisar`: **simula por defecto** y con `{ aplicar: true }` suspende,
+  reactiva y deja historial. Suspende 3 días al caer en la semana 6 y un mes al caer en la 11;
+  los días corren aunque el socio pague antes; reactiva al que se puso al día y ya los cumplió.
+  Correrlo dos veces no duplica nada.
+- ✅ La semana 41 **sólo se informa**: el retiro espera a que la cooperativa confirme si lo
+  hace el sistema o una persona, que es como lo hacen hoy.
+- ✅ Socios muestra el estado suspendido y permite filtrarlo. La colecta no filtra por estado,
+  así que un socio suspendido sigue pudiendo pagar.
+
+**Pendiente**
+
 - Llevar el cálculo de atraso existente al nivel del expediente.
 - Estado `suspendido` en el socio, `historial_estado_socio`, job de suspensión con la
   regla de la semana 41 ya confirmada, idempotente (reejecución no duplica historial).

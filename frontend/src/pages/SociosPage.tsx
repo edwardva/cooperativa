@@ -50,7 +50,9 @@ interface Socio {
   telefono: string | null
   email: string | null
   fecha_inscripcion: string
-  estado: 'activo' | 'retirado' | 'invalido'
+  estado: 'activo' | 'suspendido' | 'retirado' | 'invalido'
+  /** Hasta cuando corren los dias de suspension por atraso */
+  suspendido_hasta?: string | null
   es_delegado: boolean
   ubicacion_id: number | null
   autorizado_nombre: string | null
@@ -399,6 +401,12 @@ export const SociosPage = () => {
         icon: CheckCircle2,
         cls: 'bg-emerald-50 text-emerald-700 border-emerald-200',
         txt: 'Activo',
+      },
+      // Por atraso: los dias de suspension corren aunque pague antes
+      suspendido: {
+        icon: AlertCircle,
+        cls: 'bg-amber-50 text-amber-700 border-amber-200',
+        txt: 'Suspendido',
       },
       retirado: {
         icon: UserX,
@@ -772,6 +780,7 @@ export const SociosPage = () => {
                 >
                   <option value="">Todos los estados</option>
                   <option value="activo">Activo</option>
+                  <option value="suspendido">Suspendido</option>
                   <option value="retirado">Retirado</option>
                   <option value="invalido">Inválido</option>
                 </select>
