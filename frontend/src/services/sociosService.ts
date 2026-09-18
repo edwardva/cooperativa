@@ -21,7 +21,8 @@ export interface Socio {
   email: string | null
   fecha_inscripcion: string
   estado: 'activo' | 'suspendido' | 'retirado' | 'invalido'
-  /** Hasta cuando corren los dias de suspension por atraso */
+  /** Desde y hasta cuando corren los dias de suspension por atraso */
+  suspendido_desde?: string | null
   suspendido_hasta?: string | null
   es_delegado: boolean
   ubicacion_id: number | null

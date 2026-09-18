@@ -138,6 +138,17 @@ const REPORTES: Definicion[] = [
     inicial: {},
   },
   {
+    clave: 'retiros-semana-41',
+    titulo: 'Retiros por pasividad (semana 41)',
+    descripcion: 'Socios que el sistema retiro por el articulo 5, literal c, con el ahorro por devolver y si deben un prestamo. Para archivar como soporte.',
+    icono: ListChecks,
+    campos: [
+      { nombre: 'desde', etiqueta: 'Retirados desde', tipo: 'fecha' },
+      { nombre: 'hasta', etiqueta: 'Retirados hasta', tipo: 'fecha' },
+    ],
+    inicial: { desde: inicioMes, hasta: hoyISO },
+  },
+  {
     clave: 'colectas',
     titulo: 'Colectas',
     descripcion: 'Colectas por fecha, socio o semana cobrada, con totales y reversos.',

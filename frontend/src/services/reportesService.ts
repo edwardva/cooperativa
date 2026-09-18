@@ -18,6 +18,7 @@ export type ClaveReporte =
   | 'colectas'
   | 'atraso-socios'
   | 'conversion-prestamos'
+  | 'retiros-semana-41'
 
 export type Celda = string | number | null
 

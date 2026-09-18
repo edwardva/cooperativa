@@ -76,7 +76,8 @@ model Socio {
   email             String?     @db.VarChar(100)
   fecha_inscripcion DateTime    @db.Date
   estado            EstadoSocio @default(activo)
-  /// Hasta cuándo corren los días de suspensión; se cumplen aunque pague antes
+  /// Desde y hasta cuándo corren los días de suspensión; se cumplen aunque pague antes
+  suspendido_desde  DateTime?   @db.Date
   suspendido_hasta  DateTime?   @db.Date
   es_delegado       Boolean     @default(false)
   // OBSOLETO desde la fase 2: no se lee ni se actualiza. Si el socio también es

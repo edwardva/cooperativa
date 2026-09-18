@@ -13,6 +13,7 @@ import { BadRequestError } from '../middleware/errorHandler';
 import { carteraPrestamos, VISTAS_CARTERA } from './carteraService';
 import { conversionDePrestamos } from './conversionPrestamosService';
 import { atrasoPorSocio, NIVELES_ATRASO, nivelDeAtraso } from './atrasoSociosService';
+import { DIAS_PARA_RETIRAR_AHORRO, MOTIVO_RETIRO } from './morosidadService';
 import { redondear } from './cobroSemanalService';
 import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
 import { etiquetaFeria } from './trabajadoresService';
@@ -32,6 +33,7 @@ export const REPORTES = {
   colectas: 'Colectas',
   'atraso-socios': 'Socios por semanas de atraso',
   'conversion-prestamos': 'Préstamos vigentes con el cálculo nuevo',
+  'retiros-semana-41': 'Retiros por pasividad (semana 41)',
 } as const;
 
 export type ClaveReporte = keyof typeof REPORTES;
@@ -573,6 +575,77 @@ const conversionPrestamos = async (): Promise<Reporte> => {
   };
 };
 
+// Retiros por pasividad: soporte para archivar (Sprint F)
+// ============================================
+//
+// Confirmado: en la semana 41 el sistema retira solo al socio, pero la
+// cooperativa quiere un reporte de esos retiros para archivar como soporte. Sale
+// del historial de estados, que guarda cada retiro con su fecha y motivo.
+
+const retirosSemana41 = async (p: Parametros): Promise<Reporte> => {
+  const rango = rangoLocal(p);
+  const historial = await prisma.historialEstadoSocio.findMany({
+    where: {
+      estado_nuevo: 'retirado',
+      motivo: { startsWith: MOTIVO_RETIRO },
+      fecha: { gte: rango.desde, lte: rango.hasta },
+    },
+    include: {
+      socio: {
+        select: {
+          id: true, codigo_socio: true, nombre: true, apellido: true, cedula: true, telefono: true,
+          ubicacion: { select: { codigo: true, nombre: true, direccion: true } },
+          cuentas_ahorro: { select: { saldo_usd: true } },
+          prestamos: { where: { estado: { in: ['solicitado', 'aprobado', 'activo', 'moroso'] } }, select: { numero_prestamo: true } },
+        },
+      },
+    },
+    orderBy: { fecha: 'asc' },
+  });
+  acotar(historial.length);
+
+  const filas = historial.map((h) => {
+    const ahorro = redondear(h.socio.cuentas_ahorro.reduce((a, c) => a + Number(c.saldo_usd), 0));
+    const limite = new Date(h.fecha.getTime() + DIAS_PARA_RETIRAR_AHORRO * 86_400_000);
+    const prestamos = h.socio.prestamos.map((x) => x.numero_prestamo);
+    return {
+      fecha: h.fecha,
+      socio: h.socio,
+      semanas: h.semanas_atraso,
+      ahorro,
+      limite,
+      prestamos,
+    };
+  });
+
+  return {
+    clave: 'retiros-semana-41',
+    titulo: REPORTES['retiros-semana-41'],
+    subtitulo: `${rango.texto} · motivo: ${MOTIVO_RETIRO}`,
+    columnas: [
+      'Fecha de retiro', 'Expediente', 'Socio', 'Cédula', 'Teléfono', 'Feria', 'Semanas sin pagar',
+      'Ahorro USD', 'Puede retirar su ahorro hasta', 'Préstamos abiertos',
+    ],
+    filas: filas.map((f) => [
+      diaLocal(f.fecha),
+      f.socio.codigo_socio,
+      `${f.socio.apellido}, ${f.socio.nombre}`,
+      f.socio.cedula,
+      f.socio.telefono ?? '',
+      f.socio.ubicacion ? etiquetaFeria(f.socio.ubicacion) : '',
+      f.semanas ?? '',
+      f.ahorro,
+      f.ahorro > 0 ? diaLocal(f.limite) : '',
+      f.prestamos.length ? `${f.prestamos.join(', ')}: llevar a la reunión de delegados` : '',
+    ]),
+    totales: [
+      { etiqueta: 'Socios retirados', valor: filas.length },
+      { etiqueta: 'Ahorro por devolver USD', valor: redondear(filas.reduce((a, f) => a + f.ahorro, 0)) },
+      { etiqueta: 'Con préstamo abierto', valor: filas.filter((f) => f.prestamos.length > 0).length },
+    ],
+  };
+};
+
 // ============================================
 
 const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
@@ -584,6 +657,7 @@ const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   colectas,
   'atraso-socios': atrasoSocios,
   'conversion-prestamos': conversionPrestamos,
+  'retiros-semana-41': retirosSemana41,
 };
 
 export const esClaveReporte = (clave: string): clave is ClaveReporte => clave in GENERADORES;
