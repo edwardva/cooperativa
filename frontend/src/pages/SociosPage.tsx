@@ -1138,7 +1138,10 @@ export const SociosPage = () => {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className={labelClass}>
                     <span>Expediente *</span>
+                    {/* El cursor arranca aquí: sin esto quedaba en el botón "Nuevo socio" de
+                        atrás, y el primer Enter lo volvía a apretar en vez de pasar de campo */}
                     <input
+                      autoFocus
                       value={formData.codigo_socio}
                       onChange={(e) => actualizarCampo('codigo_socio', e.target.value)}
                       className={controlClass}
