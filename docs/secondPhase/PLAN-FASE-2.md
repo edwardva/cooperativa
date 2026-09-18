@@ -361,8 +361,29 @@ Supuestos, mientras la cooperativa no confirme:
 - **Préstamos vigentes:** pasan al cálculo nuevo.
 - **Fiadores:** hoy el sistema viejo libera a todos por partes iguales con cada pago. La
   cooperativa no decidió si sigue así o se libera de a uno: **pendiente**.
-- **Pendiente:** qué significa exactamente la columna "% de divisas en el fondo": si es el
-  ahorro propio que el socio debe tener, o una inicial que paga al recibir el préstamo.
+- **Inicial · resuelto el 2026-09-18:** la columna "% de divisas en el fondo" es la **inicial
+  que se paga al llevarse el producto**, con ahorro en divisas (que queda bloqueado), en
+  bolívares, o mezclando. Las cuotas reparten el monto completo, así que la inicial va
+  **aparte**: es la única lectura que cuadra con la columna "pagos x cuota" de la tabla.
+  Falta que la cooperativa lo confirme con el ejemplo de 1.000 (500 de inicial más 24 cuotas
+  de 41,67).
+
+**Hecho el 2026-09-17 y 18**
+
+- ✅ Motor de cálculo (`utils/planPrestamo.ts`): tabla de tramos, cuotas cada 21 días,
+  interés mensual por día sobre el saldo y los umbrales de aviso (21) y mora (30).
+- ✅ Migración `20260918000000_prestamos_calculo_nuevo`: cuotas, días por cuota, tasa
+  mensual, inicial, estados `solicitado` y `aprobado`. Lo ya otorgado conserva su plan.
+- ✅ Alta: el socio que cubre el monto con su ahorro se lleva el préstamo directo; el que no,
+  queda **en solicitud** con fiadores por la diferencia. `POST /prestamos/:id/aprobar` es la
+  reunión de los martes: cobra la inicial, bloquea los ahorros y arma el plan.
+- ✅ Interés al día al consultar y antes de cada abono; sin recargo por atraso.
+- ✅ Pantalla: simulación con cuotas e inicial, pestaña "En solicitud" y panel de aprobación.
+- ✅ **Informe de conversión** (reporte `conversion-prestamos`): cómo quedaría cada préstamo
+  vigente con el cálculo nuevo, con la diferencia contra lo que dice hoy el sistema. No
+  cambia nada: es para revisarlo con la cooperativa antes de convertir.
+- **Pendiente:** aplicar la conversión una vez revisado el informe, y el orden en que se
+  libera a varios fiadores (lo define el equipo de ahorro).
 
 - Estados `solicitado` y `aprobado`, flujo de aprobación que genera el plan al aprobar
   (RF-PRE-04), validación de ahorrista activo.

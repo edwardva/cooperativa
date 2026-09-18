@@ -17,6 +17,7 @@ export type ClaveReporte =
   | 'semanas-adelantadas'
   | 'colectas'
   | 'atraso-socios'
+  | 'conversion-prestamos'
 
 export type Celda = string | number | null
 

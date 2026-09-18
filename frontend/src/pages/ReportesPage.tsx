@@ -87,6 +87,7 @@ const REPORTES: Definicion[] = [
     campos: [{
       nombre: 'vista', etiqueta: 'Cartera', tipo: 'select',
       opciones: [
+        { valor: 'solicitudes', texto: 'En solicitud' },
         { valor: 'por_cobrar', texto: 'Por cobrar' },
         { valor: 'morosos', texto: 'Morosos (vencidos)' },
         { valor: 'cobrados', texto: 'Cobrados' },
@@ -127,6 +128,14 @@ const REPORTES: Definicion[] = [
       { nombre: 'feria_id', etiqueta: 'Feria', tipo: 'feria' },
     ],
     inicial: { nivel: '41' },
+  },
+  {
+    clave: 'conversion-prestamos',
+    titulo: 'Prestamos vigentes con el calculo nuevo',
+    descripcion: 'Como quedaria cada prestamo ya otorgado con el interes diario y las cuotas de la tabla. Solo informa: no cambia nada.',
+    icono: DollarSign,
+    campos: [],
+    inicial: {},
   },
   {
     clave: 'colectas',

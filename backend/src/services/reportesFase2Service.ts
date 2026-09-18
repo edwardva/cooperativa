@@ -11,6 +11,7 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { BadRequestError } from '../middleware/errorHandler';
 import { carteraPrestamos, VISTAS_CARTERA } from './carteraService';
+import { conversionDePrestamos } from './conversionPrestamosService';
 import { redondear } from './cobroSemanalService';
 import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
 import { etiquetaFeria } from './trabajadoresService';
@@ -30,6 +31,7 @@ export const REPORTES = {
   'semanas-adelantadas': 'Semanas pagadas por adelantado',
   colectas: 'Colectas',
   'atraso-socios': 'Socios por semanas de atraso',
+  'conversion-prestamos': 'Préstamos vigentes con el cálculo nuevo',
 } as const;
 
 export type ClaveReporte = keyof typeof REPORTES;
@@ -567,6 +569,52 @@ const atrasoSocios = async (p: Parametros): Promise<Reporte> => {
   };
 };
 
+// Conversión de los préstamos vigentes (Sprint C)
+// ============================================
+//
+// La cooperativa pidió pasar los préstamos que ya están dados al cálculo nuevo.
+// Eso cambia saldos, así que esto es la lista para revisar ANTES de convertir:
+// el reporte no cambia ningún préstamo.
+
+const conversionPrestamos = async (): Promise<Reporte> => {
+  const r = await conversionDePrestamos(prisma);
+  acotar(r.filas.length);
+  return {
+    clave: 'conversion-prestamos',
+    titulo: REPORTES['conversion-prestamos'],
+    subtitulo:
+      `Comparación al ${diaBD(r.hasta)} · ${r.totales.prestamos} préstamo(s) con el cálculo anterior · ` +
+      'informativo: no cambia nada',
+    columnas: [
+      'Préstamo', 'Expediente', 'Socio', 'Tipo', 'Otorgado USD', 'Desembolso', 'Abonado USD',
+      'Deuda hoy USD', 'Deuda con el cálculo nuevo USD', 'Diferencia USD', 'Cuotas hoy', 'Cuotas nuevas', 'Observación',
+    ],
+    filas: r.filas.map((f) => [
+      f.numero_prestamo,
+      f.codigo_socio,
+      f.socio,
+      f.tipo,
+      f.monto_original_usd,
+      diaBD(f.fecha_desembolso),
+      f.abonado_usd,
+      f.deuda_actual_usd,
+      f.deuda_nueva_usd,
+      f.diferencia_usd,
+      f.cuotas_actuales,
+      f.cuotas_nuevas ?? 'fuera de la tabla',
+      f.observacion,
+    ]),
+    totales: [
+      { etiqueta: 'Préstamos', valor: r.totales.prestamos },
+      { etiqueta: 'Deuda hoy USD', valor: r.totales.deuda_actual_usd },
+      { etiqueta: 'Deuda con el cálculo nuevo USD', valor: r.totales.deuda_nueva_usd },
+      { etiqueta: 'Diferencia USD', valor: r.totales.diferencia_usd },
+      { etiqueta: 'Quedan debiendo menos', valor: r.totales.bajan },
+      { etiqueta: 'Quedan debiendo más', valor: r.totales.suben },
+    ],
+  };
+};
+
 // ============================================
 
 const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
@@ -577,6 +625,7 @@ const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   'semanas-adelantadas': semanasAdelantadas,
   colectas,
   'atraso-socios': atrasoSocios,
+  'conversion-prestamos': conversionPrestamos,
 };
 
 export const esClaveReporte = (clave: string): clave is ClaveReporte => clave in GENERADORES;

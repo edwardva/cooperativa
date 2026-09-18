@@ -15,7 +15,12 @@ import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../middleware/errorHandler';
 import { exigirPermisoSiEsDeDiaAnterior } from '../utils/reversoDelDia';
-import { generarPlanPagos, calcularMora, distribuirAbono } from '../utils/amortizacion';
+// `calcularMora` sólo se usa con los préstamos anteriores al cálculo nuevo
+import { calcularMora, distribuirAbono } from '../utils/amortizacion';
+import { ponerInteresAlDia, usaInteresDiario } from '../services/interesPrestamoService';
+import { ahorroLibre, bloquearAhorro } from '../services/garantiaPrestamoService';
+import { condicionesDelMonto, DIAS_POR_CUOTA, planDeCuotas, situacionDeAtraso } from '../utils/planPrestamo';
+import { fechaDia, hoyDia } from '../utils/fechaDia';
 import { resolverTasa } from '../services/tasaCambioService';
 import { carteraPrestamos } from '../services/carteraService';
 import { registrarAuditoria } from '../services/auditoriaService';
@@ -34,7 +39,8 @@ const prisma = new PrismaClient();
 const simularSchema = z.object({
   tipo_prestamo_id: z.coerce.number().int().positive(),
   monto_usd: z.coerce.number().positive('El monto debe ser mayor a cero'),
-  plazo_semanas: z.coerce.number().int().min(1).max(520),
+  // El plazo sale de la tabla por monto: se acepta por compatibilidad y se ignora
+  plazo_semanas: z.coerce.number().int().min(1).max(520).optional(),
   fecha_desembolso: z.string().optional(),
 });
 
@@ -47,9 +53,23 @@ const crearPrestamoSchema = z.object({
   socio_id: z.number().int().positive(),
   tipo_prestamo_id: z.number().int().positive(),
   monto_usd: z.number().positive('El monto debe ser mayor a cero'),
-  plazo_semanas: z.number().int().min(1).max(520),
-  fecha_desembolso: z.string().min(1, 'Indique la fecha de desembolso'),
+  // Las cuotas salen de la tabla por monto: el plazo ya no se elige
+  plazo_semanas: z.number().int().min(1).max(520).optional(),
+  fecha_desembolso: z.string().min(1, 'Indique la fecha de entrega'),
   fiadores: z.array(fiadorSchema).optional().default([]),
+  // Inicial que se paga al llevarse el producto: con ahorro, en bolívares o mezclando
+  inicial_ahorro_usd: z.number().min(0).optional().default(0),
+  inicial_efectivo_usd: z.number().min(0).optional().default(0),
+  inicial_efectivo_bs: z.number().min(0).optional().default(0),
+  observaciones: z.string().trim().max(500).optional().nullable(),
+});
+
+const aprobarPrestamoSchema = z.object({
+  fecha_entrega: z.string().min(1, 'Indique la fecha de entrega'),
+  inicial_ahorro_usd: z.number().min(0).optional().default(0),
+  inicial_efectivo_usd: z.number().min(0).optional().default(0),
+  inicial_efectivo_bs: z.number().min(0).optional().default(0),
+  observaciones: z.string().trim().max(500).optional().nullable(),
 });
 
 const abonoSchema = z.object({
@@ -109,8 +129,12 @@ async function generarNumeroPrestamo(): Promise<string> {
 }
 
 /**
- * Recalcula la mora de un préstamo según las cuotas vencidas impagas y
- * marca como `vencida` a las que corresponda.
+ * Pone al día la situación del préstamo: marca las cuotas vencidas y, en los
+ * préstamos anteriores al cálculo nuevo, recalcula la mora.
+ *
+ * Con el cálculo confirmado por la cooperativa NO hay recargo por atraso: el
+ * interés ya corre por día sobre el saldo, a los 21 días de la cuota más vieja
+ * impaga el socio recibe un aviso y a los 30 queda moroso.
  */
 async function actualizarMoraYCuotas(prestamoId: number): Promise<number> {
   const prestamo = await prisma.prestamo.findUnique({
@@ -128,6 +152,24 @@ async function actualizarMoraYCuotas(prestamoId: number): Promise<number> {
   const porMarcar = vencidas.filter((c) => c.estado === 'pendiente').map((c) => c.id);
   if (porMarcar.length > 0) {
     await prisma.planPago.updateMany({ where: { id: { in: porMarcar } }, data: { estado: 'vencida' } });
+  }
+
+  if (usaInteresDiario(prestamo)) {
+    await ponerInteresAlDia(prisma, prestamo);
+    const { situacion } = situacionDeAtraso(
+      prestamo.plan_pagos.map((c) => ({ fecha_vencimiento: c.fecha_vencimiento, pagada: c.estado === 'pagada' })),
+      hoy
+    );
+    await prisma.prestamo.update({
+      where: { id: prestamoId },
+      data: {
+        saldo_mora_usd: 0,
+        saldo_mora_bs: 0,
+        ...(prestamo.estado === 'activo' && situacion === 'moroso' ? { estado: 'moroso' as const } : {}),
+        ...(prestamo.estado === 'moroso' && situacion !== 'moroso' ? { estado: 'activo' as const } : {}),
+      },
+    });
+    return 0;
   }
 
   const mora = calcularMora(
@@ -154,6 +196,145 @@ async function actualizarMoraYCuotas(prestamoId: number): Promise<number> {
   return mora;
 }
 
+/**
+ * El préstamo con todo lo que muestra la pantalla: fiadores, plan, abonos y el
+ * resumen calculado. Lo devuelven la consulta, el alta y la aprobación, para
+ * que las tres respondan lo mismo.
+ */
+async function prestamoConResumen(id: number) {
+  const prestamo = await prisma.prestamo.findUnique({
+    where: { id },
+    include: {
+      socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true, telefono: true } },
+      tipo_prestamo: true,
+      fiadores: {
+        include: { socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true } } },
+      },
+      plan_pagos: { orderBy: { numero_cuota: 'asc' } },
+      abonos: { orderBy: { fecha_abono: 'desc' } },
+    },
+  });
+  if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
+
+  const cuotasPagadas = prestamo.plan_pagos.filter((c) => c.estado === 'pagada').length;
+  const cuotasVencidas = prestamo.plan_pagos.filter((c) => c.estado === 'vencida').length;
+  // Los abonos reversados siguen en la lista, pero ya no cuentan como pagados
+  const totalAbonado = prestamo.abonos.filter((ab) => !ab.reversado).reduce((a, ab) => a + Number(ab.monto_usd), 0);
+
+  return {
+    ...prestamo,
+    resumen: {
+      cuotas_totales: prestamo.plan_pagos.length,
+      cuotas_pagadas: cuotasPagadas,
+      cuotas_vencidas: cuotasVencidas,
+      total_abonado_usd: redondear(totalAbonado),
+      deuda_total_usd: redondear(
+        Number(prestamo.saldo_capital_usd) + Number(prestamo.saldo_interes_usd) + Number(prestamo.saldo_mora_usd)
+      ),
+      avance_porcentaje:
+        prestamo.plan_pagos.length > 0
+          ? Math.round((cuotasPagadas / prestamo.plan_pagos.length) * 1000) / 10
+          : 0,
+    },
+  };
+}
+
+/**
+ * Entrega del préstamo: se cobra la inicial, se bloquea el ahorro que lo
+ * respalda —el del socio y el de sus fiadores— y se arma el plan de cuotas.
+ *
+ * Es lo que pasa al otorgarlo, cuando el socio lo cubre con su propio ahorro, y
+ * lo que pasa al aprobarlo en la reunión de los martes, cuando no lo cubre.
+ */
+async function entregarPrestamo(
+  tx: Prisma.TransactionClient,
+  prestamoId: number,
+  opciones: {
+    fechaEntrega: Date;
+    tasaCambio: number;
+    tasaMensual: number;
+    inicial: { ahorro_usd: number; efectivo_usd: number; efectivo_bs: number };
+  }
+): Promise<void> {
+  const { fechaEntrega, tasaCambio, tasaMensual, inicial } = opciones;
+  const prestamo = await tx.prestamo.findUniqueOrThrow({ where: { id: prestamoId }, include: { fiadores: true } });
+  const monto = Number(prestamo.monto_original_usd);
+  const condiciones = condicionesDelMonto(monto);
+
+  // La inicial se paga al llevarse el producto: con ahorro en divisas, en
+  // bolívares, o mezclando las dos
+  const efectivoUsd = redondear(
+    inicial.efectivo_usd + (inicial.efectivo_bs > 0 ? inicial.efectivo_bs / tasaCambio : 0)
+  );
+  const cubierta = redondear(inicial.ahorro_usd + efectivoUsd);
+  if (cubierta + 0.009 < condiciones.inicial_usd) {
+    throw new BadRequestError(
+      `La inicial es $${condiciones.inicial_usd} (${condiciones.tramo.inicial_porcentaje}% de $${monto}) ` +
+        `y se están cubriendo $${cubierta}`
+    );
+  }
+  // Se admite la diferencia del cambio a bolívares, pero un exceso grande suele
+  // ser un monto mal tecleado: mejor avisar que guardarlo
+  const tolerancia = Math.max(1, redondear(condiciones.inicial_usd * 0.01));
+  if (cubierta > condiciones.inicial_usd + tolerancia) {
+    throw new BadRequestError(
+      `Se están pagando $${cubierta} de inicial y corresponden $${condiciones.inicial_usd}. ` +
+        'Revise el monto.'
+    );
+  }
+  // Lo que se guarda es lo que cubre la inicial: el ahorro primero
+  const ahorroAplicado = Math.min(redondear(inicial.ahorro_usd), condiciones.inicial_usd);
+  const efectivoAplicado = redondear(Math.min(efectivoUsd, condiciones.inicial_usd - ahorroAplicado));
+
+  // El ahorro del socio respalda su préstamo. Lo que puso de inicial con ese
+  // ahorro ya queda dentro de lo bloqueado: no se bloquea dos veces.
+  const propio = await ahorroLibre(tx, prestamo.socio_id);
+  await bloquearAhorro(tx, prestamo.socio_id, Math.min(propio, monto), tasaCambio);
+
+  for (const fiador of prestamo.fiadores) {
+    if (Number(fiador.monto_bloqueado_usd) > 0) continue;
+    await bloquearAhorro(tx, fiador.socio_id, Number(fiador.monto_garantizado_usd), tasaCambio, 'fiador');
+    await tx.fiador.update({
+      where: { id: fiador.id },
+      data: {
+        monto_bloqueado_usd: fiador.monto_garantizado_usd,
+        monto_bloqueado_bs: redondear(Number(fiador.monto_garantizado_usd) * tasaCambio),
+      },
+    });
+  }
+
+  const plan = planDeCuotas(monto, condiciones.cuotas, tasaMensual, fechaEntrega);
+  await tx.planPago.createMany({
+    data: plan.map((c) => ({
+      prestamo_id: prestamoId,
+      numero_cuota: c.numero_cuota,
+      fecha_vencimiento: c.fecha_vencimiento,
+      monto_capital_usd: c.monto_capital_usd,
+      monto_capital_bs: redondear(c.monto_capital_usd * tasaCambio),
+      // El interés del plan es estimado: el real corre por día sobre el saldo
+      monto_interes_usd: c.monto_interes_estimado_usd,
+      monto_interes_bs: redondear(c.monto_interes_estimado_usd * tasaCambio),
+      monto_total_usd: c.monto_total_estimado_usd,
+      monto_total_bs: redondear(c.monto_total_estimado_usd * tasaCambio),
+    })),
+  });
+
+  await tx.prestamo.update({
+    where: { id: prestamoId },
+    data: {
+      estado: 'activo',
+      fecha_desembolso: fechaEntrega,
+      fecha_vencimiento: plan[plan.length - 1]!.fecha_vencimiento,
+      // Desde acá el interés corre por día sobre el saldo
+      interes_calculado_hasta: fechaEntrega,
+      inicial_usd: condiciones.inicial_usd,
+      inicial_ahorro_usd: ahorroAplicado,
+      inicial_efectivo_usd: efectivoAplicado,
+      inicial_efectivo_bs: inicial.efectivo_bs,
+    },
+  });
+}
+
 // ============================================
 // SIMULACIÓN
 // ============================================
@@ -175,36 +356,45 @@ export const simularPrestamo = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const { tipo_prestamo_id, monto_usd, plazo_semanas, fecha_desembolso } = validacion.data;
+    const { tipo_prestamo_id, monto_usd, fecha_desembolso } = validacion.data;
 
     const tipo = await prisma.tipoPrestamo.findUnique({ where: { id: tipo_prestamo_id } });
     if (!tipo) throw new NotFoundError('Tipo de préstamo no encontrado');
     if (!tipo.estado) throw new BadRequestError('El tipo de préstamo está inactivo');
 
-    if (plazo_semanas > tipo.plazo_maximo_semanas) {
-      throw new BadRequestError(
-        `El plazo excede el máximo de ${tipo.plazo_maximo_semanas} semanas para ${tipo.nombre}`
-      );
+    let condiciones;
+    try {
+      condiciones = condicionesDelMonto(monto_usd);
+    } catch (e) {
+      throw new BadRequestError(e instanceof Error ? e.message : 'Monto fuera de la tabla de préstamos');
     }
 
-    const fecha = fecha_desembolso ? new Date(fecha_desembolso) : new Date();
-    if (isNaN(fecha.getTime())) throw new BadRequestError('Fecha de desembolso inválida');
-
-    const resultado = generarPlanPagos(monto_usd, Number(tipo.tasa_interes_anual), plazo_semanas, fecha);
+    const fecha = fecha_desembolso ? fechaDia(fecha_desembolso.slice(0, 10), 'La fecha de entrega') : hoyDia();
+    const tasaMensual = Number(tipo.tasa_interes_mensual) || redondear(Number(tipo.tasa_interes_anual) / 12);
+    const plan = planDeCuotas(monto_usd, condiciones.cuotas, tasaMensual, fecha);
     const tasaCambio = await obtenerTasaActual();
+    const totalInteres = redondear(plan.reduce((a, c) => a + c.monto_interes_estimado_usd, 0));
 
     res.json({
       success: true,
       data: {
         tipo_prestamo: { id: tipo.id, codigo: tipo.codigo, nombre: tipo.nombre },
         monto_usd,
-        plazo_semanas,
-        tasa_interes_anual: Number(tipo.tasa_interes_anual),
+        cuotas: condiciones.cuotas,
+        dias_por_cuota: DIAS_POR_CUOTA,
+        cuota_capital_usd: condiciones.cuota_capital_usd,
+        cuota_capital_bs: redondear(condiciones.cuota_capital_usd * tasaCambio),
+        // La inicial se paga al llevarse el producto, aparte de las cuotas
+        inicial_usd: condiciones.inicial_usd,
+        inicial_bs: redondear(condiciones.inicial_usd * tasaCambio),
+        inicial_porcentaje: condiciones.tramo.inicial_porcentaje,
+        tasa_interes_mensual: tasaMensual,
         tasa_cambio: tasaCambio,
         requiere_fiadores: tipo.requiere_fiadores,
-        ...resultado,
-        cuota_semanal_bs: redondear(resultado.cuota_semanal_usd * tasaCambio),
-        total_a_pagar_bs: redondear(resultado.total_a_pagar_usd * tasaCambio),
+        // Estimado: el interés real depende del día en que se pague cada cuota
+        total_interes_estimado_usd: totalInteres,
+        total_a_pagar_estimado_usd: redondear(monto_usd + totalInteres),
+        plan,
       },
     });
   } catch (error) {
@@ -246,13 +436,11 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
     }
     if (!tipo) throw new NotFoundError('Tipo de préstamo no encontrado');
     if (!tipo.estado) throw new BadRequestError('El tipo de préstamo está inactivo');
-    if (datos.plazo_semanas > tipo.plazo_maximo_semanas) {
-      throw new BadRequestError(`El plazo excede el máximo de ${tipo.plazo_maximo_semanas} semanas`);
-    }
+    // El plazo ya no se elige: la tabla dice cuántas cuotas van según el monto
 
     // Un socio no puede tener dos préstamos abiertos a la vez
     const abierto = await prisma.prestamo.findFirst({
-      where: { socio_id: datos.socio_id, estado: { in: ['activo', 'moroso'] } },
+      where: { socio_id: datos.socio_id, estado: { in: ['solicitado', 'aprobado', 'activo', 'moroso'] } },
     });
     if (abierto) {
       throw new ConflictError(
@@ -260,64 +448,44 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
       );
     }
 
-    // --- Fiadores ---
-    if (tipo.requiere_fiadores && datos.fiadores.length === 0) {
-      throw new BadRequestError(`${tipo.nombre} requiere al menos un fiador`);
+    // --- Condiciones de la tabla que pasó la cooperativa ---
+    let condiciones;
+    try {
+      condiciones = condicionesDelMonto(datos.monto_usd);
+    } catch (e) {
+      throw new BadRequestError(e instanceof Error ? e.message : 'Monto fuera de la tabla de préstamos');
     }
+    const tasaMensual = Number(tipo.tasa_interes_mensual) || redondear(Number(tipo.tasa_interes_anual) / 12);
 
-    const parametro = await prisma.parametroSistema.findUnique({
-      where: { clave: 'PORCENTAJE_AHORRO_FIADOR' },
-    });
-    const porcentajeRequerido = Number(parametro?.valor ?? 30);
+    // --- ¿Va a la reunión? Sólo si no lo cubre con su propio ahorro ---
+    const ahorroPropio = await ahorroLibre(prisma, datos.socio_id);
+    const faltante = redondear(Math.max(0, datos.monto_usd - ahorroPropio));
+    const requiereAprobacion = faltante > 0;
+    const garantizado = redondear(datos.fiadores.reduce((a, f) => a + f.monto_garantizado_usd, 0));
 
-    if (datos.fiadores.length > 0) {
-      const totalGarantizado = datos.fiadores.reduce((a, f) => a + f.monto_garantizado_usd, 0);
-      const minimo = redondear(datos.monto_usd * (porcentajeRequerido / 100));
-
-      if (totalGarantizado < minimo) {
+    if (requiereAprobacion && garantizado + 0.009 < faltante) {
+      throw new BadRequestError(
+        `El socio tiene $${ahorroPropio} de ahorro libre y pide $${datos.monto_usd}: ` +
+          `los fiadores deben cubrir los $${faltante} que faltan y suman $${garantizado}`
+      );
+    }
+    for (const fiador of datos.fiadores) {
+      if (fiador.socio_id === datos.socio_id) {
+        throw new BadRequestError('El socio no puede ser fiador de su propio préstamo');
+      }
+      const libre = await ahorroLibre(prisma, fiador.socio_id);
+      if (libre + 0.009 < fiador.monto_garantizado_usd) {
+        const s = await prisma.socio.findUnique({ where: { id: fiador.socio_id }, select: { codigo_socio: true } });
         throw new BadRequestError(
-          `Las garantías suman $${redondear(totalGarantizado)} y deben cubrir al menos ` +
-            `$${minimo} (${porcentajeRequerido}% del préstamo)`
+          `El fiador ${s?.codigo_socio ?? fiador.socio_id} tiene $${libre} disponible ` +
+            `y debe garantizar $${fiador.monto_garantizado_usd}`
         );
-      }
-
-      // Cada fiador debe tener ahorro libre suficiente
-      for (const fiador of datos.fiadores) {
-        if (fiador.socio_id === datos.socio_id) {
-          throw new BadRequestError('El socio no puede ser fiador de su propio préstamo');
-        }
-
-        const cuentas = await prisma.cuentaAhorro.findMany({
-          where: { socio_id: fiador.socio_id, estado: true },
-        });
-        const disponible = cuentas.reduce(
-          (a, c) => a + (Number(c.saldo_usd) - Number(c.monto_bloqueado_usd)),
-          0
-        );
-
-        if (disponible < fiador.monto_garantizado_usd) {
-          const s = await prisma.socio.findUnique({ where: { id: fiador.socio_id } });
-          throw new BadRequestError(
-            `El fiador ${s?.codigo_socio ?? fiador.socio_id} tiene $${redondear(disponible)} ` +
-              `disponible y debe garantizar $${fiador.monto_garantizado_usd}`
-          );
-        }
       }
     }
 
-    const fechaDesembolso = new Date(datos.fecha_desembolso);
-    if (isNaN(fechaDesembolso.getTime())) throw new BadRequestError('Fecha de desembolso inválida');
-
+    const fechaEntrega = fechaDia(datos.fecha_desembolso.slice(0, 10), 'La fecha de entrega');
     const tasaCambio = await obtenerTasaActual();
-    const resultado = generarPlanPagos(
-      datos.monto_usd,
-      Number(tipo.tasa_interes_anual),
-      datos.plazo_semanas,
-      fechaDesembolso
-    );
     const numero = await generarNumeroPrestamo();
-
-    const fechaVencimiento = resultado.plan[resultado.plan.length - 1]!.fecha_vencimiento;
 
     const prestamo = await prisma.$transaction(async (tx) => {
       // Las validaciones de arriba leen sin bloquear. Con deudor y fiadores
@@ -326,7 +494,7 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
       await bloquearSocios(tx, [datos.socio_id, ...datos.fiadores.map((f) => f.socio_id)]);
 
       const otroAbierto = await tx.prestamo.findFirst({
-        where: { socio_id: datos.socio_id, estado: { in: ['activo', 'moroso'] } },
+        where: { socio_id: datos.socio_id, estado: { in: ['solicitado', 'aprobado', 'activo', 'moroso'] } },
       });
       if (otroAbierto) {
         throw new ConflictError(`El socio ya tiene el préstamo ${otroAbierto.numero_prestamo} sin saldar`);
@@ -341,33 +509,27 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
           monto_original_bs: redondear(datos.monto_usd * tasaCambio),
           tasa_cambio_inicial: tasaCambio,
           tasa_interes: Number(tipo.tasa_interes_anual),
-          plazo_semanas: datos.plazo_semanas,
-          cuota_semanal_usd: resultado.cuota_semanal_usd,
-          cuota_semanal_bs: redondear(resultado.cuota_semanal_usd * tasaCambio),
+          tasa_interes_mensual: tasaMensual,
+          // El plazo en semanas se conserva por los reportes viejos: 21 días son 3 semanas
+          plazo_semanas: condiciones.cuotas * 3,
+          cantidad_cuotas: condiciones.cuotas,
+          dias_por_cuota: DIAS_POR_CUOTA,
+          cuota_semanal_usd: condiciones.cuota_capital_usd,
+          cuota_semanal_bs: redondear(condiciones.cuota_capital_usd * tasaCambio),
           saldo_capital_usd: datos.monto_usd,
           saldo_capital_bs: redondear(datos.monto_usd * tasaCambio),
-          saldo_interes_usd: resultado.total_interes_usd,
-          saldo_interes_bs: redondear(resultado.total_interes_usd * tasaCambio),
-          fecha_desembolso: fechaDesembolso,
-          fecha_vencimiento: fechaVencimiento,
+          // El interés arranca en cero y corre por día desde la entrega
+          saldo_interes_usd: 0,
+          saldo_interes_bs: 0,
+          inicial_usd: condiciones.inicial_usd,
+          estado: requiereAprobacion ? 'solicitado' : 'activo',
+          fecha_solicitud: hoyDia(),
+          fecha_desembolso: fechaEntrega,
+          fecha_vencimiento: new Date(fechaEntrega.getTime() + condiciones.cuotas * DIAS_POR_CUOTA * 86_400_000),
+          observaciones_aprobacion: datos.observaciones ?? null,
         },
       });
 
-      await tx.planPago.createMany({
-        data: resultado.plan.map((c) => ({
-          prestamo_id: creado.id,
-          numero_cuota: c.numero_cuota,
-          fecha_vencimiento: c.fecha_vencimiento,
-          monto_capital_usd: c.monto_capital_usd,
-          monto_capital_bs: redondear(c.monto_capital_usd * tasaCambio),
-          monto_interes_usd: c.monto_interes_usd,
-          monto_interes_bs: redondear(c.monto_interes_usd * tasaCambio),
-          monto_total_usd: c.monto_total_usd,
-          monto_total_bs: redondear(c.monto_total_usd * tasaCambio),
-        })),
-      });
-
-      // Bloquear el ahorro de cada fiador
       for (const fiador of datos.fiadores) {
         await tx.fiador.create({
           data: {
@@ -375,70 +537,140 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
             socio_id: fiador.socio_id,
             monto_garantizado_usd: fiador.monto_garantizado_usd,
             monto_garantizado_bs: redondear(fiador.monto_garantizado_usd * tasaCambio),
-            monto_bloqueado_usd: fiador.monto_garantizado_usd,
-            monto_bloqueado_bs: redondear(fiador.monto_garantizado_usd * tasaCambio),
+            monto_bloqueado_usd: 0,
+            monto_bloqueado_bs: 0,
           },
         });
+      }
 
-        // Se bloquea sobre la primera cuenta con saldo libre suficiente
-        const cuentas = await tx.cuentaAhorro.findMany({
-          where: { socio_id: fiador.socio_id, estado: true },
-          orderBy: { saldo_usd: 'desc' },
+      // Lo que cubre con su ahorro se entrega sin pasar por la reunión
+      if (!requiereAprobacion) {
+        await entregarPrestamo(tx, creado.id, {
+          fechaEntrega,
+          tasaCambio,
+          tasaMensual,
+          inicial: {
+            ahorro_usd: datos.inicial_ahorro_usd,
+            efectivo_usd: datos.inicial_efectivo_usd,
+            efectivo_bs: datos.inicial_efectivo_bs,
+          },
         });
-        let porBloquear = fiador.monto_garantizado_usd;
-        for (const cuenta of cuentas) {
-          if (porBloquear <= 0) break;
-          const libre = Number(cuenta.saldo_usd) - Number(cuenta.monto_bloqueado_usd);
-          const bloquear = Math.min(libre, porBloquear);
-          if (bloquear <= 0) continue;
-
-          await tx.cuentaAhorro.update({
-            where: { id: cuenta.id },
-            data: {
-              monto_bloqueado_usd: redondear(Number(cuenta.monto_bloqueado_usd) + bloquear),
-              monto_bloqueado_bs: redondear((Number(cuenta.monto_bloqueado_usd) + bloquear) * tasaCambio),
-            },
-          });
-          porBloquear = redondear(porBloquear - bloquear);
-        }
-
-        // Si el ahorro libre bajó entre la validación y este punto, antes se
-        // bloqueaba de menos sin avisar y la garantía quedaba incompleta
-        if (porBloquear > 0) {
-          const s = await tx.socio.findUnique({ where: { id: fiador.socio_id }, select: { codigo_socio: true } });
-          throw new BadRequestError(
-            `El fiador ${s?.codigo_socio ?? fiador.socio_id} ya no tiene ahorro libre suficiente: ` +
-              `faltan $${porBloquear} por garantizar`
-          );
-        }
       }
 
       await registrarAuditoria(tx, {
         req,
-        accion: 'CREAR',
+        accion: requiereAprobacion ? 'SOLICITAR_PRESTAMO' : 'CREAR',
         modulo: 'prestamos',
         registro_id: creado.id,
-        despues: { numero, monto: datos.monto_usd, plazo: datos.plazo_semanas },
+        despues: {
+          numero,
+          monto: datos.monto_usd,
+          cuotas: condiciones.cuotas,
+          inicial_usd: condiciones.inicial_usd,
+          ahorro_propio_usd: ahorroPropio,
+          falta_cubrir_usd: faltante,
+          estado: requiereAprobacion ? 'solicitado' : 'activo',
+        },
       });
 
       return creado;
     });
 
-    logger.info(`Préstamo ${numero} otorgado: $${datos.monto_usd} a ${datos.plazo_semanas} semanas`);
-
-    const completo = await prisma.prestamo.findUnique({
-      where: { id: prestamo.id },
-      include: {
-        socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true } },
-        tipo_prestamo: true,
-        fiadores: { include: { socio: { select: { codigo_socio: true, nombre: true, apellido: true } } } },
-        plan_pagos: { orderBy: { numero_cuota: 'asc' } },
-      },
-    });
-
-    res.status(201).json({ success: true, data: completo });
+    logger.info(
+      `Préstamo ${numero}: $${datos.monto_usd} en ${condiciones.cuotas} cuotas` +
+        (requiereAprobacion ? ' — EN SOLICITUD, espera la reunión' : ' — entregado')
+    );
+    res.status(201).json({ success: true, data: await prestamoConResumen(prestamo.id) });
   } catch (error) {
     responderError(res, error, 'Error al otorgar el préstamo');
+  }
+};
+
+/**
+ * POST /api/prestamos/:id/aprobar
+ *
+ * La reunión ordinaria de los martes aprueba los préstamos que el socio no
+ * cubre con su propio ahorro (confirmado: no es la junta directiva ni la
+ * asamblea, y no se anota número de acta). Aprobar es entregar: se cobra la
+ * inicial, se bloquean los ahorros y queda el plan de cuotas.
+ */
+export const aprobarPrestamo = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (isNaN(id)) throw new BadRequestError('ID inválido');
+
+    const validacion = aprobarPrestamoSchema.safeParse(req.body);
+    if (!validacion.success) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Datos inválidos', details: validacion.error.errors },
+      });
+      return;
+    }
+    const datos = validacion.data;
+
+    const existe = await prisma.prestamo.findUnique({ where: { id }, select: { socio_id: true, estado: true } });
+    if (!existe) throw new NotFoundError('Préstamo no encontrado');
+    if (existe.estado !== 'solicitado') {
+      throw new ConflictError(`El préstamo está ${existe.estado}: sólo se aprueba el que está en solicitud`);
+    }
+
+    const fechaEntrega = fechaDia(datos.fecha_entrega.slice(0, 10), 'La fecha de entrega');
+    const tasaCambio = await obtenerTasaActual();
+
+    await prisma.$transaction(async (tx) => {
+      const prestamo = await tx.prestamo.findUniqueOrThrow({
+        where: { id },
+        include: { fiadores: true, tipo_prestamo: true },
+      });
+      await bloquearSocios(tx, [prestamo.socio_id, ...prestamo.fiadores.map((f) => f.socio_id)]);
+      if (prestamo.estado !== 'solicitado') throw new ConflictError('El préstamo ya fue aprobado');
+
+      const tasaMensual =
+        Number(prestamo.tipo_prestamo.tasa_interes_mensual) ||
+        redondear(Number(prestamo.tipo_prestamo.tasa_interes_anual) / 12);
+
+      await entregarPrestamo(tx, id, {
+        fechaEntrega,
+        tasaCambio,
+        tasaMensual,
+        inicial: {
+          ahorro_usd: datos.inicial_ahorro_usd,
+          efectivo_usd: datos.inicial_efectivo_usd,
+          efectivo_bs: datos.inicial_efectivo_bs,
+        },
+      });
+
+      await tx.prestamo.update({
+        where: { id },
+        data: {
+          fecha_aprobacion: hoyDia(),
+          aprobado_por: req.user!.userId,
+          ...(datos.observaciones ? { observaciones_aprobacion: datos.observaciones } : {}),
+        },
+      });
+
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'APROBAR_PRESTAMO',
+        modulo: 'prestamos',
+        registro_id: id,
+        antes: { estado: 'solicitado' },
+        despues: {
+          estado: 'activo',
+          fecha_entrega: fechaEntrega.toISOString().slice(0, 10),
+          numero: prestamo.numero_prestamo,
+        },
+      });
+    });
+
+    res.json({
+      success: true,
+      data: await prestamoConResumen(id),
+      message: 'Préstamo aprobado y entregado',
+    });
+  } catch (error) {
+    responderError(res, error, 'Error al aprobar el préstamo');
   }
 };
 
@@ -516,49 +748,7 @@ export const obtenerPrestamo = async (req: Request, res: Response): Promise<void
     // La mora depende de la fecha, así que se recalcula al consultar
     await actualizarMoraYCuotas(id);
 
-    const prestamo = await prisma.prestamo.findUnique({
-      where: { id },
-      include: {
-        socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true, telefono: true } },
-        tipo_prestamo: true,
-        fiadores: {
-          include: { socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true } } },
-        },
-        plan_pagos: { orderBy: { numero_cuota: 'asc' } },
-        abonos: { orderBy: { fecha_abono: 'desc' } },
-      },
-    });
-
-    if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
-
-    const cuotasPagadas = prestamo.plan_pagos.filter((c) => c.estado === 'pagada').length;
-    const cuotasVencidas = prestamo.plan_pagos.filter((c) => c.estado === 'vencida').length;
-    // Los abonos reversados siguen en la lista, pero ya no cuentan como pagados
-    const totalAbonado = prestamo.abonos
-      .filter((ab) => !ab.reversado)
-      .reduce((a, ab) => a + Number(ab.monto_usd), 0);
-
-    res.json({
-      success: true,
-      data: {
-        ...prestamo,
-        resumen: {
-          cuotas_totales: prestamo.plan_pagos.length,
-          cuotas_pagadas: cuotasPagadas,
-          cuotas_vencidas: cuotasVencidas,
-          total_abonado_usd: redondear(totalAbonado),
-          deuda_total_usd: redondear(
-            Number(prestamo.saldo_capital_usd) +
-              Number(prestamo.saldo_interes_usd) +
-              Number(prestamo.saldo_mora_usd)
-          ),
-          avance_porcentaje:
-            prestamo.plan_pagos.length > 0
-              ? Math.round((cuotasPagadas / prestamo.plan_pagos.length) * 1000) / 10
-              : 0,
-        },
-      },
-    });
+    res.json({ success: true, data: await prestamoConResumen(id) });
   } catch (error) {
     responderError(res, error, 'Error al obtener el préstamo');
   }
@@ -606,20 +796,24 @@ export const registrarAbono = async (req: Request, res: Response): Promise<void>
       if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
       if (prestamo.estado === 'saldado') throw new ConflictError('El préstamo ya está saldado');
       if (prestamo.estado === 'cancelado') throw new ConflictError('El préstamo está cancelado');
+      if (prestamo.estado === 'solicitado' || prestamo.estado === 'aprobado') {
+        throw new ConflictError('El préstamo todavía no se ha entregado: no se le pueden cargar abonos');
+      }
+
+      // El interés corre por día: se suma lo que va hasta hoy antes de repartir
+      const { saldo_interes_usd: saldoInteres } = await ponerInteresAlDia(tx, prestamo);
 
       const reparto = distribuirAbono(
         monto,
         Number(prestamo.saldo_mora_usd),
-        Number(prestamo.saldo_interes_usd),
+        saldoInteres,
         Number(prestamo.saldo_capital_usd)
       );
 
       if (reparto.sobrante > 0) {
         throw new BadRequestError(
           `El abono excede la deuda en $${reparto.sobrante}. La deuda total es $${redondear(
-            Number(prestamo.saldo_mora_usd) +
-              Number(prestamo.saldo_interes_usd) +
-              Number(prestamo.saldo_capital_usd)
+            Number(prestamo.saldo_mora_usd) + saldoInteres + Number(prestamo.saldo_capital_usd)
           )}`
         );
       }
@@ -641,7 +835,7 @@ export const registrarAbono = async (req: Request, res: Response): Promise<void>
       });
 
       const nuevoCapital = redondear(Number(prestamo.saldo_capital_usd) - reparto.capital);
-      const nuevoInteres = redondear(Number(prestamo.saldo_interes_usd) - reparto.interes);
+      const nuevoInteres = redondear(saldoInteres - reparto.interes);
       const nuevaMora = redondear(Number(prestamo.saldo_mora_usd) - reparto.mora);
       const saldado = nuevoCapital <= 0 && nuevoInteres <= 0 && nuevaMora <= 0;
 

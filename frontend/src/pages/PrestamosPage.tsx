@@ -55,6 +55,8 @@ const money = (v: number | string | null | undefined): string =>
   Number(v ?? 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 const VISTAS = [
+  // Los que esperan la reunion de los martes
+  { id: 'solicitudes', label: 'En solicitud' },
   { id: 'por_cobrar', label: 'Por cobrar' },
   { id: 'morosos', label: 'Morosos' },
   { id: 'cobrados', label: 'Cobrados' },
@@ -62,6 +64,8 @@ const VISTAS = [
 ]
 
 const badgeEstado = (estado: string) => {
+  if (estado === 'solicitado') return <Badge variant="warning">En solicitud</Badge>
+  if (estado === 'aprobado') return <Badge variant="info">Aprobado</Badge>
   if (estado === 'saldado') return <Badge variant="success">Saldado</Badge>
   if (estado === 'moroso') return <Badge variant="error">Moroso</Badge>
   if (estado === 'cancelado') return <Badge variant="neutral">Cancelado</Badge>
@@ -76,6 +80,7 @@ export default function PrestamosPage() {
   const puedeOtorgar = hasPermission('prestamos', 'create')
   const puedeAbonar = hasPermission('prestamos', 'update')
   const puedeReversar = hasPermission('prestamos', 'delete')
+  const puedeAprobar = hasPermission('prestamos', 'approve')
   const alEnter = useEnterNavigation()
 
   const [vista, setVista] = useState('por_cobrar')
@@ -94,13 +99,21 @@ export default function PrestamosPage() {
   const [socioElegido, setSocioElegido] = useState<Socio | null>(null)
   const [tipoId, setTipoId] = useState<number | ''>('')
   const [monto, setMonto] = useState('')
-  const [plazo, setPlazo] = useState('12')
   const [fechaDesembolso, setFechaDesembolso] = useState(hoyISO())
+  // Inicial: con ahorro en divisas, en bolivares, o mezclando las dos
+  const [inicialAhorro, setInicialAhorro] = useState('')
+  const [inicialBs, setInicialBs] = useState('')
   const [simulacion, setSimulacion] = useState<Simulacion | null>(null)
   const [fiadores, setFiadores] = useState<{ socio: Socio; monto: string }[]>([])
   const [cedulaFiador, setCedulaFiador] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [errorForm, setErrorForm] = useState('')
+
+  // --- Aprobacion en la reunion de los martes ---
+  const [aprobando, setAprobando] = useState(false)
+  const [fechaEntrega, setFechaEntrega] = useState(hoyISO())
+  const [aprobInicialAhorro, setAprobInicialAhorro] = useState('')
+  const [aprobInicialBs, setAprobInicialBs] = useState('')
 
   // --- Abono ---
   const [modalAbono, setModalAbono] = useState(false)
@@ -145,8 +158,7 @@ export default function PrestamosPage() {
   // ============================================
   useEffect(() => {
     const m = parseFloat(monto)
-    const p = parseInt(plazo, 10)
-    if (!tipoId || !m || m <= 0 || !p || p <= 0) {
+    if (!tipoId || !m || m <= 0) {
       setSimulacion(null)
       return
     }
@@ -156,7 +168,6 @@ export default function PrestamosPage() {
         const r = await prestamosService.simular({
           tipo_prestamo_id: Number(tipoId),
           monto_usd: m,
-          plazo_semanas: p,
           fecha_desembolso: fechaDesembolso,
         })
         if (r.success) {
@@ -169,7 +180,7 @@ export default function PrestamosPage() {
       }
     }, 350)
     return () => window.clearTimeout(t)
-  }, [tipoId, monto, plazo, fechaDesembolso])
+  }, [tipoId, monto, fechaDesembolso])
 
   const buscarSocio = async (cedula: string, para: 'titular' | 'fiador') => {
     if (!cedula.trim()) return
@@ -206,9 +217,10 @@ export default function PrestamosPage() {
     setCedulaSocio('')
     setTipoId(tipos[0]?.id ?? '')
     setMonto('')
-    setPlazo('12')
     setFechaDesembolso(hoyISO())
     setSimulacion(null)
+    setInicialAhorro('')
+    setInicialBs('')
     setFiadores([])
     setErrorForm('')
     setModalNuevo(true)
@@ -220,7 +232,7 @@ export default function PrestamosPage() {
       return
     }
     if (!simulacion) {
-      setErrorForm('Complete monto y plazo para calcular la cuota')
+      setErrorForm('Indique el tipo y el monto para calcular las cuotas')
       return
     }
 
@@ -231,19 +243,48 @@ export default function PrestamosPage() {
         socio_id: socioElegido.id,
         tipo_prestamo_id: Number(tipoId),
         monto_usd: parseFloat(monto),
-        plazo_semanas: parseInt(plazo, 10),
         fecha_desembolso: fechaDesembolso,
         fiadores: fiadores
           .filter((f) => parseFloat(f.monto) > 0)
           .map((f) => ({ socio_id: f.socio.id, monto_garantizado_usd: parseFloat(f.monto) })),
+        inicial_ahorro_usd: parseFloat(inicialAhorro) || 0,
+        inicial_efectivo_bs: parseFloat(inicialBs) || 0,
       })
       if (!r.success) throw new Error('No fue posible otorgar el prestamo')
       setModalNuevo(false)
+      // El que no cubre el monto con su ahorro espera la reunion de los martes
+      if (r.data?.estado === 'solicitado') {
+        window.alert(
+          `El prestamo ${r.data.numero_prestamo} queda EN SOLICITUD: el socio no cubre el monto con su ahorro. ` +
+            'Se entrega cuando lo aprueben en la reunion.'
+        )
+      }
       await cargar()
     } catch (err) {
       setErrorForm(getErrorMessage(err) || 'Error al otorgar el prestamo')
     } finally {
       setGuardando(false)
+    }
+  }
+
+  const aprobar = async () => {
+    if (!detalle) return
+    setAprobando(true)
+    try {
+      const r = await prestamosService.aprobarPrestamo(detalle.id, {
+        fecha_entrega: fechaEntrega,
+        inicial_ahorro_usd: parseFloat(aprobInicialAhorro) || 0,
+        inicial_efectivo_bs: parseFloat(aprobInicialBs) || 0,
+      })
+      if (!r.success) throw new Error('No fue posible aprobar el prestamo')
+      setDetalle(r.data)
+      setAprobInicialAhorro('')
+      setAprobInicialBs('')
+      await cargar()
+    } catch (err) {
+      window.alert(getErrorMessage(err) || 'Error al aprobar el prestamo')
+    } finally {
+      setAprobando(false)
     }
   }
 
@@ -597,18 +638,16 @@ export default function PrestamosPage() {
                   />
                 </label>
                 <label className={labelClass}>
-                  <span className="mb-1.5 block">Plazo (semanas)</span>
+                  <span className="mb-1.5 block">Cuotas</span>
+                  {/* Las cuotas salen de la tabla por monto: no se eligen */}
                   <input
-                    type="number"
-                    min={1}
-                    max={tipoElegido?.plazo_maximo_semanas ?? 520}
-                    value={plazo}
-                    onChange={(e) => setPlazo(e.target.value)}
+                    value={simulacion ? `${simulacion.cuotas} cada ${simulacion.dias_por_cuota} dias` : 'segun el monto'}
+                    readOnly
                     className={controlClass}
                   />
                 </label>
                 <label className={labelClass}>
-                  <span className="mb-1.5 block">Desembolso</span>
+                  <span className="mb-1.5 block">Fecha de entrega</span>
                   <input
                     type="date"
                     value={fechaDesembolso}
@@ -620,10 +659,8 @@ export default function PrestamosPage() {
 
               {tipoElegido && (
                 <p className="rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
-                  {tipoElegido.nombre}: {tipoElegido.tasa_interes_anual}% anual, mora{' '}
-                  {tipoElegido.tasa_mora_mensual}% mensual, maximo {tipoElegido.plazo_maximo_semanas}{' '}
-                  semanas.{' '}
-                  {tipoElegido.requiere_fiadores ? 'Requiere fiadores.' : 'No requiere fiadores.'}
+                  {tipoElegido.nombre}: {simulacion ? `${simulacion.tasa_interes_mensual}% mensual` : 'interes mensual'}{' '}
+                  sobre el saldo, cobrado por dia. Sin recargo por atraso: aviso a los 21 dias y moroso a los 30.
                 </p>
               )}
 
@@ -638,23 +675,23 @@ export default function PrestamosPage() {
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
                     <div>
-                      <p className="text-xs text-neutral-600">Cuota semanal</p>
+                      <p className="text-xs text-neutral-600">{simulacion.cuotas} cuotas de</p>
                       <p className="text-xl font-bold text-neutral-900">
-                        ${money(simulacion.cuota_semanal_usd)}
+                        ${money(simulacion.cuota_capital_usd)}
                       </p>
-                      <p className="text-xs text-neutral-500">{money(simulacion.cuota_semanal_bs)} Bs</p>
+                      <p className="text-xs text-neutral-500">{money(simulacion.cuota_capital_bs)} Bs</p>
                     </div>
                     <div>
-                      <p className="text-xs text-neutral-600">Interes total</p>
-                      <p className="text-xl font-bold text-neutral-900">
-                        ${money(simulacion.total_interes_usd)}
-                      </p>
+                      <p className="text-xs text-neutral-600">Inicial ({simulacion.inicial_porcentaje}%)</p>
+                      <p className="text-xl font-bold text-neutral-900">${money(simulacion.inicial_usd)}</p>
+                      <p className="text-xs text-neutral-500">{money(simulacion.inicial_bs)} Bs</p>
                     </div>
                     <div>
-                      <p className="text-xs text-neutral-600">Total a pagar</p>
+                      <p className="text-xs text-neutral-600">Interes estimado</p>
                       <p className="text-xl font-bold text-primary-700">
-                        ${money(simulacion.total_a_pagar_usd)}
+                        ${money(simulacion.total_interes_estimado_usd)}
                       </p>
+                      <p className="text-xs text-neutral-500">depende del dia de pago</p>
                     </div>
                     <div>
                       <p className="text-xs text-neutral-600">Vence</p>
@@ -664,6 +701,28 @@ export default function PrestamosPage() {
                         )}
                       </p>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Inicial: se paga al llevarse el producto */}
+              {simulacion && (
+                <div className="rounded-xl border border-neutral-200 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Inicial a pagar: ${money(simulacion.inicial_usd)}
+                  </p>
+                  <p className="mt-1 text-xs text-neutral-600">
+                    Se cubre con el ahorro en divisas, que queda bloqueado, en bolivares, o mezclando las dos.
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className={labelClass}>
+                      <span className="mb-1.5 block">Con su ahorro (USD)</span>
+                      <input type="number" min={0} step="0.01" value={inicialAhorro} onChange={(e) => setInicialAhorro(e.target.value)} className={controlClass} />
+                    </label>
+                    <label className={labelClass}>
+                      <span className="mb-1.5 block">En bolivares (Bs)</span>
+                      <input type="number" min={0} step="0.01" value={inicialBs} onChange={(e) => setInicialBs(e.target.value)} className={controlClass} />
+                    </label>
                   </div>
                 </div>
               )}
@@ -825,6 +884,35 @@ export default function PrestamosPage() {
                 </div>
 
                 {/* Fiadores */}
+                {detalle.estado === 'solicitado' && (
+                  <div className="rounded-xl border-2 border-amber-200 bg-amber-50/60 p-4">
+                    <p className="text-sm font-semibold text-amber-900">Espera la reunion de los martes</p>
+                    <p className="mt-1 text-xs text-amber-800">
+                      Al aprobarlo se entrega: se cobra la inicial de ${money(detalle.inicial_usd ?? 0)}, se bloquea el
+                      ahorro del socio y el de sus fiadores, y queda el plan de {detalle.cantidad_cuotas ?? 0} cuotas.
+                    </p>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <label className={labelClass}>
+                        <span className="mb-1.5 block">Fecha de entrega</span>
+                        <input type="date" value={fechaEntrega} onChange={(e) => setFechaEntrega(e.target.value)} className={controlClass} />
+                      </label>
+                      <label className={labelClass}>
+                        <span className="mb-1.5 block">Inicial con ahorro (USD)</span>
+                        <input type="number" min={0} step="0.01" value={aprobInicialAhorro} onChange={(e) => setAprobInicialAhorro(e.target.value)} className={controlClass} />
+                      </label>
+                      <label className={labelClass}>
+                        <span className="mb-1.5 block">Inicial en bolivares (Bs)</span>
+                        <input type="number" min={0} step="0.01" value={aprobInicialBs} onChange={(e) => setAprobInicialBs(e.target.value)} className={controlClass} />
+                      </label>
+                    </div>
+                    {puedeAprobar && (
+                      <Button className="mt-3" onClick={() => void aprobar()} isLoading={aprobando}>
+                        Aprobar y entregar
+                      </Button>
+                    )}
+                  </div>
+                )}
+
                 {detalle.fiadores.length > 0 && (
                   <div>
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
