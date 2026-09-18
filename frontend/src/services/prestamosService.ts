@@ -60,6 +60,8 @@ export interface Simulacion {
   tasa_interes_mensual: number
   tasa_cambio: number
   requiere_fiadores: boolean
+  /** Lo que se paga en cuotas: el monto menos la inicial */
+  saldo_deudor_usd?: number
   total_interes_estimado_usd: number
   total_a_pagar_estimado_usd: number
   plan: CuotaPlan[]
@@ -81,6 +83,8 @@ export interface Fiador {
   monto_bloqueado_usd: string | number
   estado: 'activo' | 'liberado'
   fecha_liberacion?: string | null
+  /** Orden en que se libera: primero el 1 */
+  orden?: number
   socio: SocioResumen
 }
 

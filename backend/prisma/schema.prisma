@@ -727,6 +727,10 @@ model Prestamo {
   inicial_ahorro_usd   Decimal @default(0) @db.Decimal(12, 2)
   inicial_efectivo_usd Decimal @default(0) @db.Decimal(12, 2)
   inicial_efectivo_bs  Decimal @default(0) @db.Decimal(14, 2)
+  /// Ahorro propio bloqueado como garantía de este préstamo (aparte de la inicial)
+  garantia_propia_usd  Decimal @default(0) @db.Decimal(12, 2)
+  /// Al saldar se devuelve el ahorro propio una sola vez
+  garantias_liberadas  Boolean @default(false)
 
   // Aprobación: sólo la necesita quien no cubre el monto con su propio ahorro.
   // Se aprueba en la reunión ordinaria de los martes, sin número de acta.
@@ -778,6 +782,8 @@ model Fiador {
   monto_bloqueado_usd   Decimal      @db.Decimal(12, 2) // En su ahorro
   monto_bloqueado_bs    Decimal      @db.Decimal(12, 2)
   estado                EstadoFiador @default(activo)
+  /// Orden en que se libera: primero el 1, después el 2 (confirmado)
+  orden                 Int          @default(1)
   fecha_liberacion      DateTime?    @db.Date
   created_at            DateTime     @default(now())
 

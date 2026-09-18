@@ -47,9 +47,10 @@ import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio } from '../utils/bloqueos';
 import { etiquetaFeria } from '../services/trabajadoresService';
 import {
-  liberarFiadores,
+  ajustarGarantias,
   sincronizarCuotas,
 } from '../services/abonosPrestamoService';
+import { ponerInteresAlDia } from '../services/interesPrestamoService';
 
 const prisma = new PrismaClient();
 
@@ -954,11 +955,14 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
         } else if (detalle.servicio === 'prestamo') {
           const prestamo = (item as any).prestamo;
 
+          // El interés corre por día: se suma lo que va hasta hoy antes de repartir
+          const { saldo_interes_usd: saldoInteres } = await ponerInteresAlDia(tx, prestamo);
+
           // Mismo orden que en el módulo de préstamos: mora, interés, capital
           const reparto = distribuirAbono(
             montoUsd,
             Number(prestamo.saldo_mora_usd),
-            Number(prestamo.saldo_interes_usd),
+            saldoInteres,
             Number(prestamo.saldo_capital_usd)
           );
 
@@ -986,7 +990,7 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
           });
 
           const capital = redondear(Number(prestamo.saldo_capital_usd) - reparto.capital);
-          const interes = redondear(Number(prestamo.saldo_interes_usd) - reparto.interes);
+          const interes = redondear(saldoInteres - reparto.interes);
           const mora = redondear(Number(prestamo.saldo_mora_usd) - reparto.mora);
           const saldado = capital <= 0 && interes <= 0 && mora <= 0;
 
@@ -1006,10 +1010,10 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
             },
           });
 
-          // Mismo efecto que el abono directo: antes el cobrado en caja no
-          // marcaba cuotas y saldaba sin devolverles el ahorro a los fiadores
+          // Mismo efecto que el abono directo: marca cuotas y va liberando las
+          // garantías de a un fiador, en el orden elegido al otorgar el préstamo
           await sincronizarCuotas(tx, prestamo.id);
-          if (saldado) await liberarFiadores(tx, prestamo.id, tasa);
+          await ajustarGarantias(tx, prestamo.id, tasa);
         } else {
           const acuerdo = (item as any).acuerdo;
           // Misma precedencia que en el calculo previo: manda la tarifa

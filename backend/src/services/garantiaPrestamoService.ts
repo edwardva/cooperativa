@@ -25,6 +25,33 @@ export const ahorroLibre = async (db: Db, socioId: number): Promise<number> => {
   );
 };
 
+/** Devuelve hasta `montoUsd` del ahorro bloqueado del socio. Dice cuánto liberó. */
+export const desbloquearAhorro = async (
+  db: Db,
+  socioId: number,
+  montoUsd: number,
+  tasaCambio: number
+): Promise<number> => {
+  let porLiberar = redondear(montoUsd);
+  if (porLiberar <= 0) return 0;
+
+  const cuentas = await db.cuentaAhorro.findMany({
+    where: { socio_id: socioId, monto_bloqueado_usd: { gt: 0 } },
+    orderBy: { monto_bloqueado_usd: 'desc' },
+  });
+  for (const cuenta of cuentas) {
+    if (porLiberar <= 0) break;
+    const liberar = Math.min(Number(cuenta.monto_bloqueado_usd), porLiberar);
+    const resto = redondear(Number(cuenta.monto_bloqueado_usd) - liberar);
+    await db.cuentaAhorro.update({
+      where: { id: cuenta.id },
+      data: { monto_bloqueado_usd: resto, monto_bloqueado_bs: redondear(resto * tasaCambio) },
+    });
+    porLiberar = redondear(porLiberar - liberar);
+  }
+  return redondear(montoUsd - porLiberar);
+};
+
 /**
  * Bloquea `montoUsd` del ahorro del socio, cuenta por cuenta, empezando por la
  * de mayor saldo. Si entre la consulta y el bloqueo el ahorro bajó, falla en

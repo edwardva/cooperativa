@@ -26,7 +26,7 @@ import { carteraPrestamos } from '../services/carteraService';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio, bloquearSocios } from '../utils/bloqueos';
 import {
-  liberarFiadores,
+  ajustarGarantias,
   sincronizarCuotas,
 } from '../services/abonosPrestamoService';
 
@@ -286,10 +286,15 @@ async function entregarPrestamo(
   const ahorroAplicado = Math.min(redondear(inicial.ahorro_usd), condiciones.inicial_usd);
   const efectivoAplicado = redondear(Math.min(efectivoUsd, condiciones.inicial_usd - ahorroAplicado));
 
-  // El ahorro del socio respalda su préstamo. Lo que puso de inicial con ese
-  // ahorro ya queda dentro de lo bloqueado: no se bloquea dos veces.
-  const propio = await ahorroLibre(tx, prestamo.socio_id);
-  await bloquearAhorro(tx, prestamo.socio_id, Math.min(propio, monto), tasaCambio);
+  // Del ahorro del socio se bloquea la parte de la inicial que paga con ahorro
+  // y, con lo que le quede, la garantía del saldo deudor. Los fiadores cubren
+  // lo que falte, y se van liberando a medida que paga.
+  const libre = await ahorroLibre(tx, prestamo.socio_id);
+  if (ahorroAplicado > libre + 0.009) {
+    throw new BadRequestError(`El socio tiene $${libre} de ahorro libre y no alcanza para $${ahorroAplicado} de inicial`);
+  }
+  const garantiaPropia = redondear(Math.max(0, Math.min(libre - ahorroAplicado, condiciones.financiado_usd)));
+  await bloquearAhorro(tx, prestamo.socio_id, redondear(ahorroAplicado + garantiaPropia), tasaCambio);
 
   for (const fiador of prestamo.fiadores) {
     if (Number(fiador.monto_bloqueado_usd) > 0) continue;
@@ -303,7 +308,8 @@ async function entregarPrestamo(
     });
   }
 
-  const plan = planDeCuotas(monto, condiciones.cuotas, tasaMensual, fechaEntrega);
+  // Las cuotas reparten el saldo deudor que queda después de la inicial
+  const plan = planDeCuotas(condiciones.financiado_usd, condiciones.cuotas, tasaMensual, fechaEntrega);
   await tx.planPago.createMany({
     data: plan.map((c) => ({
       prestamo_id: prestamoId,
@@ -328,11 +334,15 @@ async function entregarPrestamo(
       // Desde acá el interés corre por día sobre el saldo
       interes_calculado_hasta: fechaEntrega,
       inicial_usd: condiciones.inicial_usd,
+      garantia_propia_usd: garantiaPropia,
       inicial_ahorro_usd: ahorroAplicado,
       inicial_efectivo_usd: efectivoAplicado,
       inicial_efectivo_bs: inicial.efectivo_bs,
     },
   });
+
+  // Si al entregar el ahorro propio ya cubre más que al pedirlo, sobra garantía
+  await ajustarGarantias(tx, prestamoId, tasaCambio);
 }
 
 // ============================================
@@ -371,7 +381,8 @@ export const simularPrestamo = async (req: Request, res: Response): Promise<void
 
     const fecha = fecha_desembolso ? fechaDia(fecha_desembolso.slice(0, 10), 'La fecha de entrega') : hoyDia();
     const tasaMensual = Number(tipo.tasa_interes_mensual) || redondear(Number(tipo.tasa_interes_anual) / 12);
-    const plan = planDeCuotas(monto_usd, condiciones.cuotas, tasaMensual, fecha);
+    // Las cuotas reparten el saldo que queda después de la inicial
+    const plan = planDeCuotas(condiciones.financiado_usd, condiciones.cuotas, tasaMensual, fecha);
     const tasaCambio = await obtenerTasaActual();
     const totalInteres = redondear(plan.reduce((a, c) => a + c.monto_interes_estimado_usd, 0));
 
@@ -393,6 +404,8 @@ export const simularPrestamo = async (req: Request, res: Response): Promise<void
         requiere_fiadores: tipo.requiere_fiadores,
         // Estimado: el interés real depende del día en que se pague cada cuota
         total_interes_estimado_usd: totalInteres,
+        saldo_deudor_usd: condiciones.financiado_usd,
+        // Inicial, saldo en cuotas e interés estimado
         total_a_pagar_estimado_usd: redondear(monto_usd + totalInteres),
         plan,
       },
@@ -438,13 +451,19 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
     if (!tipo.estado) throw new BadRequestError('El tipo de préstamo está inactivo');
     // El plazo ya no se elige: la tabla dice cuántas cuotas van según el monto
 
-    // Un socio no puede tener dos préstamos abiertos a la vez
+    // Confirmado: hasta un préstamo abierto por categoría (línea blanca, efectivo,
+    // gastos médicos). Lo que no puede es tener dos del mismo tipo.
     const abierto = await prisma.prestamo.findFirst({
-      where: { socio_id: datos.socio_id, estado: { in: ['solicitado', 'aprobado', 'activo', 'moroso'] } },
+      where: {
+        socio_id: datos.socio_id,
+        tipo_prestamo_id: datos.tipo_prestamo_id,
+        estado: { in: ['solicitado', 'aprobado', 'activo', 'moroso'] },
+      },
     });
     if (abierto) {
       throw new ConflictError(
-        `El socio ya tiene el préstamo ${abierto.numero_prestamo} sin saldar`
+        `El socio ya tiene el préstamo ${abierto.numero_prestamo} de ${tipo.nombre} sin saldar: ` +
+          'se permite uno abierto por tipo'
       );
     }
 
@@ -457,15 +476,25 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
     }
     const tasaMensual = Number(tipo.tasa_interes_mensual) || redondear(Number(tipo.tasa_interes_anual) / 12);
 
-    // --- ¿Va a la reunión? Sólo si no lo cubre con su propio ahorro ---
+    // --- ¿Va a la reunión? Sólo si su ahorro no cubre lo que va a deber ---
+    // Confirmado: los fiadores cubren la diferencia entre el saldo deudor (el
+    // monto menos la inicial) y el ahorro propio que le queda después de poner
+    // la parte de la inicial que paga con ahorro.
     const ahorroPropio = await ahorroLibre(prisma, datos.socio_id);
-    const faltante = redondear(Math.max(0, datos.monto_usd - ahorroPropio));
+    const inicialConAhorro = Math.min(datos.inicial_ahorro_usd, condiciones.inicial_usd);
+    if (inicialConAhorro > ahorroPropio + 0.009) {
+      throw new BadRequestError(
+        `El socio tiene $${ahorroPropio} de ahorro libre y no alcanza para poner $${inicialConAhorro} de inicial`
+      );
+    }
+    const ahorroDisponible = redondear(Math.max(0, ahorroPropio - inicialConAhorro));
+    const faltante = redondear(Math.max(0, condiciones.financiado_usd - ahorroDisponible));
     const requiereAprobacion = faltante > 0;
     const garantizado = redondear(datos.fiadores.reduce((a, f) => a + f.monto_garantizado_usd, 0));
 
     if (requiereAprobacion && garantizado + 0.009 < faltante) {
       throw new BadRequestError(
-        `El socio tiene $${ahorroPropio} de ahorro libre y pide $${datos.monto_usd}: ` +
+        `El socio va a deber $${condiciones.financiado_usd} y le quedan $${ahorroDisponible} de ahorro: ` +
           `los fiadores deben cubrir los $${faltante} que faltan y suman $${garantizado}`
       );
     }
@@ -494,10 +523,16 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
       await bloquearSocios(tx, [datos.socio_id, ...datos.fiadores.map((f) => f.socio_id)]);
 
       const otroAbierto = await tx.prestamo.findFirst({
-        where: { socio_id: datos.socio_id, estado: { in: ['solicitado', 'aprobado', 'activo', 'moroso'] } },
+        where: {
+          socio_id: datos.socio_id,
+          tipo_prestamo_id: datos.tipo_prestamo_id,
+          estado: { in: ['solicitado', 'aprobado', 'activo', 'moroso'] },
+        },
       });
       if (otroAbierto) {
-        throw new ConflictError(`El socio ya tiene el préstamo ${otroAbierto.numero_prestamo} sin saldar`);
+        throw new ConflictError(
+          `El socio ya tiene el préstamo ${otroAbierto.numero_prestamo} de ${tipo.nombre} sin saldar`
+        );
       }
 
       const creado = await tx.prestamo.create({
@@ -516,8 +551,9 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
           dias_por_cuota: DIAS_POR_CUOTA,
           cuota_semanal_usd: condiciones.cuota_capital_usd,
           cuota_semanal_bs: redondear(condiciones.cuota_capital_usd * tasaCambio),
-          saldo_capital_usd: datos.monto_usd,
-          saldo_capital_bs: redondear(datos.monto_usd * tasaCambio),
+          // Lo que se debe es el saldo después de la inicial, que se paga al entregar
+          saldo_capital_usd: condiciones.financiado_usd,
+          saldo_capital_bs: redondear(condiciones.financiado_usd * tasaCambio),
           // El interés arranca en cero y corre por día desde la entrega
           saldo_interes_usd: 0,
           saldo_interes_bs: 0,
@@ -530,11 +566,13 @@ export const crearPrestamo = async (req: Request, res: Response): Promise<void> 
         },
       });
 
-      for (const fiador of datos.fiadores) {
+      // El orden de la lista es el orden en que se van liberando
+      for (const [indice, fiador] of datos.fiadores.entries()) {
         await tx.fiador.create({
           data: {
             prestamo_id: creado.id,
             socio_id: fiador.socio_id,
+            orden: indice + 1,
             monto_garantizado_usd: fiador.monto_garantizado_usd,
             monto_garantizado_bs: redondear(fiador.monto_garantizado_usd * tasaCambio),
             monto_bloqueado_usd: 0,
@@ -854,7 +892,8 @@ export const registrarAbono = async (req: Request, res: Response): Promise<void>
       });
 
       const { cuotas_pagadas } = await sincronizarCuotas(tx, id);
-      if (saldado) await liberarFiadores(tx, id, tasa);
+      // Libera de a un fiador, en su orden; al saldar, también el ahorro propio
+      await ajustarGarantias(tx, id, tasa);
 
       await registrarAuditoria(tx, {
         req,

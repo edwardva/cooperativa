@@ -25,6 +25,8 @@ import {
   Printer,
   Wallet,
   RotateCcw,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -755,13 +757,49 @@ export default function PrestamosPage() {
                         key={f.socio.id}
                         className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-2.5"
                       >
-                        <div>
-                          <p className="text-sm font-medium text-neutral-900">
-                            {f.socio.apellido}, {f.socio.nombre}
-                          </p>
-                          <p className="text-xs text-neutral-500">{f.socio.codigo_socio}</p>
+                        <div className="flex items-center gap-3">
+                          {/* Se liberan de a uno, en este orden (confirmado) */}
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-50 text-xs font-semibold text-primary-700">
+                            {i + 1}°
+                          </span>
+                          <div>
+                            <p className="text-sm font-medium text-neutral-900">
+                              {f.socio.apellido}, {f.socio.nombre}
+                            </p>
+                            <p className="text-xs text-neutral-500">{f.socio.codigo_socio}</p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            title="Liberar antes"
+                            disabled={i === 0}
+                            onClick={() =>
+                              setFiadores((prev) => {
+                                const lista = [...prev]
+                                ;[lista[i - 1], lista[i]] = [lista[i]!, lista[i - 1]!]
+                                return lista
+                              })
+                            }
+                            className="rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Liberar despues"
+                            disabled={i === fiadores.length - 1}
+                            onClick={() =>
+                              setFiadores((prev) => {
+                                const lista = [...prev]
+                                ;[lista[i], lista[i + 1]] = [lista[i + 1]!, lista[i]!]
+                                return lista
+                              })
+                            }
+                            className="rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                          </button>
                           <input
                             type="number"
                             step="0.01"
@@ -919,16 +957,20 @@ export default function PrestamosPage() {
                       Fiadores
                     </p>
                     <div className="space-y-1.5">
-                      {detalle.fiadores.map((f) => (
+                      {[...detalle.fiadores]
+                        .sort((a, b) => (a.orden ?? 1) - (b.orden ?? 1))
+                        .map((f) => (
                         <div
                           key={f.id}
                           className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm"
                         >
                           <span className="text-neutral-800">
-                            {f.socio.apellido}, {f.socio.nombre} · {f.socio.codigo_socio}
+                            {f.orden ?? 1}° · {f.socio.apellido}, {f.socio.nombre} · {f.socio.codigo_socio}
                           </span>
                           <span className="flex items-center gap-2">
-                            <span className="text-neutral-600">${money(f.monto_garantizado_usd)}</span>
+                            <span className="text-neutral-600">
+                              ${money(f.monto_bloqueado_usd)} de ${money(f.monto_garantizado_usd)}
+                            </span>
                             {f.estado === 'liberado' ? (
                               <Badge variant="success">Liberado</Badge>
                             ) : (
