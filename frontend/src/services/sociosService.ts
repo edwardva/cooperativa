@@ -20,7 +20,9 @@ export interface Socio {
   telefono: string | null
   email: string | null
   fecha_inscripcion: string
-  estado: 'activo' | 'retirado' | 'invalido'
+  estado: 'activo' | 'suspendido' | 'retirado' | 'invalido'
+  /** Hasta cuando corren los dias de suspension por atraso */
+  suspendido_hasta?: string | null
   es_delegado: boolean
   ubicacion_id: number | null
   autorizado_nombre: string | null

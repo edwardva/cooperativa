@@ -76,6 +76,8 @@ model Socio {
   email             String?     @db.VarChar(100)
   fecha_inscripcion DateTime    @db.Date
   estado            EstadoSocio @default(activo)
+  /// Hasta cuándo corren los días de suspensión; se cumplen aunque pague antes
+  suspendido_hasta  DateTime?   @db.Date
   es_delegado       Boolean     @default(false)
   // OBSOLETO desde la fase 2: no se lee ni se actualiza. Si el socio también es
   // trabajador se sabe por su persona (expediente en socios_trabajadores sin
@@ -94,15 +96,16 @@ model Socio {
   updated_at        DateTime    @updatedAt
 
   // Relaciones
-  ubicacion             Ubicacion?           @relation(fields: [ubicacion_id], references: [id])
-  persona               Persona?             @relation(fields: [persona_id], references: [id])
+  ubicacion             Ubicacion?             @relation(fields: [ubicacion_id], references: [id])
+  persona               Persona?               @relation(fields: [persona_id], references: [id])
   beneficiarios         Beneficiario[]
   cuentas_ahorro        CuentaAhorro[]
-  prestamos             Prestamo[]           @relation("SocioPrestamo")
+  prestamos             Prestamo[]             @relation("SocioPrestamo")
   prestamos_como_fiador Fiador[]
   usuario_digital       UsuarioDigital?
   asistencias_asamblea  AsistenciaAsamblea[]
   colectas              Colecta[]
+  historial_estados     HistorialEstadoSocio[]
 
   @@index([cedula])
   @@index([codigo_socio])
@@ -140,8 +143,30 @@ model Beneficiario {
 
 enum EstadoSocio {
   activo
+  // Al caer en la semana 6 de atraso; los días los fija la regla confirmada
+  suspendido
   retirado
   invalido
+}
+
+/// Cada cambio de estado del socio: quién, cuándo, por qué y con cuánto atraso
+model HistorialEstadoSocio {
+  id               Int       @id @default(autoincrement())
+  socio_id         Int
+  estado_anterior  String    @db.VarChar(20)
+  estado_nuevo     String    @db.VarChar(20)
+  motivo           String    @db.Text
+  /// 'automatico' (el proceso) o 'manual' (alguien lo hizo desde el sistema)
+  origen           String    @default("automatico") @db.VarChar(20)
+  semanas_atraso   Int?
+  suspendido_hasta DateTime? @db.Date
+  usuario_id       Int?
+  fecha            DateTime  @default(now())
+
+  socio Socio @relation(fields: [socio_id], references: [id], onDelete: Cascade)
+
+  @@index([socio_id, fecha])
+  @@map("historial_estado_socio")
 }
 
 enum EstadoBeneficiario {

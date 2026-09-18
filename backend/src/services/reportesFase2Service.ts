@@ -12,11 +12,11 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { BadRequestError } from '../middleware/errorHandler';
 import { carteraPrestamos, VISTAS_CARTERA } from './carteraService';
 import { conversionDePrestamos } from './conversionPrestamosService';
+import { atrasoPorSocio, NIVELES_ATRASO, nivelDeAtraso } from './atrasoSociosService';
 import { redondear } from './cobroSemanalService';
 import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
 import { etiquetaFeria } from './trabajadoresService';
-import { aOrdinal, formatearPeriodo, semanaActual, semanaDeFecha, type Periodo } from '../utils/calendarioSemanal';
-import { coberturaDe, semanasSinPagoDerivadas, type AcuerdoConCobertura } from './coberturaService';
+import { formatearPeriodo, semanaActual, semanaDeFecha } from '../utils/calendarioSemanal';
 import { fechaDia } from '../utils/fechaDia';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
 import { adelantoDelRenglon, type Reporte } from '../utils/reportes';
@@ -454,16 +454,6 @@ const colectas = async (p: Parametros): Promise<Reporte> => {
 // 41 el socio lo pierde todo. Hoy revisan la lista a mano antes de retirar a
 // nadie: este reporte es esa lista y no cambia ningún estado.
 
-const NIVELES_ATRASO = [
-  { clave: '41', desde: 41, hasta: Infinity, texto: 'Semana 41 o más: pierde los servicios' },
-  { clave: '36', desde: 36, hasta: 40, texto: 'Próximo a la semana 41' },
-  { clave: '11', desde: 11, hasta: 35, texto: 'Suspensión de 1 mes en funeraria y 7 días en salud' },
-  { clave: '6', desde: 6, hasta: 10, texto: 'Suspensión de 3 días' },
-  { clave: '1', desde: 1, hasta: 5, texto: 'Atrasado' },
-] as const;
-
-const nivelDeAtraso = (semanas: number) => NIVELES_ATRASO.find((n) => semanas >= n.desde && semanas <= n.hasta);
-
 const atrasoSocios = async (p: Parametros): Promise<Reporte> => {
   const nivel = texto(p, 'nivel') || '41';
   const rango =
@@ -474,41 +464,9 @@ const atrasoSocios = async (p: Parametros): Promise<Reporte> => {
   const feriaId = texto(p, 'feria_id');
   const actual = semanaActual();
 
-  const campos = {
-    ano_pagado_hasta: true,
-    semana_pagada_hasta: true,
-    fecha_ultimo_pago: true,
-    semanas_sin_pago: true,
-    fecha_inicio: true,
-    estado: true,
-    beneficiario: { select: { socio_id: true } },
-  } as const;
-  const vigentes = { estado: { in: ['activo' as const, 'suspendido' as const] } };
-  const [funerarias, saludes] = await Promise.all([
-    prisma.acuerdoFuneraria.findMany({ where: vigentes, select: campos }),
-    prisma.acuerdoSalud.findMany({ where: vigentes, select: campos }),
-  ]);
-
-  // Por socio, la cobertura más adelantada de sus acuerdos: paga todo junto
-  const porSocio = new Map<number, { cobertura: Periodo; servicios: Set<string>; suspendido: boolean }>();
-  const sumar = (servicio: string, a: AcuerdoConCobertura & { beneficiario: { socio_id: number } }) => {
-    const cobertura = coberturaDe(a, actual);
-    if (!cobertura) return;
-    const previo = porSocio.get(a.beneficiario.socio_id);
-    if (!previo) {
-      porSocio.set(a.beneficiario.socio_id, { cobertura, servicios: new Set([servicio]), suspendido: a.estado === 'suspendido' });
-      return;
-    }
-    if (aOrdinal(cobertura) > aOrdinal(previo.cobertura)) previo.cobertura = cobertura;
-    previo.servicios.add(servicio);
-    previo.suspendido ||= a.estado === 'suspendido';
-  };
-  funerarias.forEach((a) => sumar('Funeraria', a));
-  saludes.forEach((a) => sumar('Salud', a));
-
-  const candidatos = [...porSocio.entries()]
-    .map(([socioId, s]) => ({ socioId, ...s, atraso: semanasSinPagoDerivadas(s.cobertura, actual) }))
-    .filter((c) => c.atraso >= rango.desde && c.atraso <= rango.hasta);
+  const candidatos = (await atrasoPorSocio(prisma, actual))
+    .filter((c) => c.semanas_atraso >= rango.desde && c.semanas_atraso <= rango.hasta)
+    .map((c) => ({ socioId: c.socio_id, cobertura: c.cobertura, servicios: c.servicios, suspendido: c.suspendido, atraso: c.semanas_atraso }));
   acotar(candidatos.length);
 
   const socios = candidatos.length
@@ -553,7 +511,7 @@ const atrasoSocios = async (p: Parametros): Promise<Reporte> => {
       formatearPeriodo(f.cobertura),
       f.atraso,
       nivelDeAtraso(f.atraso)?.texto ?? '',
-      `${[...f.servicios].join(' y ')}${f.suspendido ? ' (con suspensión registrada)' : ''}`,
+      `${f.servicios.join(' y ')}${f.suspendido ? ' (con suspensión registrada)' : ''}`,
     ]),
     totales: [
       { etiqueta: 'Socios', valor: filas.length },
