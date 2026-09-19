@@ -378,8 +378,25 @@ Supuestos, mientras la cooperativa no confirme:
 - ✅ **Hasta un préstamo abierto por tipo** (línea blanca, efectivo, gastos médicos).
 - ✅ Al saldar se devuelve el ahorro propio bloqueado (antes quedaba bloqueado).
 - **Tipos en uso:** línea blanca 1,5%, efectivo 1% y gastos médicos 1%, todos mensuales con
-  cálculo diario. En producción se corrigieron línea blanca y efectivo; falta gastos médicos
-  y decidir si se desactivan los demás tipos.
+  cálculo diario. ✅ Gastos médicos corregido en producción el 2026-09-18.
+- ✅ **2026-09-18 (tercera ronda):** se desactivan los tipos del sistema viejo que ya no se
+  otorgan (medicamento, largo y mediano plazo, inventario, pre-pago, computadoras, línea
+  blanca 2 y el "Préstamo Personal" de prueba). Se agrega **Divisas** (tipo 99 del sistema
+  viejo, que no se había migrado): préstamo en dólares en físico con aval de los ahorros en
+  divisas, 1% mensual. Migración `20260923000000_tipos_prestamo_vigentes`.
+- **Cómo funciona hoy "Divisas" en el sistema viejo** (revisado en sus 4.080 préstamos):
+  se entrega en dólares en físico, desde bóveda, con aval de los ahorros en divisas del
+  socio, al 1% mensual. Es poco usado: 99 préstamos desde 2025 y 6 en 2026. Todos los tipos
+  se registran con el monto y la cuota en dólares (el bolívar es sólo la equivalencia del
+  día), que es lo que ya hace el sistema nuevo: la tabla y el cobro son en divisas.
+- **Confirmado el 2026-09-18:** línea blanca **sigue activo** (la cooperativa siempre tiene
+  productos a la venta en la oficina). "Con fiadores" **no es un tipo**: es el préstamo del
+  socio cuyo ahorro no alcanza y completa el respaldo con el ahorro de fiadores, que es lo
+  que ya hace el sistema nuevo con cualquier tipo. Por eso el tipo "Con fiador" queda
+  desactivado.
+- **Pendiente:** "con aval del retiro". Quien habla con la cooperativa no lo conoce; en el
+  sistema viejo aparece sólo como nota de préstamos de efectivo ("con aval de su retiro",
+  distinto de "con aval de sus ahorros"). No se crea nada hasta que lo expliquen.
 - **Atraso:** sin recargo; los días de atraso se pagan como interés al ponerse al día.
 
 **Hecho el 2026-09-17 y 18**
@@ -496,6 +513,9 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
   suspensión pasa a un mes.
 - Durante la suspensión el socio **puede pagar** su colecta; lo que no puede es recibir los
   servicios.
+- **Ahorro no reclamado** (2026-09-18): si pasa el año y el retirado no lo buscó, por ahora
+  **sigue quedando en su cuenta**. No se mueve ni se da de baja; el reporte de retiros
+  muestra hasta cuándo tenía plazo.
 
 **Pendiente**
 
@@ -544,10 +564,66 @@ compañeras de contabilidad de ahorro que sólo consultan e imprimen reportes**.
 conviene un rol de sólo lectura; el `analista` de hoy puede crear y modificar socios,
 personas, trabajadores y préstamos, así que no sirve como está.
 
+- ✅ **Rol `consulta`** (migración `20260922000000_rol_consulta`): lectura de todos los
+  módulos, reportes con exportación e impresión, sin registrar ni modificar nada. El menú
+  muestra a cada rol sólo lo que puede ver, y Socios y Ahorro ocultan las acciones de alta,
+  edición y retiro a quien no tiene permiso.
+- ✅ Las rutas de Ahorro sólo pedían sesión iniciada: cualquier usuario podía registrar
+  movimientos o abrir cuentas llamando a la API. Ahora exigen `ahorro:read`, `create` o
+  `update` como el resto de los módulos.
+- Usuarios de consulta: **Eneida** y **Carolina**. Como no hay pantalla de usuarios, se crean
+  con `prisma/crear-usuario.ts` (la clave va por variable de entorno).
+
 - Acciones nuevas en `Rol.permisos` (`anular`, `reactivar`, `exportar`, `auditoria`) y
   actualización de `sincronizar-permisos.ts`.
 - Ocultar acciones sin permiso en el front (FE-024); matriz de permisos por rol (QA-024).
 - M9 y prueba completa solo con teclado (QA-022).
+
+### Ajustes de la reunión con la cooperativa · lunes 2026-09-21
+
+Espacio para las decisiones de la reunión. Las respuestas de abajo las dio el 2026-09-18
+una de las funcionales del equipo, no la cooperativa. **Donde chocan con algo que la
+cooperativa ya confirmó, vale lo de la cooperativa** y no se reabre; la funcional completa
+lo que la cooperativa no decidió. Cada punto se marca ✅ cuando la cooperativa lo confirme.
+
+**Firmes**
+
+- **Suspensión:** el socio suspendido pierde el acceso a **todos** los servicios. Sólo puede
+  pagar las semanas que debe o retirar su ahorro y cerrar. No puede pedir préstamos ni
+  inscribir acuerdos ni beneficiarios. Coincide con la cooperativa ("puede pagar su colecta;
+  lo que no puede es recibir los servicios"). Hoy el sistema bloquea sólo el préstamo;
+  faltan los acuerdos y los beneficiarios.
+- **Conversión de préstamos vigentes:** el informe lo revisa **Carolina**.
+- **Cédulas:** se les pasa la lista en Excel (`scripts/migracion/data/REVISION-CEDULAS-SOCIOS.xlsx`,
+  no se versiona porque tiene datos personales): 476 casos de nombres distintos (1.002
+  expedientes; 434 casos con alguno activo) y 204 cédulas inválidas (72 activas; 188 sin
+  cédula en el sistema anterior). La cooperativa tiene que corregirlas antes de empezar.
+- ✅ **Sector "EL TRIUNFO (SEDE)"**, código `SEDE`: migración `20260924000000_sector_el_triunfo`.
+
+**Se mantiene lo que confirmó la cooperativa** (la funcional opinó distinto)
+
+- **Semana 41:** el **socio** queda retirado por el artículo 5, literal c, no sólo pierde el
+  acuerdo. Su ahorro se entrega si lo busca dentro del año.
+- **Préstamo del retirado en la semana 41:** se lleva a la **reunión de delegados**. La
+  funcional recomendaba que lo cancelen los fiadores con su ahorro.
+- **Inicial y cuotas:** todas las categorías usan **la misma tabla**, con su inicial y sus
+  cuotas, como lo tiene hoy el sistema. Para información: en el sistema anterior casi no se
+  cobraba inicial (en el 93% de los préstamos de 2025-2026 las cuotas suman el monto
+  completo), así que para los socios es un cambio.
+- **Reactivación:** los días de suspensión se cumplen aunque el socio pague. Reactivar a
+  mano no puede acortarlos.
+
+**Para acordar el lunes**
+
+1. **Aviso automático de morosidad:** un mensaje en la semana 38 y otro el lunes de la
+   semana 40, último plazo antes del retiro. Es la mensajería de la Fase 3: hay que definir
+   el canal (WhatsApp o SMS), quién lo paga y revisar los teléfonos cargados. El listado de
+   morosos por feria ya existe: reporte "Socios por semanas de atraso".
+2. **Quién corre la revisión semanal:** propuesta, que la caja 99 vea la simulación y la
+   confirme las primeras semanas, y después pase a automática.
+3. **Quién reactiva a mano:** según la funcional, cualquier cajero, siempre antes de la
+   semana 41 y una vez cumplidos los días de suspensión.
+4. **"Préstamo con aval del retiro":** qué es.
 
 ### Fase 3 (fuera de este plan)
 

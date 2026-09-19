@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
+import { useAuthStore, usePermissions } from '../../store/authStore'
 import { clsx } from 'clsx'
 import { 
   Home, 
@@ -31,30 +32,32 @@ interface NavItem {
   path: string
   icon: React.ElementType
   badge?: number
+  /** Módulo de permisos: el ítem se muestra sólo a quien puede verlo */
+  modulo?: string
 }
 
 const navigationItems: NavItem[] = [
   { name: 'Dashboard', path: '/dashboard', icon: Home },
-  { name: 'Socios', path: '/socios', icon: Users },
+  { name: 'Socios', path: '/socios', icon: Users, modulo: 'socios' },
 
-  { name: 'Trabajadores', path: '/trabajadores', icon: HardHat },
-  { name: 'Ahorro', path: '/ahorro', icon: Wallet },
-  { name: 'Préstamos', path: '/prestamos', icon: DollarSign },
-  { name: 'Colecta', path: '/colecta', icon: ClipboardList },
-  { name: 'Reportes Colecta', path: '/colecta/reportes', icon: Calculator },
-  { name: 'Funeraria', path: '/funeraria', icon: Shield },
-  { name: 'Salud', path: '/salud', icon: HeartPulse },
-  { name: 'Salud por Feria', path: '/salud/pago-feria', icon: HeartPulse },
-  { name: 'Bóveda', path: '/boveda', icon: Briefcase },
-  { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck },
-  { name: 'Reportes', path: '/reportes', icon: FileDown },
-  { name: 'Impresión', path: '/impresion', icon: Printer },
-  { name: 'Semanas Colecta', path: '/semanas-colecta', icon: Calendar },
-  { name: 'Ferias', path: '/ferias', icon: MapPin },
-  { name: 'Tipos de Cuenta', path: '/tipos-cuenta', icon: CreditCard },
-  { name: 'Tipos de Préstamo', path: '/tipos-prestamo', icon: FileText },
-  { name: 'Parámetros', path: '/parametros', icon: Settings },
-  { name: 'Auditoría', path: '/auditoria', icon: ScrollText },
+  { name: 'Trabajadores', path: '/trabajadores', icon: HardHat, modulo: 'trabajadores' },
+  { name: 'Ahorro', path: '/ahorro', icon: Wallet, modulo: 'ahorro' },
+  { name: 'Préstamos', path: '/prestamos', icon: DollarSign, modulo: 'prestamos' },
+  { name: 'Colecta', path: '/colecta', icon: ClipboardList, modulo: 'colecta' },
+  { name: 'Reportes Colecta', path: '/colecta/reportes', icon: Calculator, modulo: 'colecta' },
+  { name: 'Funeraria', path: '/funeraria', icon: Shield, modulo: 'funeraria' },
+  { name: 'Salud', path: '/salud', icon: HeartPulse, modulo: 'salud' },
+  { name: 'Salud por Feria', path: '/salud/pago-feria', icon: HeartPulse, modulo: 'salud_feria' },
+  { name: 'Bóveda', path: '/boveda', icon: Briefcase, modulo: 'colecta' },
+  { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck, modulo: 'asambleas' },
+  { name: 'Reportes', path: '/reportes', icon: FileDown, modulo: 'reportes' },
+  { name: 'Impresión', path: '/impresion', icon: Printer, modulo: 'impresion' },
+  { name: 'Semanas Colecta', path: '/semanas-colecta', icon: Calendar, modulo: 'semanas_colecta' },
+  { name: 'Ferias', path: '/ferias', icon: MapPin, modulo: 'ubicaciones' },
+  { name: 'Tipos de Cuenta', path: '/tipos-cuenta', icon: CreditCard, modulo: 'tipos_cuenta' },
+  { name: 'Tipos de Préstamo', path: '/tipos-prestamo', icon: FileText, modulo: 'tipos_prestamo' },
+  { name: 'Parámetros', path: '/parametros', icon: Settings, modulo: 'parametros' },
+  { name: 'Auditoría', path: '/auditoria', icon: ScrollText, modulo: 'auditoria' },
 ]
 
 interface SidebarProps {
@@ -66,6 +69,11 @@ interface SidebarProps {
 
 export const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, onMobileClose }: SidebarProps) => {
   const location = useLocation()
+  const { hasPermission } = usePermissions()
+  const user = useAuthStore((state) => state.user)
+  const iniciales = (user?.nombre ?? 'U').split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase()).join('')
+  // Cada rol ve sólo los módulos que puede consultar
+  const visibles = navigationItems.filter((item) => !item.modulo || hasPermission(item.modulo, 'read'))
 
   const toggleSidebar = () => setIsCollapsed(!isCollapsed)
 
@@ -130,7 +138,7 @@ export const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, onMobileClo
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 py-4 scrollbar-thin scrollbar-thumb-neutral-300 scrollbar-track-transparent">
         <ul className="space-y-1">
-          {navigationItems.map((item) => {
+          {visibles.map((item) => {
             const isActive = location.pathname === item.path
             const Icon = item.icon
 
@@ -185,11 +193,11 @@ export const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, onMobileClo
       <div className="border-t border-neutral-200 p-4">
         <div className={clsx('flex items-center gap-3', isCollapsed && 'lg:justify-center')}>
           <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-secondary-500 to-primary-500 font-semibold text-sm text-on-accent shadow-sm">
-            AD
+            {iniciales}
           </div>
           <div className={clsx('min-w-0 flex-1', isCollapsed && 'lg:hidden')}>
-            <div className="truncate text-sm font-medium text-neutral-900">Admin</div>
-            <div className="truncate text-xs text-neutral-500">Administrador</div>
+            <div className="truncate text-sm font-medium text-neutral-900">{user?.nombre || 'Usuario'}</div>
+            <div className="truncate text-xs text-neutral-500">{user?.rol?.nombre || 'Sin rol'}</div>
           </div>
         </div>
       </div>
