@@ -864,7 +864,7 @@ export default function ColectaPage() {
                           />
                         </label>
                         <label className="text-sm font-medium text-neutral-700">
-                          <span className="mb-1.5 block">Ano de cobro</span>
+                          <span className="mb-1.5 block">Año de cobro</span>
                           <input
                             type="number"
                             min={2020}
@@ -912,14 +912,14 @@ export default function ColectaPage() {
                         Funeraria ${money(tarifas.funeraria_usd)}
                       </span>
                       <span className="tabular-nums">Salud ${money(tarifas.salud_usd)}</span>
-                      <span className="text-neutral-400">Se configuran en Parametros</span>
+                      <span className="text-neutral-400">Se configuran en Parámetros</span>
                     </div>
                   )}
 
                   {/* Asistencia a asamblea: la caja es donde se ve al socio */}
                   {asambleas.length > 0 && (
                     <label className="mt-4 block text-sm font-medium text-neutral-700">
-                      <span className="mb-1.5 block">Asistio a la asamblea</span>
+                      <span className="mb-1.5 block">Asistió a la asamblea</span>
                       <select
                         value={asambleaId}
                         onChange={(e) =>
@@ -1078,7 +1078,7 @@ export default function ColectaPage() {
                   >
                     <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
                       <DollarSign className="h-4 w-4 text-emerald-600" />
-                      <h3 className="text-sm font-semibold text-neutral-800">Prestamos</h3>
+                      <h3 className="text-sm font-semibold text-neutral-800">Préstamos</h3>
                       <span className="text-xs text-neutral-500">
                         ({prestamos.length}) · abono voluntario
                       </span>
