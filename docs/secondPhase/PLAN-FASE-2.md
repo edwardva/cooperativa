@@ -579,6 +579,52 @@ personas, trabajadores y préstamos, así que no sirve como está.
 - Ocultar acciones sin permiso en el front (FE-024); matriz de permisos por rol (QA-024).
 - M9 y prueba completa solo con teclado (QA-022).
 
+### Ajustes de la reunión con la cooperativa · lunes 2026-09-21
+
+Espacio para las decisiones de la reunión. Las respuestas de abajo las dio el 2026-09-18
+una de las funcionales del equipo, no la cooperativa: son la base para acordar el lunes, y
+cada punto se marca ✅ cuando la cooperativa lo confirme.
+
+**Firmes (según la funcional)**
+
+- **Suspensión:** el socio suspendido pierde el acceso a **todos** los servicios. Sólo puede
+  pagar las semanas que debe (si no pasó la semana 40) o retirar su ahorro y cerrar. No puede
+  pedir préstamos, inscribir acuerdos ni beneficiarios. Hoy el sistema bloquea sólo el
+  préstamo; faltan los acuerdos y los beneficiarios.
+- **Conversión de préstamos vigentes:** el informe lo revisa **Carolina**.
+- **Cédulas:** se les pasa la lista en Excel (`scripts/migracion/data/REVISION-CEDULAS-SOCIOS.xlsx`,
+  no se versiona porque tiene datos personales): 476 casos de nombres distintos (1.002
+  expedientes; 434 casos con alguno activo) y 204 cédulas inválidas (72 activas; 188 sin
+  cédula en el sistema anterior). La cooperativa tiene que corregirlas antes de empezar.
+- ✅ **Sector "EL TRIUNFO (SEDE)"**, código `SEDE`: migración `20260924000000_sector_el_triunfo`.
+
+**Para acordar el lunes**
+
+1. **Aviso automático de morosidad:** un mensaje en la semana 38 y otro el lunes de la
+   semana 40, último plazo antes de perder el acuerdo. Es la mensajería de la Fase 3: hay que
+   definir el canal (WhatsApp o SMS), quién lo paga y revisar los teléfonos cargados. El
+   listado de morosos por feria ya existe: reporte "Socios por semanas de atraso".
+2. **Quién corre la revisión semanal:** propuesta, que la caja 99 vea la simulación y la
+   confirme las primeras semanas, y después pase a automática.
+3. **Reactivación a mano:** cualquier cajero, mientras el socio no llegue a la semana 41. La
+   41 es automática y no tiene vuelta atrás.
+4. **Semana 41: ¿pierde el acuerdo o deja de ser socio?** La cooperativa confirmó el retiro
+   del socio (artículo 5, literal c); la funcional habla de "perder el acuerdo". Confirmar.
+5. **Préstamo del retirado en la semana 41:** la funcional recomienda que lo cancelen los
+   fiadores con su ahorro. Propuesta: primero el ahorro del propio socio, que ya está
+   bloqueado como garantía, y lo que falte, los fiadores en su orden.
+6. **Inicial y cuotas por tipo.** En el sistema anterior (2025-2026) casi nunca se cobró
+   inicial: en el 93% de los préstamos las cuotas suman el monto completo, también en línea
+   blanca. Y la tabla funcionó como **máximo**: muchos eligieron menos cuotas (el 86% en
+   gastos médicos). Propuesta:
+   - **Línea blanca:** inicial según la tabla (10 a 50%), como confirmó la cooperativa con
+     el ejemplo de 1.000.
+   - **Efectivo, divisas y gastos médicos:** sin inicial; el respaldo es el ahorro que se
+     bloquea más los fiadores.
+   - **Cuotas:** la tabla dice el máximo y el socio puede elegir menos.
+   Hoy el sistema exige inicial en todos los tipos y fija las cuotas de la tabla.
+7. **"Préstamo con aval del retiro":** qué es.
+
 ### Fase 3 (fuera de este plan)
 
 Mensajería (WhatsApp/SMS/correo), alertas de mora, tableros e indicadores. Conviene dejar
