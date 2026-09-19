@@ -36,6 +36,7 @@ import {
   FileText,
 } from 'lucide-react';
 import * as ahorroService from '../services/ahorroService';
+import { usePermissions } from '../store/authStore';
 import * as sociosService from '../services/sociosService';
 import type { CuentaAhorro, Estadisticas, TipoCuentaAhorro, MovimientoAhorro } from '../services/ahorroService';
 
@@ -50,6 +51,9 @@ import type { CuentaAhorro, Estadisticas, TipoCuentaAhorro, MovimientoAhorro } f
 
 export const AhorroPage = () => {
   // Estados de filtros y modales
+  // El rol de consulta ve e imprime, pero no registra ni abre cuentas
+  const { hasPermission } = usePermissions();
+  const puedeRegistrar = hasPermission('ahorro', 'create');
   const [busqueda, setBusqueda] = useState('');
   const [filtroTipoCuenta, setFiltroTipoCuenta] = useState<string>('todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
@@ -757,21 +761,25 @@ export const AhorroPage = () => {
             <FileText className="w-4 h-4" />
             Reporte de Movimientos
           </Button>
-          <Button
-            onClick={() => setModalAbierto('movimiento')}
-            variant="secondary"
-            className="flex items-center gap-2"
-          >
-            <TrendingUp className="w-4 h-4" />
-            Registrar Movimiento
-          </Button>
-          <Button
-            onClick={() => setModalAbierto('apertura')}
-            className="flex items-center gap-2"
-          >
-            <PlusCircle className="w-4 h-4" />
-            Apertura de Cuenta
-          </Button>
+          {puedeRegistrar && (
+            <>
+              <Button
+                onClick={() => setModalAbierto('movimiento')}
+                variant="secondary"
+                className="flex items-center gap-2"
+              >
+                <TrendingUp className="w-4 h-4" />
+                Registrar Movimiento
+              </Button>
+              <Button
+                onClick={() => setModalAbierto('apertura')}
+                className="flex items-center gap-2"
+              >
+                <PlusCircle className="w-4 h-4" />
+                Apertura de Cuenta
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1121,6 +1129,7 @@ export const AhorroPage = () => {
                           e.stopPropagation();
                           setCuentaSeleccionada(cuenta);
                           setModalAbierto('detalle');
+                          setPaginaMovimientosDetalle(1);
                         }}
                         className="text-indigo-600 hover:text-indigo-900 inline-flex items-center"
                       >
@@ -1131,7 +1140,6 @@ export const AhorroPage = () => {
                   </tr>
                 );
               })}
-                            setPaginaMovimientosDetalle(1);
             </tbody>
           </table>
         </div>

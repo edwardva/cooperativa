@@ -30,6 +30,7 @@ import { getErrorMessage } from '../services/api'
 import * as personasService from '../services/personasService'
 import type { ResultadoIdentificacion } from '../services/personasService'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
+import { usePermissions } from '../store/authStore'
 
 interface Ubicacion {
   id: number
@@ -171,6 +172,11 @@ const resumenExpedientes = (r: ResultadoIdentificacion): string => {
 }
 
 export const SociosPage = () => {
+  // El rol de consulta ve e imprime, pero no da de alta, edita ni retira
+  const { hasPermission } = usePermissions()
+  const puedeCrear = hasPermission('socios', 'create')
+  const puedeModificar = hasPermission('socios', 'update')
+  const puedeRegistrarTrabajador = hasPermission('trabajadores', 'create')
   const [socios, setSocios] = useState<Socio[]>([])
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([])
   const [busqueda, setBusqueda] = useState('')
@@ -716,10 +722,12 @@ export const SociosPage = () => {
               <Download className="h-4 w-4" />
               Imprimir listado
             </Button>
-            <Button onClick={() => abrirModalNuevo()}>
-              <Plus className="h-4 w-4" />
-              Nuevo socio
-            </Button>
+            {puedeCrear && (
+              <Button onClick={() => abrirModalNuevo()}>
+                <Plus className="h-4 w-4" />
+                Nuevo socio
+              </Button>
+            )}
           </div>
         </div>
       </section>
@@ -959,7 +967,7 @@ export const SociosPage = () => {
                                       <Contact className="h-4 w-4 text-primary-600" />
                                       <span>Ficha completa</span>
                                     </button>
-                                    {!socio.trabajador && socio.estado === 'activo' && (
+                                    {puedeRegistrarTrabajador && !socio.trabajador && socio.estado === 'activo' && (
                                       <button
                                         onClick={() => {
                                           setMenuAbiertoId(null)
@@ -971,16 +979,18 @@ export const SociosPage = () => {
                                         <span>Registrar como trabajador</span>
                                       </button>
                                     )}
-                                    <button
-                                      onClick={() => {
-                                        setMenuAbiertoId(null)
-                                        abrirModalEditar(socio)
-                                      }}
-                                      className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50"
-                                    >
-                                      <Edit2 className="h-4 w-4 text-primary-600" />
-                                      <span>Editar socio</span>
-                                    </button>
+                                    {puedeModificar && (
+                                      <button
+                                        onClick={() => {
+                                          setMenuAbiertoId(null)
+                                          abrirModalEditar(socio)
+                                        }}
+                                        className="flex w-full items-center gap-3 px-4 py-2 text-sm text-neutral-700 transition hover:bg-neutral-50"
+                                      >
+                                        <Edit2 className="h-4 w-4 text-primary-600" />
+                                        <span>Editar socio</span>
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() => {
                                         setMenuAbiertoId(null)
@@ -991,7 +1001,7 @@ export const SociosPage = () => {
                                       <Download className="h-4 w-4 text-emerald-600" />
                                       <span>Imprimir ficha</span>
                                     </button>
-                                    {socio.estado !== 'retirado' && (
+                                    {puedeModificar && socio.estado !== 'retirado' && (
                                       <>
                                         <div className="my-1 border-t border-neutral-200" />
                                         <button
