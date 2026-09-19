@@ -432,6 +432,36 @@ Supuestos, mientras la cooperativa no confirme:
   reporte de diferencias (MIG-008, MIG-011).
 - Ensayo completo sobre copia de producción antes de aplicar (QA-021).
 
+### Día de la migración · procedimiento
+
+La base de producción de hoy es de prueba: la cooperativa prueba sobre ella y el día antes de la
+puesta en marcha se vacía y se migra entera desde el sistema anterior (acordado el 2026-09-19).
+
+1. **Corte:** a la hora acordada la cooperativa deja de registrar en el sistema anterior. Lo que
+   se registre después no pasa.
+2. **Simular el vaciado:** `bash scripts/vaciar-base.sh`. Muestra, tabla por tabla, cuántas filas
+   se van y cuáles se conservan. Se detiene si aparece una tabla sin clasificar o si una tabla de
+   configuración depende de una que se vacía.
+3. **Vaciar:** `bash scripts/vaciar-base.sh --aplicar --confirmo-vaciar-cooperativa`. Saca antes
+   un respaldo completo en `~/respaldos/` (y dice cómo volver atrás), vacía las 27 tablas de datos
+   en una sola transacción y reinicia los numeradores. Conserva roles, usuarios con sus claves,
+   parámetros, tipos, calendario, tasa BCV y ferias; de ferias sólo borra la de prueba (PRB).
+4. **Migrar** en este orden: ferias, socios, ahorro, funeraria con beneficiarios, salud,
+   **préstamos, colectas y cobertura real de pagos** (estos tres todavía no tienen script, ver
+   abajo), y trabajadores.
+5. **Personas y permisos:** `npx tsx prisma/backfill-personas.ts --aplicar` y
+   `npx tsx prisma/sincronizar-permisos.ts --aplicar`.
+6. **Verificar** con la sección "Después de la migración" del plan de pruebas: cantidades, 20
+   saldos al azar, cobertura, préstamos (Carolina) y la morosidad en simulación antes de aplicarla.
+
+- ✅ `scripts/vaciar-base.sh` probado el 2026-09-19: en local, vaciado real con respaldo y
+  restauración comprobada; en producción, en simulación (85.383 filas por vaciar, sin
+  bloqueos).
+- **Pendiente para poder arrancar (Sprint D):** scripts de migración de los 4.080 préstamos del
+  sistema anterior con sus abonos, de las colectas históricas y de la **cobertura real** (hasta
+  qué semana pagó cada socio). Hoy la cobertura migrada es un único valor igual para todos y no
+  hay acuerdos de salud reales cargados, así que sin esto la morosidad no se puede aplicar.
+
 ### Sprint E · Reportes y ficha integral ✅
 
 - `GET /personas/:id/resumen` y ficha con pestañas por expediente (HU-20).
