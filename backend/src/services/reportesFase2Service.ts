@@ -18,7 +18,7 @@ import { redondear } from './cobroSemanalService';
 import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
 import { etiquetaFeria } from './trabajadoresService';
 import { formatearPeriodo, semanaActual, semanaDeFecha } from '../utils/calendarioSemanal';
-import { fechaDia } from '../utils/fechaDia';
+import { fechaDia, hoyDia } from '../utils/fechaDia';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
 import { adelantoDelRenglon, type Reporte } from '../utils/reportes';
 
@@ -34,6 +34,7 @@ export const REPORTES = {
   'atraso-socios': 'Socios por semanas de atraso',
   'conversion-prestamos': 'Préstamos vigentes con el cálculo nuevo',
   'retiros-semana-41': 'Retiros por pasividad (semana 41)',
+  'socios-suspendidos': 'Socios suspendidos',
 } as const;
 
 export type ClaveReporte = keyof typeof REPORTES;
@@ -648,6 +649,74 @@ const retirosSemana41 = async (p: Parametros): Promise<Reporte> => {
 
 // ============================================
 
+/**
+ * Socios suspendidos hoy: desde cuándo, hasta cuándo y por qué. Es la lista
+ * para la oficina, que hasta ahora sólo veía la suspensión servicio por
+ * servicio (RF-REP-07).
+ */
+const sociosSuspendidos = async (p: Parametros): Promise<Reporte> => {
+  const feriaId = Number(texto(p, 'feria_id')) || undefined;
+  const hoy = hoyDia();
+
+  const socios = await prisma.socio.findMany({
+    where: { estado: 'suspendido', ...(feriaId ? { ubicacion_id: feriaId } : {}) },
+    select: {
+      id: true, codigo_socio: true, nombre: true, apellido: true, cedula: true, telefono: true,
+      suspendido_desde: true, suspendido_hasta: true,
+      ubicacion: { select: { codigo: true, nombre: true } },
+    },
+    orderBy: [{ suspendido_desde: 'asc' }, { codigo_socio: 'asc' }],
+  });
+  acotar(socios.length);
+
+  // El último movimiento de cada uno dice por qué quedó suspendido
+  const historial = socios.length
+    ? await prisma.historialEstadoSocio.findMany({
+        where: { socio_id: { in: socios.map((s) => s.id) }, estado_nuevo: 'suspendido' },
+        orderBy: { fecha: 'desc' },
+        select: { socio_id: true, motivo: true, semanas_atraso: true, origen: true },
+      })
+    : [];
+  const ultimo = new Map<number, (typeof historial)[number]>();
+  for (const h of historial) if (!ultimo.has(h.socio_id)) ultimo.set(h.socio_id, h);
+
+  const dias = (desde: Date | null) =>
+    desde ? Math.max(0, Math.round((hoy.getTime() - desde.getTime()) / 86_400_000)) : '';
+  const cumplidos = socios.filter((s) => s.suspendido_hasta !== null && s.suspendido_hasta <= hoy).length;
+
+  return {
+    clave: 'socios-suspendidos',
+    titulo: REPORTES['socios-suspendidos'],
+    subtitulo: `Al ${diaLocal(hoy)}${feriaId ? ' · una feria' : ''}`,
+    columnas: [
+      'Expediente', 'Socio', 'Cédula', 'Teléfono', 'Feria', 'Suspendido desde', 'Hasta',
+      'Días suspendido', 'Semanas sin pagar', 'Motivo', 'Origen',
+    ],
+    filas: socios.map((s) => {
+      const h = ultimo.get(s.id);
+      return [
+        s.codigo_socio,
+        `${s.apellido}, ${s.nombre}`,
+        s.cedula,
+        s.telefono ?? '',
+        s.ubicacion ? etiquetaFeria(s.ubicacion) : '',
+        diaBD(s.suspendido_desde),
+        s.suspendido_hasta ? diaBD(s.suspendido_hasta) : 'sin fecha',
+        dias(s.suspendido_desde),
+        h?.semanas_atraso ?? '',
+        h?.motivo ?? '',
+        h?.origen === 'manual' ? 'a mano' : 'automático',
+      ];
+    }),
+    totales: [
+      { etiqueta: 'Socios suspendidos', valor: socios.length },
+      { etiqueta: 'Ya cumplieron sus días y siguen sin pagar', valor: cumplidos },
+    ],
+  };
+};
+
+// ============================================
+
 const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   'ferias-pendientes': feriasPendientes,
   'pagos-salud': pagosSalud,
@@ -658,6 +727,7 @@ const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   'atraso-socios': atrasoSocios,
   'conversion-prestamos': conversionPrestamos,
   'retiros-semana-41': retirosSemana41,
+  'socios-suspendidos': sociosSuspendidos,
 };
 
 export const esClaveReporte = (clave: string): clave is ClaveReporte => clave in GENERADORES;

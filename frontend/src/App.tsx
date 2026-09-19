@@ -8,6 +8,9 @@ import DashboardPage from './pages/DashboardPage'
 import { ParametrosPage } from './pages/ParametrosPage'
 import { FeriasPage } from './pages/FeriasPage'
 import { TiposCuentaPage } from './pages/TiposCuentaPage'
+import { UsuariosPage } from './pages/UsuariosPage'
+import { MorosidadPage } from './pages/MorosidadPage'
+import { TablerosPage } from './pages/TablerosPage'
 import { TiposPrestamoPage } from './pages/TiposPrestamoPage'
 import { ReportesPage } from './pages/ReportesPage'
 import { SemanasColectaPage } from './pages/SemanasColectaPage'
@@ -121,6 +124,39 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <TrabajadoresPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/usuarios"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <UsuariosPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/morosidad"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <MorosidadPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/tableros"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <TablerosPage />
               </MainLayout>
             </ProtectedRoute>
           }

@@ -4,7 +4,7 @@
 // ============================================
 
 import { Router } from 'express';
-import { revisarMorosidadSocios } from '../controllers/morosidadController';
+import { revisarMorosidadSocios, reactivarSocio, historialMorosidad } from '../controllers/morosidadController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -17,5 +17,17 @@ router.use(authenticate);
  * Simula por defecto; con { aplicar: true } suspende, reactiva y deja historial
  */
 router.post('/revisar', authorize('socios', 'update'), revisarMorosidadSocios);
+
+/**
+ * POST /api/morosidad/reactivar
+ * Levanta a mano la suspensión de un socio, con motivo
+ */
+router.post('/reactivar', authorize('socios', 'reactivar'), reactivarSocio);
+
+/**
+ * GET /api/morosidad/historial
+ * Suspensiones, reactivaciones y retiros, con quién los hizo
+ */
+router.get('/historial', authorize('socios', 'read'), historialMorosidad);
 
 export default router;

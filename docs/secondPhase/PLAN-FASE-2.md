@@ -210,9 +210,10 @@ Verificado contra la base local con los controladores reales: dos cobros, dos ab
 
 **Sigue pendiente**
 
-- Varias auditorías de socios, salud y funeraria se escriben **fuera** de la transacción de la operación. Con el servicio central ya es un cambio de una línea por caso.
+- ✅ 2026-09-19: las auditorías de socios, ahorro, salud, funeraria y ferias se escriben **dentro** de la transacción de la operación que auditan. Quedan fuera dos que no cambian datos: el recálculo masivo de saldos, que audita cuántas cuentas se actualizaron, y el registro de impresión.
+- ✅ 2026-09-19: la búsqueda por nombre ignora los acentos ("maria" encuentra a "MARÍA" y "pena" a "PEÑA"), en Socios y en Colecta. Usa `unaccent` de PostgreSQL (migración `20260925000000_busqueda_sin_acentos`).
+- ✅ 2026-09-19: se quitaron los reportes de socios y préstamos que quedaban en la API sin pantalla.
 - `npm run lint` del frontend no corre: el repositorio no tiene configuración de ESLint.
-- La búsqueda por nombre distingue acentos ("maria" no encuentra "María"). Los datos migrados vienen en mayúsculas sin acentos, así que hoy no afecta.
 
 ---
 
@@ -309,7 +310,7 @@ Supuestos, mientras la cooperativa no confirme:
 
 **Para desplegar:** la migración con el rol `postgres`, `sincronizar-permisos.ts --aplicar` (agrega `salud_feria`: el cajero registra y consulta, el analista consulta y solo el administrador anula), y cargar los dos parámetros.
 
-**Pendiente:** exportar las ferias pendientes a Excel y PDF (hoy se imprimen), que va con los reportes del Sprint E, y la revisión visual de la pantalla.
+**Pendiente:** la revisión visual de la pantalla. La exportación de ferias pendientes a Excel y PDF ya está hecha (se comprobó el 2026-09-19).
 
 ### Sprint C · Préstamos completos
 
@@ -517,14 +518,21 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
   **sigue quedando en su cuenta**. No se mueve ni se da de baja; el reporte de retiros
   muestra hasta cuándo tenía plazo.
 
+**Hecho el 2026-09-19**
+
+- ✅ **Pantalla de morosidad** con tres pestañas: correr la revisión en simulación y aplicarla,
+  ver los suspendidos y consultar el historial de suspensiones, reactivaciones y retiros.
+- ✅ **Reactivación a mano** con motivo. Respeta las dos reglas de la cooperativa: los días se
+  cumplen aunque el socio pague, y en la semana 41 ya no hay vuelta atrás. Adelantar el fin de
+  una suspensión es una excepción que sólo hace la caja 99 y queda marcada en el historial.
+- ✅ **Restricciones al suspendido:** no puede inscribir acuerdos de salud ni de funeraria, ni
+  sumar beneficiarios, ni pedir préstamos. Sí puede pagar lo que debe y retirar su ahorro.
+- ✅ **Reporte de socios suspendidos** (RF-REP-07): desde cuándo, hasta cuándo, días que lleva,
+  semanas sin pagar, motivo y si fue automático o a mano. Filtrable por feria.
+
 **Pendiente**
 
-- **Reactivación a mano** con motivo, para el caso que no resuelve el proceso automático.
-- **Restricciones de operación** para suspendidos, salvo las de regularización: falta definir
-  cuáles, porque hoy el suspendido sigue pudiendo pagar su colecta (que es lo que se busca).
-- **Pantalla de morosidad**: correr el proceso, ver la simulación y el historial. Conviene
-  diseñarla sabiendo lo del retiro de la 41.
-- **Reporte de socios suspendidos** (RF-REP-07): ahora que el estado existe, ya se puede.
+- Los avisos por mensaje de las semanas 38 y 40, que dependen del canal (Fase 3).
 
 ### Reglas de funeraria · confirmadas el 2026-09-16 (pendiente 9)
 
@@ -574,10 +582,13 @@ personas, trabajadores y préstamos, así que no sirve como está.
 - Usuarios de consulta: **Eneida** y **Carolina**. Como no hay pantalla de usuarios, se crean
   con `prisma/crear-usuario.ts` (la clave va por variable de entorno).
 
-- Acciones nuevas en `Rol.permisos` (`anular`, `reactivar`, `exportar`, `auditoria`) y
-  actualización de `sincronizar-permisos.ts`.
-- Ocultar acciones sin permiso en el front (FE-024); matriz de permisos por rol (QA-024).
-- M9 y prueba completa solo con teclado (QA-022).
+- ✅ **Pantalla de usuarios** (2026-09-19): alta, edición, rol, activar y desactivar, y
+  restablecer clave, todo auditado. Nadie puede cambiarse su propio rol ni dejar el sistema
+  sin administrador. Cada usuario puede cambiar su propia clave desde el menú de arriba.
+- ✅ Acción nueva `socios: reactivar` en los permisos, para levantar una suspensión a mano.
+- ✅ Los permisos por rol quedaron en `prisma/permisos.ts`, que usan el sembrado y
+  `sincronizar-permisos.ts`. Antes el sembrado tenía su propia copia, desactualizada.
+- Matriz de permisos por rol (QA-024) y prueba completa sólo con teclado (QA-022).
 
 ### Ajustes de la reunión con la cooperativa · lunes 2026-09-21
 
@@ -627,9 +638,13 @@ lo que la cooperativa no decidió. Cada punto se marca ✅ cuando la cooperativa
 
 ### Fase 3 (fuera de este plan)
 
-Mensajería (WhatsApp/SMS/correo), alertas de mora, tableros e indicadores. Conviene dejar
-creadas en Sprint F las consultas de "próximos a suspensión", que son la entrada de las
-alertas.
+Mensajería (WhatsApp/SMS/correo) y alertas de mora. Conviene dejar creadas en Sprint F las
+consultas de "próximos a suspensión", que son la entrada de las alertas.
+
+- ✅ **Tableros e indicadores** (2026-09-19): pantalla con socios, ahorro, colecta, préstamos y
+  atraso. Cifras del momento y series de los últimos 6, 12 o 24 meses. Los gráficos están
+  dibujados en SVG dentro del proyecto, sin librería nueva, porque el despliegue no instala
+  dependencias. Cada gráfico trae sus números abajo, para quien no distingue los colores.
 
 ---
 

@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocios } from '../utils/bloqueos';
+import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
 
 const prisma = new PrismaClient();
 
@@ -796,6 +797,12 @@ export const crearGrupoAcuerdo = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    const noHabilitado = motivoNoHabilitado(socio, 'inscribir un acuerdo de salud');
+    if (noHabilitado) {
+      res.status(400).json(RESPUESTA_NO_HABILITADO(noHabilitado));
+      return;
+    }
+
     // Regla de negocio: solo socios con un acuerdo de ahorro activo pueden
     // disfrutar del beneficio de salud.
     const cuentaAhorroActiva = await prisma.cuentaAhorro.findFirst({
@@ -866,6 +873,13 @@ export const crearGrupoAcuerdo = async (req: Request, res: Response): Promise<vo
         );
       }
 
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREATE',
+        modulo: 'salud',
+        despues: { numero_acuerdo: data.numero_acuerdo, socio_id: data.socio_id, personas: filasCreadas.length },
+      });
+
       return filasCreadas;
     });
 
@@ -873,13 +887,6 @@ export const crearGrupoAcuerdo = async (req: Request, res: Response): Promise<vo
       where: { id: { in: rows.map((r) => r.id) } },
       include: includeGrupo,
     })) as AcuerdoSaludCompleto[];
-
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREATE',
-      modulo: 'salud',
-      despues: { numero_acuerdo: data.numero_acuerdo, socio_id: data.socio_id, personas: rows.length },
-    });
 
     logger.info(`Acuerdo de salud ${data.numero_acuerdo} creado para socio ${data.socio_id} con ${rows.length} persona(s)`);
 
@@ -922,6 +929,13 @@ export const agregarBeneficiarioAGrupo = async (req: Request, res: Response): Pr
 
     const socioId = filaReferencia.beneficiario.socio_id;
 
+    const titular = await prisma.socio.findUnique({ where: { id: socioId }, select: { estado: true, codigo_socio: true } });
+    const noHabilitado = titular ? motivoNoHabilitado(titular, 'sumar beneficiarios al acuerdo') : null;
+    if (noHabilitado) {
+      res.status(400).json(RESPUESTA_NO_HABILITADO(noHabilitado));
+      return;
+    }
+
     const nuevaFila = await prisma.$transaction(async (tx) => {
       const totalMiembros = await contarMiembrosGrupo(tx, numeroAcuerdo);
       if (totalMiembros >= MAX_BENEFICIARIOS_POR_GRUPO + 1) {
@@ -941,7 +955,7 @@ export const agregarBeneficiarioAGrupo = async (req: Request, res: Response): Pr
         throw err;
       }
 
-      return tx.acuerdoSalud.create({
+      const creada = await tx.acuerdoSalud.create({
         data: {
           beneficiario_id: beneficiario.id,
           tipo_acuerdo_id: filaReferencia.tipo_acuerdo_id,
@@ -952,14 +966,16 @@ export const agregarBeneficiarioAGrupo = async (req: Request, res: Response): Pr
           fecha_inicio: new Date(datos.fecha_ingreso),
         },
       });
-    });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREATE',
-      modulo: 'salud',
-      registro_id: nuevaFila.id,
-      despues: nuevaFila,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREATE',
+        modulo: 'salud',
+        registro_id: creada.id,
+        despues: creada,
+      });
+
+      return creada;
     });
 
     logger.info(`Beneficiario agregado al acuerdo de salud ${numeroAcuerdo}`);
@@ -1017,22 +1033,24 @@ export const actualizarGrupoAcuerdo = async (req: Request, res: Response): Promi
       }
     }
 
-    await prisma.acuerdoSalud.updateMany({
-      where: { numero_acuerdo: numeroAcuerdo },
-      data: {
-        ...(data.numero_acuerdo_nuevo !== undefined && { numero_acuerdo: data.numero_acuerdo_nuevo }),
-        ...(data.numero_contrato !== undefined && { numero_contrato: data.numero_contrato || null }),
-        ...(data.tipo_acuerdo_id !== undefined && { tipo_acuerdo_id: data.tipo_acuerdo_id }),
-        ...(data.fecha_inicio !== undefined && { fecha_inicio: new Date(data.fecha_inicio) }),
-      },
-    });
+    await prisma.$transaction(async (tx) => {
+      await tx.acuerdoSalud.updateMany({
+        where: { numero_acuerdo: numeroAcuerdo },
+        data: {
+          ...(data.numero_acuerdo_nuevo !== undefined && { numero_acuerdo: data.numero_acuerdo_nuevo }),
+          ...(data.numero_contrato !== undefined && { numero_contrato: data.numero_contrato || null }),
+          ...(data.tipo_acuerdo_id !== undefined && { tipo_acuerdo_id: data.tipo_acuerdo_id }),
+          ...(data.fecha_inicio !== undefined && { fecha_inicio: new Date(data.fecha_inicio) }),
+        },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'UPDATE',
-      modulo: 'salud',
-      antes: { numero_acuerdo: numeroAcuerdo },
-      despues: data,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'UPDATE',
+        modulo: 'salud',
+        antes: { numero_acuerdo: numeroAcuerdo },
+        despues: data,
+      });
     });
 
     const numeroFinal = data.numero_acuerdo_nuevo || numeroAcuerdo;
@@ -1084,13 +1102,15 @@ export const eliminarGrupoAcuerdo = async (req: Request, res: Response): Promise
       return;
     }
 
-    await prisma.acuerdoSalud.deleteMany({ where: { numero_acuerdo: numeroAcuerdo } });
+    await prisma.$transaction(async (tx) => {
+      await tx.acuerdoSalud.deleteMany({ where: { numero_acuerdo: numeroAcuerdo } });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'DELETE',
-      modulo: 'salud',
-      antes: { numero_acuerdo: numeroAcuerdo, personas: filas.length },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'DELETE',
+        modulo: 'salud',
+        antes: { numero_acuerdo: numeroAcuerdo, personas: filas.length },
+      });
     });
 
     logger.info(`Acuerdo de salud ${numeroAcuerdo} eliminado (${filas.length} persona(s))`);
@@ -1140,14 +1160,16 @@ export const eliminarAcuerdo = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    await prisma.acuerdoSalud.delete({ where: { id: acuerdoId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.acuerdoSalud.delete({ where: { id: acuerdoId } });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'DELETE',
-      modulo: 'salud',
-      registro_id: acuerdoId,
-      antes: acuerdo,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'DELETE',
+        modulo: 'salud',
+        registro_id: acuerdoId,
+        antes: acuerdo,
+      });
     });
 
     logger.info(`Acuerdo de salud ${acuerdoId} eliminado`);
@@ -1265,15 +1287,19 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
       updateData.motivo_retiro = data.motivo_retiro!;
     }
 
-    const resultado = await prisma.acuerdoSalud.updateMany({ where: grupoWhere, data: updateData });
+    const resultado = await prisma.$transaction(async (tx) => {
+      const resultado = await tx.acuerdoSalud.updateMany({ where: grupoWhere, data: updateData });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'UPDATE',
-      modulo: 'salud',
-      registro_id: acuerdoId,
-      antes: { numero_acuerdo: acuerdo.numero_acuerdo, estado: acuerdo.estado },
-      despues: { estado: data.estado, motivo: data.motivo || null, personas_afectadas: resultado.count },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'UPDATE',
+        modulo: 'salud',
+        registro_id: acuerdoId,
+        antes: { numero_acuerdo: acuerdo.numero_acuerdo, estado: acuerdo.estado },
+        despues: { estado: data.estado, motivo: data.motivo || null, personas_afectadas: resultado.count },
+      });
+
+      return resultado;
     });
 
     logger.info(`Acuerdo de salud ${acuerdo.numero_acuerdo || acuerdoId}: estado ${acuerdo.estado} → ${data.estado} (${resultado.count} persona(s))`);
@@ -1322,22 +1348,26 @@ export const retirarBeneficiario = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const actualizado = await prisma.acuerdoSalud.update({
-      where: { id: acuerdoId },
-      data: {
-        estado: 'retirado',
-        fecha_retiro: new Date(data.fecha_retiro),
-        motivo_retiro: data.motivo_retiro,
-      },
-    });
+    const actualizado = await prisma.$transaction(async (tx) => {
+      const actualizado = await tx.acuerdoSalud.update({
+        where: { id: acuerdoId },
+        data: {
+          estado: 'retirado',
+          fecha_retiro: new Date(data.fecha_retiro),
+          motivo_retiro: data.motivo_retiro,
+        },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'UPDATE',
-      modulo: 'salud',
-      registro_id: acuerdoId,
-      antes: acuerdo,
-      despues: actualizado,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'UPDATE',
+        modulo: 'salud',
+        registro_id: acuerdoId,
+        antes: acuerdo,
+        despues: actualizado,
+      });
+
+      return actualizado;
     });
 
     logger.info(`Beneficiario retirado del acuerdo de salud ${acuerdoId} (motivo: ${data.motivo_retiro})`);
@@ -1422,13 +1452,13 @@ export const registrarPago = async (req: Request, res: Response): Promise<void> 
           },
         });
       }
-    });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREATE',
-      modulo: 'salud',
-      despues: { numero_acuerdo: numeroAcuerdo, ...data, personas_afectadas: filas.length },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREATE',
+        modulo: 'salud',
+        despues: { numero_acuerdo: numeroAcuerdo, ...data, personas_afectadas: vigentes.length },
+      });
     });
 
     logger.info(`Pago de salud registrado para acuerdo ${numeroAcuerdo}: ${filas.length} persona(s), ${data.semanas} semana(s)`);
@@ -1534,14 +1564,14 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
         );
         intento += 1;
       }
-      return resultados;
-    });
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREATE',
+        modulo: 'funeraria',
+        despues: { origen: 'salud', numero_acuerdo_salud: numeroAcuerdo, personas: resultados.length },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREATE',
-      modulo: 'funeraria',
-      despues: { origen: 'salud', numero_acuerdo_salud: numeroAcuerdo, personas: creados.length },
+      return resultados;
     });
 
     logger.info(`Transferidas ${creados.length} persona(s) del acuerdo de salud ${numeroAcuerdo} a funeraria`);
@@ -1580,6 +1610,12 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    const noHabilitado = motivoNoHabilitado(socio, 'inscribir un acuerdo de salud');
+    if (noHabilitado) {
+      res.status(400).json(RESPUESTA_NO_HABILITADO(noHabilitado));
+      return;
+    }
+
     const tipoAcuerdo = await prisma.tipoAcuerdoSalud.findUnique({ where: { id: data.tipo_acuerdo_id } });
     if (!tipoAcuerdo || !tipoAcuerdo.estado) {
       res.status(404).json({ success: false, error: { code: 'TIPO_ACUERDO_NOT_FOUND', message: 'Tipo de acuerdo no encontrado o inactivo' } });
@@ -1597,23 +1633,27 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const nuevoAcuerdo = await prisma.acuerdoSalud.create({
-      data: {
-        beneficiario_id: beneficiarioId,
-        tipo_acuerdo_id: data.tipo_acuerdo_id,
-        estado: 'activo',
-        semanas_sin_pago: 0,
-        fecha_inicio: data.fecha_inicio ? new Date(data.fecha_inicio) : new Date(),
-      },
-      include: { beneficiario: { include: { socio: true } }, tipo_acuerdo: true },
-    });
+    const nuevoAcuerdo = await prisma.$transaction(async (tx) => {
+      const nuevoAcuerdo = await tx.acuerdoSalud.create({
+        data: {
+          beneficiario_id: beneficiarioId,
+          tipo_acuerdo_id: data.tipo_acuerdo_id,
+          estado: 'activo',
+          semanas_sin_pago: 0,
+          fecha_inicio: data.fecha_inicio ? new Date(data.fecha_inicio) : new Date(),
+        },
+        include: { beneficiario: { include: { socio: true } }, tipo_acuerdo: true },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREATE',
-      modulo: 'salud',
-      registro_id: nuevoAcuerdo.id,
-      despues: { origen: 'funeraria', acuerdo_id: nuevoAcuerdo.id, socio_id: data.socio_id },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREATE',
+        modulo: 'salud',
+        registro_id: nuevoAcuerdo.id,
+        despues: { origen: 'funeraria', acuerdo_id: nuevoAcuerdo.id, socio_id: data.socio_id },
+      });
+
+      return nuevoAcuerdo;
     });
 
     res.status(201).json({
@@ -1663,18 +1703,22 @@ export async function suspenderGruposVencidos(usuarioId: number | null): Promise
   let personasSuspendidas = 0;
 
   for (const numeroAcuerdo of numerosAcuerdo) {
-    const resultado = await prisma.acuerdoSalud.updateMany({
-      where: { numero_acuerdo: numeroAcuerdo, estado: 'activo' },
-      data: { estado: 'suspendido', fecha_suspension: new Date() },
+    const resultado = await prisma.$transaction(async (tx) => {
+      const r = await tx.acuerdoSalud.updateMany({
+        where: { numero_acuerdo: numeroAcuerdo, estado: 'activo' },
+        data: { estado: 'suspendido', fecha_suspension: new Date() },
+      });
+
+      await registrarAuditoria(tx, {
+        usuarioId,
+        accion: 'UPDATE',
+        modulo: 'salud',
+        despues: { tipo: 'suspension_automatica', numero_acuerdo: numeroAcuerdo, personas: r.count },
+      });
+
+      return r;
     });
     personasSuspendidas += resultado.count;
-
-    await registrarAuditoria(prisma, {
-      usuarioId,
-      accion: 'UPDATE',
-      modulo: 'salud',
-      despues: { tipo: 'suspension_automatica', numero_acuerdo: numeroAcuerdo, personas: resultado.count },
-    });
   }
 
   if (idsSinGrupo.length > 0) {

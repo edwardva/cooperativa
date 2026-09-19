@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { PERMISOS_POR_ROL } from './permisos';
 import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -11,122 +12,26 @@ async function main() {
   // ============================================
   console.log('📝 Creando roles...');
   
-  const permisosAdmin = {
-    socios: ['create', 'read', 'update', 'delete'],
-    ahorro: ['create', 'read', 'update', 'delete'],
-    funeraria: ['create', 'read', 'update', 'delete'],
-    salud: ['create', 'read', 'update', 'delete'],
-    prestamos: ['create', 'read', 'update', 'delete', 'approve'],
-    colecta: ['create', 'read', 'update'],
-    reportes: ['read', 'export'],
-    parametros: ['read', 'update'],
-    usuarios: ['create', 'read', 'update', 'delete'],
-    asambleas: ['create', 'read', 'update', 'delete'],
-    impresion: ['create', 'read'],
-    ubicaciones: ['create', 'read', 'update', 'delete'],
+  const DESCRIPCIONES: Record<string, string> = {
+    admin: 'Administrador del sistema con acceso completo',
+    cajero: 'Cajero operador de colecta',
+    consulta: 'Sólo consulta: ve los módulos e imprime o exporta reportes, sin registrar ni modificar nada',
+    analista: 'Analista de préstamos',
+    supervisor: 'Supervisor de operaciones',
   };
 
-  const rolAdmin = await prisma.rol.upsert({
-    where: { nombre: 'admin' },
-    update: {
-      permisos: {
-        socios: ['create', 'read', 'update', 'delete'],
-        ahorro: ['create', 'read', 'update', 'delete'],
-        prestamos: ['create', 'read', 'update', 'delete', 'approve'],
-        colecta: ['create', 'read', 'update'],
-        reportes: ['read', 'export'],
-        parametros: ['read', 'update'],
-        usuarios: ['create', 'read', 'update', 'delete'],
-        asambleas: ['create', 'read', 'update', 'delete'],
-        ubicaciones: ['create', 'read', 'update', 'delete'],
-      },
-    },
-    create: {
-      nombre: 'admin',
-      descripcion: 'Administrador del sistema con acceso completo',
-      permisos: {
-        socios: ['create', 'read', 'update', 'delete'],
-        ahorro: ['create', 'read', 'update', 'delete'],
-        prestamos: ['create', 'read', 'update', 'delete', 'approve'],
-        colecta: ['create', 'read', 'update'],
-        reportes: ['read', 'export'],
-        parametros: ['read', 'update'],
-        usuarios: ['create', 'read', 'update', 'delete'],
-        asambleas: ['create', 'read', 'update', 'delete'],
-        ubicaciones: ['create', 'read', 'update', 'delete'],
-      },
-    },
-  });
-
-  const permisosCajero = {
-    socios: ['read'],
-    funeraria: ['create', 'read', 'update'],
-    salud: ['create', 'read', 'update'],
-    colecta: ['create', 'read'],
-    reportes: ['read'],
-    impresion: ['create', 'read'],
-    ubicaciones: ['read'],
-  };
-
-  const rolCajero = await prisma.rol.upsert({
-    where: { nombre: 'cajero' },
-    update: {
-      permisos: {
-        socios: ['read'],
-        colecta: ['create', 'read'],
-        reportes: ['read'],
-        ubicaciones: ['read'],
-        asambleas: ['create', 'read'],
-      },
-    },
-    create: {
-      nombre: 'cajero',
-      descripcion: 'Cajero operador de colecta',
-      permisos: {
-        socios: ['read'],
-        colecta: ['create', 'read'],
-        reportes: ['read'],
-        ubicaciones: ['read'],
-        asambleas: ['create', 'read'],
-      },
-    },
-  });
-
-  const permisosAnalista = {
-    socios: ['create', 'read', 'update'],
-    ahorro: ['read'],
-    funeraria: ['read'],
-    salud: ['read'],
-    prestamos: ['create', 'read', 'update'],
-    reportes: ['read', 'export'],
-    ubicaciones: ['read'],
-  };
-
-  const rolAnalista = await prisma.rol.upsert({
-    where: { nombre: 'analista' },
-    update: {
-      permisos: {
-        socios: ['create', 'read', 'update'],
-        ahorro: ['read'],
-        prestamos: ['create', 'read', 'update'],
-        reportes: ['read', 'export'],
-        ubicaciones: ['read'],
-        asambleas: ['create', 'read'],
-      },
-    },
-    create: {
-      nombre: 'analista',
-      descripcion: 'Analista de préstamos',
-      permisos: {
-        socios: ['create', 'read', 'update'],
-        ahorro: ['read'],
-        prestamos: ['create', 'read', 'update'],
-        reportes: ['read', 'export'],
-        ubicaciones: ['read'],
-        asambleas: ['create', 'read'],
-      },
-    },
-  });
+  // Los permisos salen de `prisma/permisos.ts`, el mismo archivo que usa
+  // `sincronizar-permisos.ts` sobre las bases que ya existen. Así una base
+  // nueva arranca con los mismos módulos que una en producción.
+  const roles: Record<string, { id: number }> = {};
+  for (const [nombre, permisos] of Object.entries(PERMISOS_POR_ROL)) {
+    roles[nombre] = await prisma.rol.upsert({
+      where: { nombre },
+      update: { permisos },
+      create: { nombre, descripcion: DESCRIPCIONES[nombre] ?? nombre, permisos },
+      select: { id: true },
+    });
+  }
 
   // ============================================
   // 2. USUARIOS
@@ -143,7 +48,7 @@ async function main() {
       email: 'admin@cooperativa.com',
       password_hash: passwordHash,
       nombre_completo: 'Administrador del Sistema',
-      rol_id: rolAdmin.id,
+      rol_id: roles.admin!.id,
       estado: 'activo',
     },
   });
@@ -156,7 +61,7 @@ async function main() {
       email: 'caja1@cooperativa.com',
       password_hash: passwordHash,
       nombre_completo: 'María González',
-      rol_id: rolCajero.id,
+      rol_id: roles.cajero!.id,
       estado: 'activo',
     },
   });
@@ -169,7 +74,7 @@ async function main() {
       email: 'analista@cooperativa.com',
       password_hash: passwordHash,
       nombre_completo: 'Carlos Rodríguez',
-      rol_id: rolAnalista.id,
+      rol_id: roles.analista!.id,
       estado: 'activo',
     },
   });
