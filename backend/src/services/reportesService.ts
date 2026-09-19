@@ -232,34 +232,6 @@ export const generarExcelTabla = async (
  */
 
 /**
- * Reporte de Socios
- */
-export const generarReporteSocios = async (
-  formato: 'pdf' | 'excel',
-  filtros?: Record<string, any>
-) => {
-  // TODO: Obtener datos reales de la base de datos
-  const columnas = ['Cédula', 'Nombre', 'Ubicación', 'Estado', 'Fecha Ingreso'];
-  const datos = [
-    ['V-12345678', 'Juan Pérez', 'MATRIZ', 'Activo', '15/01/2024'],
-    ['V-87654321', 'María González', 'SUC01', 'Activo', '20/02/2024'],
-  ];
-
-  const opciones: ReporteOpciones = {
-    titulo: 'Reporte de Socios',
-    subtitulo: filtros?.ubicacion ? `Ubicación: ${filtros.ubicacion}` : undefined,
-    fecha: new Date(),
-    filtros,
-  };
-
-  if (formato === 'pdf') {
-    return await generarPDFTabla(opciones, columnas, datos);
-  } else {
-    return await generarExcelTabla(opciones, columnas, datos);
-  }
-};
-
-/**
  * Reporte de Acuerdos de Funeraria Suspendidos
  * (consulta real a la base de datos, no mock)
  */
@@ -595,29 +567,3 @@ export const generarReporteSaludGrupos = async (tipo: TipoListadoSalud): Promise
   return Buffer.from(buffer);
 };
 
-/**
- * Reporte de Préstamos
- */
-export const generarReportePrestamos = async (
-  formato: 'pdf' | 'excel',
-  filtros?: Record<string, any>
-) => {
-  const columnas = ['Préstamo #', 'Socio', 'Tipo', 'Monto', 'Estado'];
-  const datos = [
-    ['P-0001', 'Juan Pérez', 'Personal', '$1,500.00', 'Activo'],
-    ['P-0002', 'María González', 'Emergencia', '$800.00', 'Activo'],
-  ];
-
-  const opciones: ReporteOpciones = {
-    titulo: 'Reporte de Préstamos',
-    subtitulo: filtros?.tipo ? `Tipo: ${filtros.tipo}` : undefined,
-    fecha: new Date(),
-    filtros,
-  };
-
-  if (formato === 'pdf') {
-    return await generarPDFTabla(opciones, columnas, datos);
-  } else {
-    return await generarExcelTabla(opciones, columnas, datos);
-  }
-};

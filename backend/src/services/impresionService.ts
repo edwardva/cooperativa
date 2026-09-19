@@ -397,7 +397,10 @@ export function generarFichaAcuerdoSalud(data: FichaAcuerdoSalud): string {
 // ============================================
 
 /**
- * Registra una impresión en el log de auditoría
+ * Registra una impresión en el log de auditoría.
+ *
+ * Va sin transacción a propósito: imprimir no cambia nada en la base, así que
+ * no hay nada con lo que confirmarse o descartarse.
  */
 export async function registrarImpresion(
   tipo: string,

@@ -51,6 +51,7 @@ import {
   sincronizarCuotas,
 } from '../services/abonosPrestamoService';
 import { ponerInteresAlDia } from '../services/interesPrestamoService';
+import { idsSociosPorTexto } from '../services/busquedaSociosService';
 
 const prisma = new PrismaClient();
 
@@ -281,14 +282,7 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       if (palabras.join('').length < MINIMO_LETRAS_NOMBRE) {
         throw new BadRequestError(`Escriba al menos ${MINIMO_LETRAS_NOMBRE} letras del nombre`);
       }
-      alternativas.push({
-        AND: palabras.map((palabra) => ({
-          OR: [
-            { nombre: { contains: palabra, mode: 'insensitive' as const } },
-            { apellido: { contains: palabra, mode: 'insensitive' as const } },
-          ],
-        })),
-      });
+      alternativas.push({ id: { in: await idsSociosPorTexto(prisma, termino, { campos: ['nombre', 'apellido'] }) } });
     }
 
     const where: Prisma.SocioWhereInput = { OR: alternativas };

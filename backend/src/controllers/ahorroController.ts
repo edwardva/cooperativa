@@ -696,29 +696,33 @@ export const cambiarEstadoCuenta = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const cuentaActualizada = await prisma.cuentaAhorro.update({
-      where: { id: cuentaId },
-      data: { estado },
-      include: {
-        socio: {
-          select: {
-            codigo_socio: true,
-            nombre: true,
-            apellido: true,
+    // El cambio de estado y su auditoría se confirman juntos
+    const cuentaActualizada = await prisma.$transaction(async (tx) => {
+      const actualizada = await tx.cuentaAhorro.update({
+        where: { id: cuentaId },
+        data: { estado },
+        include: {
+          socio: {
+            select: {
+              codigo_socio: true,
+              nombre: true,
+              apellido: true,
+            },
           },
+          tipo_cuenta: true,
         },
-        tipo_cuenta: true,
-      },
-    });
+      });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'ACTUALIZAR',
-      modulo: 'ahorro',
-      registro_id: cuentaId,
-      antes: cuenta,
-      despues: cuentaActualizada,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'ACTUALIZAR',
+        modulo: 'ahorro',
+        registro_id: cuentaId,
+        antes: cuenta,
+        despues: actualizada,
+      });
+
+      return actualizada;
     });
 
     res.json({
@@ -1124,7 +1128,8 @@ export const recalcularSaldos = async (req: Request, res: Response): Promise<voi
       actualizadas++;
     }
 
-    // Audit log
+    // Queda fuera de transacción a propósito: son miles de cuentas, una por
+    // una, y lo que se audita es cuántas se actualizaron realmente
     await registrarAuditoria(prisma, {
       req,
       accion: 'ACTUALIZAR',
