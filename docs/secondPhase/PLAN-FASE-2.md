@@ -389,14 +389,14 @@ Supuestos, mientras la cooperativa no confirme:
   socio, al 1% mensual. Es poco usado: 99 préstamos desde 2025 y 6 en 2026. Todos los tipos
   se registran con el monto y la cuota en dólares (el bolívar es sólo la equivalencia del
   día), que es lo que ya hace el sistema nuevo: la tabla y el cobro son en divisas.
-- **Pendiente con la cooperativa:** listó como categorías efectivo, divisas, gastos médicos,
-  "con fiadores" y "con aval del retiro", sin línea blanca. En el sistema viejo línea blanca
-  es el más usado (337 préstamos en 2026) y sigue activo. "Aval de sus ahorros" y "aval de
-  su retiro" no son tipos: son una nota del préstamo de efectivo (274 con aval desde 2025).
-  Falta saber si "con fiadores" y "con aval del retiro" son tipos aparte (cada uno con su
-  préstamo abierto y su tasa) o la forma de respaldar cualquier préstamo, como hace hoy el
-  sistema nuevo. "Con fiador" queda desactivado hasta que se defina: tenía 0,21% y ningún
-  préstamo en el sistema viejo.
+- **Confirmado el 2026-09-18:** línea blanca **sigue activo** (la cooperativa siempre tiene
+  productos a la venta en la oficina). "Con fiadores" **no es un tipo**: es el préstamo del
+  socio cuyo ahorro no alcanza y completa el respaldo con el ahorro de fiadores, que es lo
+  que ya hace el sistema nuevo con cualquier tipo. Por eso el tipo "Con fiador" queda
+  desactivado.
+- **Pendiente:** "con aval del retiro". Quien habla con la cooperativa no lo conoce; en el
+  sistema viejo aparece sólo como nota de préstamos de efectivo ("con aval de su retiro",
+  distinto de "con aval de sus ahorros"). No se crea nada hasta que lo expliquen.
 - **Atraso:** sin recargo; los días de atraso se pagan como interés al ponerse al día.
 
 **Hecho el 2026-09-17 y 18**
@@ -571,6 +571,8 @@ personas, trabajadores y préstamos, así que no sirve como está.
 - ✅ Las rutas de Ahorro sólo pedían sesión iniciada: cualquier usuario podía registrar
   movimientos o abrir cuentas llamando a la API. Ahora exigen `ahorro:read`, `create` o
   `update` como el resto de los módulos.
+- Usuarios de consulta: **Eneida** y **Carolina**. Como no hay pantalla de usuarios, se crean
+  con `prisma/crear-usuario.ts` (la clave va por variable de entorno).
 
 - Acciones nuevas en `Rol.permisos` (`anular`, `reactivar`, `exportar`, `auditoria`) y
   actualización de `sincronizar-permisos.ts`.
