@@ -378,8 +378,25 @@ Supuestos, mientras la cooperativa no confirme:
 - ✅ **Hasta un préstamo abierto por tipo** (línea blanca, efectivo, gastos médicos).
 - ✅ Al saldar se devuelve el ahorro propio bloqueado (antes quedaba bloqueado).
 - **Tipos en uso:** línea blanca 1,5%, efectivo 1% y gastos médicos 1%, todos mensuales con
-  cálculo diario. En producción se corrigieron línea blanca y efectivo; falta gastos médicos
-  y decidir si se desactivan los demás tipos.
+  cálculo diario. ✅ Gastos médicos corregido en producción el 2026-09-18.
+- ✅ **2026-09-18 (tercera ronda):** se desactivan los tipos del sistema viejo que ya no se
+  otorgan (medicamento, largo y mediano plazo, inventario, pre-pago, computadoras, línea
+  blanca 2 y el "Préstamo Personal" de prueba). Se agrega **Divisas** (tipo 99 del sistema
+  viejo, que no se había migrado): préstamo en dólares en físico con aval de los ahorros en
+  divisas, 1% mensual. Migración `20260923000000_tipos_prestamo_vigentes`.
+- **Cómo funciona hoy "Divisas" en el sistema viejo** (revisado en sus 4.080 préstamos):
+  se entrega en dólares en físico, desde bóveda, con aval de los ahorros en divisas del
+  socio, al 1% mensual. Es poco usado: 99 préstamos desde 2025 y 6 en 2026. Todos los tipos
+  se registran con el monto y la cuota en dólares (el bolívar es sólo la equivalencia del
+  día), que es lo que ya hace el sistema nuevo: la tabla y el cobro son en divisas.
+- **Pendiente con la cooperativa:** listó como categorías efectivo, divisas, gastos médicos,
+  "con fiadores" y "con aval del retiro", sin línea blanca. En el sistema viejo línea blanca
+  es el más usado (337 préstamos en 2026) y sigue activo. "Aval de sus ahorros" y "aval de
+  su retiro" no son tipos: son una nota del préstamo de efectivo (274 con aval desde 2025).
+  Falta saber si "con fiadores" y "con aval del retiro" son tipos aparte (cada uno con su
+  préstamo abierto y su tasa) o la forma de respaldar cualquier préstamo, como hace hoy el
+  sistema nuevo. "Con fiador" queda desactivado hasta que se defina: tenía 0,21% y ningún
+  préstamo en el sistema viejo.
 - **Atraso:** sin recargo; los días de atraso se pagan como interés al ponerse al día.
 
 **Hecho el 2026-09-17 y 18**
@@ -496,6 +513,9 @@ Se adelantó a C y D porque es el único sprint que no depende de ninguna confir
   suspensión pasa a un mes.
 - Durante la suspensión el socio **puede pagar** su colecta; lo que no puede es recibir los
   servicios.
+- **Ahorro no reclamado** (2026-09-18): si pasa el año y el retirado no lo buscó, por ahora
+  **sigue quedando en su cuenta**. No se mueve ni se da de baja; el reporte de retiros
+  muestra hasta cuándo tenía plazo.
 
 **Pendiente**
 
@@ -543,6 +563,14 @@ dos reglas difieren: en el sistema viejo, un cobro del **lunes 03/01/2022** marc
 compañeras de contabilidad de ahorro que sólo consultan e imprimen reportes**. Para ellas
 conviene un rol de sólo lectura; el `analista` de hoy puede crear y modificar socios,
 personas, trabajadores y préstamos, así que no sirve como está.
+
+- ✅ **Rol `consulta`** (migración `20260922000000_rol_consulta`): lectura de todos los
+  módulos, reportes con exportación e impresión, sin registrar ni modificar nada. El menú
+  muestra a cada rol sólo lo que puede ver, y Socios y Ahorro ocultan las acciones de alta,
+  edición y retiro a quien no tiene permiso.
+- ✅ Las rutas de Ahorro sólo pedían sesión iniciada: cualquier usuario podía registrar
+  movimientos o abrir cuentas llamando a la API. Ahora exigen `ahorro:read`, `create` o
+  `update` como el resto de los módulos.
 
 - Acciones nuevas en `Rol.permisos` (`anular`, `reactivar`, `exportar`, `auditoria`) y
   actualización de `sincronizar-permisos.ts`.
