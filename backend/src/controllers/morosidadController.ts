@@ -16,7 +16,10 @@ import { revisarMorosidad, SEMANAS } from '../services/morosidadService';
 import { atrasoPorSocio } from '../services/atrasoSociosService';
 import { responderError } from '../utils/responderError';
 import { BadRequestError, NotFoundError } from '../middleware/errorHandler';
-import { hoyDia, textoDia } from '../utils/fechaDia';
+import { hoyDia } from '../utils/fechaDia';
+
+/** dd/mm/aaaa, que es como la lee el cajero */
+const comoFecha = (d: Date) => d.toISOString().slice(0, 10).split('-').reverse().join('/');
 
 const prisma = new PrismaClient();
 
@@ -102,7 +105,7 @@ export const reactivarSocio = async (req: Request, res: Response): Promise<void>
     const diasPendientes = socio.suspendido_hasta !== null && socio.suspendido_hasta > hoy;
     if (diasPendientes && !forzar) {
       throw new BadRequestError(
-        `La suspensión corre hasta el ${textoDia(socio.suspendido_hasta!)} y los días se cumplen aunque pague. ` +
+        `La suspensión corre hasta el ${comoFecha(socio.suspendido_hasta!)} y los días se cumplen aunque pague. ` +
           'Adelantarlo lo hace la caja 99.'
       );
     }

@@ -78,3 +78,41 @@ export const obtenerActividadReciente = async (): Promise<ApiResponse<ActividadR
   const response = await apiClient.get<ApiResponse<ActividadReciente[]>>('/dashboard/actividad-reciente');
   return response.data;
 };
+
+// ============================================
+// TABLEROS (RF-FASE3): series de indicadores
+// ============================================
+
+export interface PuntoIndicador {
+  etiqueta: string
+  valor: number
+}
+
+export interface Indicadores {
+  al: string
+  meses: number
+  socios: { activos: number; suspendidos: number; retirados: number; altas_por_mes: PuntoIndicador[] }
+  ahorro: {
+    saldo_usd: number
+    bloqueado_usd: number
+    cuentas_activas: number
+    depositos_por_mes: PuntoIndicador[]
+    retiros_por_mes: PuntoIndicador[]
+  }
+  colecta: { cobrado_mes_usd: number; por_semana_usd: PuntoIndicador[]; por_servicio_usd: PuntoIndicador[] }
+  prestamos: {
+    activos: number
+    en_solicitud: number
+    morosos: number
+    saldo_usd: number
+    otorgado_por_mes_usd: PuntoIndicador[]
+  }
+  atraso: { socios_con_atraso: number; por_nivel: PuntoIndicador[] }
+}
+
+export const obtenerIndicadores = async (
+  meses = 12
+): Promise<{ success: boolean; data: Indicadores }> => {
+  const response = await apiClient.get('/dashboard/indicadores', { params: { meses } })
+  return response.data
+}

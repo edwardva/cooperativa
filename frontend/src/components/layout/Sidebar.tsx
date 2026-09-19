@@ -2,7 +2,10 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore, usePermissions } from '../../store/authStore'
 import { clsx } from 'clsx'
 import { 
-  Home, 
+  Home,
+  BarChart3,
+  AlertTriangle,
+  Users2, 
   Users, 
   Wallet, 
   DollarSign, 
@@ -37,6 +40,7 @@ interface NavItem {
 
 const navigationItems: NavItem[] = [
   { name: 'Dashboard', path: '/dashboard', icon: Home },
+  { name: 'Tableros', path: '/tableros', icon: BarChart3, modulo: 'dashboard' },
   { name: 'Socios', path: '/socios', icon: Users, modulo: 'socios' },
 
   { name: 'Trabajadores', path: '/trabajadores', icon: HardHat, modulo: 'trabajadores' },
@@ -48,12 +52,14 @@ const navigationItems: NavItem[] = [
   { name: 'Salud', path: '/salud', icon: HeartPulse, modulo: 'salud' },
   { name: 'Salud por Feria', path: '/salud/pago-feria', icon: HeartPulse, modulo: 'salud_feria' },
   { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck, modulo: 'asambleas' },
+  { name: 'Morosidad', path: '/morosidad', icon: AlertTriangle, modulo: 'socios' },
   { name: 'Reportes', path: '/reportes', icon: FileDown, modulo: 'reportes' },
   { name: 'Impresión', path: '/impresion', icon: Printer, modulo: 'impresion' },
   { name: 'Semanas Colecta', path: '/semanas-colecta', icon: Calendar, modulo: 'semanas_colecta' },
   { name: 'Ferias', path: '/ferias', icon: MapPin, modulo: 'ubicaciones' },
   { name: 'Tipos de Cuenta', path: '/tipos-cuenta', icon: CreditCard, modulo: 'tipos_cuenta' },
   { name: 'Tipos de Préstamo', path: '/tipos-prestamo', icon: FileText, modulo: 'tipos_prestamo' },
+  { name: 'Usuarios', path: '/usuarios', icon: Users2, modulo: 'usuarios' },
   { name: 'Parámetros', path: '/parametros', icon: Settings, modulo: 'parametros' },
   { name: 'Auditoría', path: '/auditoria', icon: ScrollText, modulo: 'auditoria' },
 ]

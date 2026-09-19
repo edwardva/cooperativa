@@ -1,7 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Bell, User, LogOut, Settings, ChevronDown, Moon, Sun, Menu } from 'lucide-react'
+import { Search, Bell, KeyRound, LogOut, ChevronDown, Moon, Sun, Menu, Loader2 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
+import { Modal } from '../ui/Modal'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
+import { cambiarMiClave } from '@/services/usuariosService'
+import { getErrorMessage } from '@/services/api'
 import { useTema } from '@/hooks/useTema'
 import { clsx } from 'clsx'
 
@@ -13,6 +18,29 @@ export const Header = ({ onOpenMobileMenu }: HeaderProps) => {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
   const [showUserMenu, setShowUserMenu] = useState(false)
+  // Cambiar la clave propia: cualquier usuario, sabiendo la actual
+  const [modalClave, setModalClave] = useState(false)
+  const [claveActual, setClaveActual] = useState('')
+  const [claveNueva, setClaveNueva] = useState('')
+  const [guardandoClave, setGuardandoClave] = useState(false)
+  const [errorClave, setErrorClave] = useState<string | null>(null)
+  const [avisoClave, setAvisoClave] = useState<string | null>(null)
+
+  const guardarClave = async () => {
+    setGuardandoClave(true)
+    setErrorClave(null)
+    try {
+      await cambiarMiClave(claveActual, claveNueva)
+      setAvisoClave('Su clave quedó cambiada')
+      setClaveActual('')
+      setClaveNueva('')
+      setModalClave(false)
+    } catch (e) {
+      setErrorClave(getErrorMessage(e))
+    } finally {
+      setGuardandoClave(false)
+    }
+  }
   const [searchQuery, setSearchQuery] = useState('')
   const { tema, alternarTema } = useTema()
 
@@ -120,24 +148,13 @@ export const Header = ({ onOpenMobileMenu }: HeaderProps) => {
                   
                   <button
                     onClick={() => {
-                      navigate('/perfil')
+                      setModalClave(true)
                       setShowUserMenu(false)
                     }}
                     className="w-full flex items-center gap-3 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
                   >
-                    <User className="w-4 h-4" />
-                    Mi Perfil
-                  </button>
-                  
-                  <button
-                    onClick={() => {
-                      navigate('/configuracion')
-                      setShowUserMenu(false)
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
-                  >
-                    <Settings className="w-4 h-4" />
-                    Configuración
+                    <KeyRound className="w-4 h-4" />
+                    Cambiar mi clave
                   </button>
                   
                   <hr className="my-2 border-neutral-100" />
@@ -155,6 +172,53 @@ export const Header = ({ onOpenMobileMenu }: HeaderProps) => {
           </div>
         </div>
       </div>
+
+      {avisoClave && (
+        <div className="border-t border-emerald-100 bg-emerald-50 px-6 py-2 text-sm text-emerald-700">
+          {avisoClave}
+        </div>
+      )}
+
+      <Modal
+        open={modalClave}
+        onClose={() => setModalClave(false)}
+        title="Cambiar mi clave"
+        description="Hay que saber la clave actual. Si la olvidó, pídale a la caja 99 que se la restablezca."
+        size="sm"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setModalClave(false)} disabled={guardandoClave}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => void guardarClave()}
+              disabled={guardandoClave || claveActual.length === 0 || claveNueva.length < 8}
+            >
+              {guardandoClave ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Guardar'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {errorClave && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{errorClave}</p>
+          )}
+          <Input
+            label="Clave actual"
+            type="password"
+            autoFocus
+            value={claveActual}
+            onChange={(e) => setClaveActual(e.target.value)}
+          />
+          <Input
+            label="Clave nueva"
+            type="password"
+            value={claveNueva}
+            onChange={(e) => setClaveNueva(e.target.value)}
+            helperText="Al menos 8 caracteres"
+          />
+        </div>
+      </Modal>
     </header>
   )
 }
