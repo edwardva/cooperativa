@@ -6,6 +6,8 @@ import { validarCedula } from '../utils/cedula';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
 import { etiquetaFeria } from '../services/trabajadoresService';
+import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
+import { idsSociosPorTexto } from '../services/busquedaSociosService';
 
 const prisma = new PrismaClient();
 
@@ -255,14 +257,11 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
     // Construir filtros dinámicamente
     const where: any = {};
 
-    // Filtro de búsqueda (codigo_socio, cedula, nombre, apellido)
+    // Búsqueda por expediente, cédula, nombre o apellido. Se resuelve aparte
+    // porque ignora los acentos, que Prisma no sabe comparar (ver
+    // `busquedaSociosService`).
     if (search) {
-      where.OR = [
-        { codigo_socio: { contains: search, mode: 'insensitive' } },
-        { cedula: { contains: search } },
-        { nombre: { contains: search, mode: 'insensitive' } },
-        { apellido: { contains: search, mode: 'insensitive' } },
-      ];
+      where.id = { in: await idsSociosPorTexto(prisma, search) };
     }
 
     // Filtro por estado
@@ -908,18 +907,22 @@ export const actualizarCodigoSocial = async (req: Request, res: Response): Promi
 
     const codigoSocial = validacion.data.codigo_social || null;
 
-    const socio = await prisma.socio.update({
-      where: { id: socioId },
-      data: { codigo_social: codigoSocial },
-    });
+    const socio = await prisma.$transaction(async (tx) => {
+      const socio = await tx.socio.update({
+        where: { id: socioId },
+        data: { codigo_social: codigoSocial },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'ACTUALIZAR_COD_SOCIAL',
-      modulo: 'socios',
-      registro_id: socio.id,
-      antes: { codigo_social: socioExistente.codigo_social },
-      despues: { codigo_social: socio.codigo_social },
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'ACTUALIZAR_COD_SOCIAL',
+        modulo: 'socios',
+        registro_id: socio.id,
+        antes: { codigo_social: socioExistente.codigo_social },
+        despues: { codigo_social: socio.codigo_social },
+      });
+
+      return socio;
     });
 
     logger.info(`Código social actualizado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -1024,21 +1027,25 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
     const notaRetiro = `[RETIRO] Fecha: ${datos.fecha_retiro} | Motivo: ${datos.motivo_retiro} | Usuario: ${req.user!.userId}`;
     const notasActualizadas = [socio.notas?.trim(), notaRetiro].filter(Boolean).join('\n');
 
-    const socioActualizado = await prisma.socio.update({
-      where: { id: socioId },
-      data: {
-        estado: 'retirado',
-        notas: notasActualizadas,
-      },
-    });
+    const socioActualizado = await prisma.$transaction(async (tx) => {
+      const socioActualizado = await tx.socio.update({
+        where: { id: socioId },
+        data: {
+          estado: 'retirado',
+          notas: notasActualizadas,
+        },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'RETIRAR',
-      modulo: 'socios',
-      registro_id: socio.id,
-      antes: socio,
-      despues: socioActualizado,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'RETIRAR',
+        modulo: 'socios',
+        registro_id: socio.id,
+        antes: socio,
+        despues: socioActualizado,
+      });
+
+      return socioActualizado;
     });
 
     logger.info(`Socio retirado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -1313,16 +1320,16 @@ export const traspasarSocio = async (req: Request, res: Response): Promise<void>
         },
       });
 
-      return actualizado;
-    });
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'TRASPASO',
+        modulo: 'socios',
+        registro_id: socio.id,
+        antes: socio,
+        despues: actualizado,
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'TRASPASO',
-      modulo: 'socios',
-      registro_id: socio.id,
-      antes: socio,
-      despues: socioActualizado,
+      return actualizado;
     });
 
     logger.info(
@@ -1455,6 +1462,12 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
       return;
     }
 
+    const noHabilitado = motivoNoHabilitado(socio, 'inscribir beneficiarios');
+    if (noHabilitado) {
+      res.status(400).json(RESPUESTA_NO_HABILITADO(noHabilitado));
+      return;
+    }
+
     // Validar límite de 8 beneficiarios activos (sumando al titular, 9 personas en total).
     // Los que pasaron a 'fallecido' o 'retirado' liberan su cupo. La fila de
     // Beneficiario con parentesco 'titular' (creada por la migración para
@@ -1495,26 +1508,30 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
     }
 
     // Crear beneficiario
-    const beneficiario = await prisma.beneficiario.create({
-      data: {
-        socio_id: id,
-        cedula: datos.cedula,
-        nombre: datos.nombre,
-        apellido: datos.apellido,
-        fecha_nacimiento: new Date(datos.fecha_nacimiento),
-        fecha_ingreso: new Date(datos.fecha_ingreso),
-        parentesco: datos.parentesco,
-        telefono: datos.telefono,
-      },
-    });
+    const beneficiario = await prisma.$transaction(async (tx) => {
+      const beneficiario = await tx.beneficiario.create({
+        data: {
+          socio_id: id,
+          cedula: datos.cedula,
+          nombre: datos.nombre,
+          apellido: datos.apellido,
+          fecha_nacimiento: new Date(datos.fecha_nacimiento),
+          fecha_ingreso: new Date(datos.fecha_ingreso),
+          parentesco: datos.parentesco,
+          telefono: datos.telefono,
+        },
+      });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREAR',
-      modulo: 'beneficiarios',
-      registro_id: beneficiario.id,
-      despues: beneficiario,
+      // Audit log
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREAR',
+        modulo: 'beneficiarios',
+        registro_id: beneficiario.id,
+        despues: beneficiario,
+      });
+
+      return beneficiario;
     });
 
     logger.info(`Beneficiario agregado: ${beneficiario.nombre} ${beneficiario.apellido} al socio ${socio.codigo_socio}`);
@@ -1620,19 +1637,23 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
     }
 
     // Actualizar beneficiario
-    const beneficiario = await prisma.beneficiario.update({
-      where: { id },
-      data: datosActualizacion,
-    });
+    const beneficiario = await prisma.$transaction(async (tx) => {
+      const beneficiario = await tx.beneficiario.update({
+        where: { id },
+        data: datosActualizacion,
+      });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'ACTUALIZAR',
-      modulo: 'beneficiarios',
-      registro_id: beneficiario.id,
-      antes: beneficiarioExistente,
-      despues: beneficiario,
+      // Audit log
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'ACTUALIZAR',
+        modulo: 'beneficiarios',
+        registro_id: beneficiario.id,
+        antes: beneficiarioExistente,
+        despues: beneficiario,
+      });
+
+      return beneficiario;
     });
 
     logger.info(`Beneficiario actualizado: ${beneficiario.nombre} ${beneficiario.apellido}`);
@@ -1720,21 +1741,25 @@ export const eliminarBeneficiario = async (req: Request, res: Response): Promise
     }
 
     // Soft delete
-    const beneficiarioActualizado = await prisma.beneficiario.update({
-      where: { id },
-      data: {
-        estado: 'retirado',
-      },
-    });
+    const beneficiarioActualizado = await prisma.$transaction(async (tx) => {
+      const beneficiarioActualizado = await tx.beneficiario.update({
+        where: { id },
+        data: {
+          estado: 'retirado',
+        },
+      });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'ELIMINAR',
-      modulo: 'beneficiarios',
-      registro_id: beneficiario.id,
-      antes: beneficiario,
-      despues: beneficiarioActualizado,
+      // Audit log
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'ELIMINAR',
+        modulo: 'beneficiarios',
+        registro_id: beneficiario.id,
+        antes: beneficiario,
+        despues: beneficiarioActualizado,
+      });
+
+      return beneficiarioActualizado;
     });
 
     logger.info(`Beneficiario eliminado (soft delete): ${beneficiario.nombre} ${beneficiario.apellido}`);

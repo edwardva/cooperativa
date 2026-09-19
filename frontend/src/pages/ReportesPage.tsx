@@ -149,6 +149,14 @@ const REPORTES: Definicion[] = [
     inicial: { desde: inicioMes, hasta: hoyISO },
   },
   {
+    clave: 'socios-suspendidos',
+    titulo: 'Socios suspendidos',
+    descripcion: 'Quienes estan suspendidos hoy, desde cuando, hasta cuando y por que. Se puede filtrar por feria.',
+    icono: ListChecks,
+    campos: [{ nombre: 'feria_id', etiqueta: 'Feria', tipo: 'feria' }],
+    inicial: {},
+  },
+  {
     clave: 'colectas',
     titulo: 'Colectas',
     descripcion: 'Colectas por fecha, socio o semana cobrada, con totales y reversos.',

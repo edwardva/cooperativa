@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../utils/logger';
+import { indicadores } from '../services/indicadoresService';
 
 const prisma = new PrismaClient();
 
@@ -265,6 +266,26 @@ export const obtenerActividadReciente = async (_req: Request, res: Response): Pr
         code: 'INTERNAL_ERROR',
         message: 'Error al obtener actividad reciente',
       },
+    });
+  }
+};
+
+/**
+ * GET /api/dashboard/indicadores?meses=12
+ *
+ * Series para el tablero. Todo sale de lo registrado, así que no puede
+ * discrepar de los reportes.
+ */
+export const obtenerIndicadores = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const meses = req.query.meses ? Number(req.query.meses) : undefined;
+    const datos = await indicadores(prisma, { meses: Number.isFinite(meses) ? meses : undefined });
+    res.json({ success: true, data: datos });
+  } catch (error) {
+    logger.error('Error al calcular los indicadores:', error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'No se pudieron calcular los indicadores' },
     });
   }
 };

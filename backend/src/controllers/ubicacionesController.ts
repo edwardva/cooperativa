@@ -174,16 +174,20 @@ export const crearUbicacion = async (
       return;
     }
 
-    const ubicacion = await prisma.ubicacion.create({
-      data: validacion.data,
-    });
+    const ubicacion = await prisma.$transaction(async (tx) => {
+      const ubicacion = await tx.ubicacion.create({
+        data: validacion.data,
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREAR',
-      modulo: 'ubicaciones',
-      registro_id: ubicacion.id,
-      despues: ubicacion,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREAR',
+        modulo: 'ubicaciones',
+        registro_id: ubicacion.id,
+        despues: ubicacion,
+      });
+
+      return ubicacion;
     });
 
     res.status(201).json({
@@ -274,18 +278,22 @@ export const actualizarUbicacion = async (
     }
 
     const { _count: _conteo, ...antes } = ubicacionExistente;
-    const ubicacion = await prisma.ubicacion.update({
-      where: { id: parseInt(id, 10) },
-      data: validacion.data,
-    });
+    const ubicacion = await prisma.$transaction(async (tx) => {
+      const ubicacion = await tx.ubicacion.update({
+        where: { id: parseInt(id, 10) },
+        data: validacion.data,
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'ACTUALIZAR',
-      modulo: 'ubicaciones',
-      registro_id: ubicacion.id,
-      antes,
-      despues: ubicacion,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'ACTUALIZAR',
+        modulo: 'ubicaciones',
+        registro_id: ubicacion.id,
+        antes,
+        despues: ubicacion,
+      });
+
+      return ubicacion;
     });
 
     res.status(200).json({
@@ -361,16 +369,18 @@ export const eliminarUbicacion = async (
     }
 
     // Soft delete - cambiar estado a false
-    await prisma.ubicacion.update({
-      where: { id: parseInt(id, 10) },
-      data: { estado: false },
-    });
+    await prisma.$transaction(async (tx) => {
+      await tx.ubicacion.update({
+        where: { id: parseInt(id, 10) },
+        data: { estado: false },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'DESACTIVAR',
-      modulo: 'ubicaciones',
-      registro_id: ubicacionExistente.id,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'DESACTIVAR',
+        modulo: 'ubicaciones',
+        registro_id: ubicacionExistente.id,
+      });
     });
 
     res.status(200).json({

@@ -7,13 +7,10 @@
 
 import { Router } from 'express';
 import {
-  reporteSocios,
-  reportePrestamos,
   reporteFunerariaSuspendidos,
   reporteSaludSuspendidos,
   reporteSaludAcuerdos,
   reporteSaludGrupos,
-  listarTiposReportes,
 } from '../controllers/reportesController';
 import { catalogoReportes, exportarReporte, verReporte } from '../controllers/reportesFase2Controller';
 import { authenticate } from '../middleware/authenticate';
@@ -23,27 +20,6 @@ const router = Router();
 
 // Todas las rutas requieren autenticación
 router.use(authenticate);
-
-/**
- * GET /api/reportes/tipos
- * Listar tipos de reportes disponibles
- * Permiso: reportes:read
- */
-router.get('/tipos', authorize('reportes', 'read'), listarTiposReportes);
-
-/**
- * POST /api/reportes/socios
- * Generar reporte de socios
- * Permiso: reportes:generate
- */
-router.post('/socios', authorize('reportes', 'generate'), reporteSocios);
-
-/**
- * POST /api/reportes/prestamos
- * Generar reporte de préstamos
- * Permiso: reportes:generate
- */
-router.post('/prestamos', authorize('reportes', 'generate'), reportePrestamos);
 
 /**
  * POST /api/reportes/funeraria-suspendidos

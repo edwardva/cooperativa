@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { leerParametroNumerico } from '../services/tarifasService';
+import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
 
 const prisma = new PrismaClient();
 
@@ -708,6 +709,11 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
       });
     }
 
+    const noHabilitado = motivoNoHabilitado(socio, 'inscribir un acuerdo de funeraria');
+    if (noHabilitado) {
+      return res.status(400).json(RESPUESTA_NO_HABILITADO(noHabilitado));
+    }
+
     // Verificar que el tipo de acuerdo existe
     const tipoAcuerdo = await prisma.tipoAcuerdoFuneraria.findUnique({
       where: { id: data.tipo_acuerdo_id },
@@ -795,33 +801,37 @@ export const crearAcuerdo = async (req: Request, res: Response): Promise<void> =
     }
 
     // Crear acuerdo
-    const nuevoAcuerdo = await prisma.acuerdoFuneraria.create({
-      data: {
-        beneficiario_id: beneficiarioId,
-        tipo_acuerdo_id: data.tipo_acuerdo_id,
-        numero_acuerdo: data.numero_acuerdo ?? null,
-        numero_contrato: data.numero_contrato,
-        estado: 'activo',
-        semanas_sin_pago: 0,
-        fecha_inicio: data.fecha_inicio ? new Date(data.fecha_inicio) : new Date(),
-      },
-      include: {
-        beneficiario: {
-          include: {
-            socio: true,
-          },
+    const nuevoAcuerdo = await prisma.$transaction(async (tx) => {
+      const nuevoAcuerdo = await tx.acuerdoFuneraria.create({
+        data: {
+          beneficiario_id: beneficiarioId,
+          tipo_acuerdo_id: data.tipo_acuerdo_id,
+          numero_acuerdo: data.numero_acuerdo ?? null,
+          numero_contrato: data.numero_contrato,
+          estado: 'activo',
+          semanas_sin_pago: 0,
+          fecha_inicio: data.fecha_inicio ? new Date(data.fecha_inicio) : new Date(),
         },
-        tipo_acuerdo: true,
-      },
-    });
+        include: {
+          beneficiario: {
+            include: {
+              socio: true,
+            },
+          },
+          tipo_acuerdo: true,
+        },
+      });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'CREATE',
-      modulo: 'funeraria',
-      registro_id: nuevoAcuerdo.id,
-      despues: `Acuerdo ${nuevoAcuerdo.numero_acuerdo} creado: ${nuevoAcuerdo.id} - Socio: ${socio.nombre} ${socio.apellido}`,
+      // Audit log
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'CREATE',
+        modulo: 'funeraria',
+        registro_id: nuevoAcuerdo.id,
+        despues: `Acuerdo ${nuevoAcuerdo.numero_acuerdo} creado: ${nuevoAcuerdo.id} - Socio: ${socio.nombre} ${socio.apellido}`,
+      });
+
+      return nuevoAcuerdo;
     });
 
     res.status(201).json({
@@ -940,29 +950,33 @@ export const actualizarAcuerdo = async (req: Request, res: Response): Promise<vo
       }
     }
 
-    const acuerdoActualizado = await prisma.acuerdoFuneraria.update({
-      where: { id: acuerdoId },
-      data: {
-        ...(data.tipo_acuerdo_id !== undefined && { tipo_acuerdo_id: data.tipo_acuerdo_id }),
-        ...(data.numero_acuerdo !== undefined && { numero_acuerdo: data.numero_acuerdo }),
-        ...(data.numero_contrato !== undefined && { numero_contrato: data.numero_contrato || null }),
-        ...(data.fecha_inicio !== undefined && { fecha_inicio: new Date(data.fecha_inicio) }),
-      },
-      include: {
-        beneficiario: {
-          include: { socio: true },
+    const acuerdoActualizado = await prisma.$transaction(async (tx) => {
+      const acuerdoActualizado = await tx.acuerdoFuneraria.update({
+        where: { id: acuerdoId },
+        data: {
+          ...(data.tipo_acuerdo_id !== undefined && { tipo_acuerdo_id: data.tipo_acuerdo_id }),
+          ...(data.numero_acuerdo !== undefined && { numero_acuerdo: data.numero_acuerdo }),
+          ...(data.numero_contrato !== undefined && { numero_contrato: data.numero_contrato || null }),
+          ...(data.fecha_inicio !== undefined && { fecha_inicio: new Date(data.fecha_inicio) }),
         },
-        tipo_acuerdo: true,
-      },
-    });
+        include: {
+          beneficiario: {
+            include: { socio: true },
+          },
+          tipo_acuerdo: true,
+        },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'UPDATE',
-      modulo: 'funeraria',
-      registro_id: acuerdoId,
-      antes: acuerdoExistente,
-      despues: acuerdoActualizado,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'UPDATE',
+        modulo: 'funeraria',
+        registro_id: acuerdoId,
+        antes: acuerdoExistente,
+        despues: acuerdoActualizado,
+      });
+
+      return acuerdoActualizado;
     });
 
     res.json({
@@ -1054,16 +1068,18 @@ export const eliminarAcuerdo = async (req: Request, res: Response): Promise<void
       });
     }
 
-    await prisma.acuerdoFuneraria.delete({
-      where: { id: acuerdoId },
-    });
+    await prisma.$transaction(async (tx) => {
+      await tx.acuerdoFuneraria.delete({
+        where: { id: acuerdoId },
+      });
 
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'DELETE',
-      modulo: 'funeraria',
-      registro_id: acuerdoId,
-      antes: acuerdo,
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'DELETE',
+        modulo: 'funeraria',
+        registro_id: acuerdoId,
+        antes: acuerdo,
+      });
     });
 
     res.json({
@@ -1157,22 +1173,26 @@ export const cambiarEstado = async (req: Request, res: Response): Promise<void> 
     }
 
     // Actualizar acuerdo
-    const acuerdoActualizado = await prisma.acuerdoFuneraria.update({
-      where: { id: acuerdoId },
-      data: updateData,
-      include: {
-        beneficiario: true,
-        tipo_acuerdo: true,
-      },
-    });
+    const acuerdoActualizado = await prisma.$transaction(async (tx) => {
+      const acuerdoActualizado = await tx.acuerdoFuneraria.update({
+        where: { id: acuerdoId },
+        data: updateData,
+        include: {
+          beneficiario: true,
+          tipo_acuerdo: true,
+        },
+      });
 
-    // Audit log
-    await registrarAuditoria(prisma, {
-      req,
-      accion: 'UPDATE',
-      modulo: 'funeraria',
-      registro_id: acuerdoId,
-      despues: `Estado cambiado: ${acuerdoExistente.estado} → ${data.estado}. Acuerdo: ${acuerdoId}. Motivo: ${data.motivo || 'No especificado'}`,
+      // Audit log
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'UPDATE',
+        modulo: 'funeraria',
+        registro_id: acuerdoId,
+        despues: `Estado cambiado: ${acuerdoExistente.estado} → ${data.estado}. Acuerdo: ${acuerdoId}. Motivo: ${data.motivo || 'No especificado'}`,
+      });
+
+      return acuerdoActualizado;
     });
 
     res.json({
@@ -1242,23 +1262,24 @@ export const verificarSuspensionesAutomaticas = async (req: Request, res: Respon
     // Suspender cada acuerdo
     for (const acuerdo of acuerdosASuspender) {
       try {
-        await prisma.acuerdoFuneraria.update({
-          where: { id: acuerdo.id },
-          data: {
-            estado: 'suspendido',
-            fecha_suspension: new Date(),
-          },
+        await prisma.$transaction(async (tx) => {
+          await tx.acuerdoFuneraria.update({
+            where: { id: acuerdo.id },
+            data: {
+              estado: 'suspendido',
+              fecha_suspension: new Date(),
+            },
+          });
+
+          await registrarAuditoria(tx, {
+            req,
+            accion: 'UPDATE',
+            modulo: 'funeraria',
+            despues: `Suspensión automática: Acuerdo ${acuerdo.id}, ${acuerdo.semanas_sin_pago} semanas sin pago`,
+          });
         });
 
         suspendidos.push(acuerdo.id);
-
-        // Audit log
-        await registrarAuditoria(prisma, {
-          req,
-          accion: 'UPDATE',
-          modulo: 'funeraria',
-          despues: `Suspensión automática: Acuerdo ${acuerdo.id}, ${acuerdo.semanas_sin_pago} semanas sin pago`,
-        });
 
         logger.info(`Acuerdo ${acuerdo.id} suspendido automáticamente (${acuerdo.semanas_sin_pago} semanas)`);
       } catch (err: any) {
