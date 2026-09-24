@@ -16,7 +16,8 @@
 // pago cubre a todos los pendientes de los períodos elegidos.
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
@@ -39,8 +40,6 @@ import {
   type PeriodoSaludRef,
 } from '../utils/periodoSalud';
 import { responderError, responderInvalido } from '../utils/responderError';
-
-const prisma = new PrismaClient();
 
 const METODOS_PAGO = ['transferencia', 'pago_movil', 'deposito', 'efectivo', 'otro'] as const;
 

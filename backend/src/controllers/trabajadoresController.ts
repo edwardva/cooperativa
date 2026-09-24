@@ -12,7 +12,8 @@
 // histórico conserva la feria que había en su momento.
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma, type EstadoTrabajador } from '@prisma/client';
+import { Prisma, type EstadoTrabajador } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
@@ -22,8 +23,6 @@ import { datosPersona, personaSchema } from './personasController';
 import { bloquearTrabajador } from '../utils/bloqueos';
 import { fechaDia, hoyDia, textoDia } from '../utils/fechaDia';
 import { responderError, responderInvalido } from '../utils/responderError';
-
-const prisma = new PrismaClient();
 
 const ESTADOS: EstadoTrabajador[] = ['activo', 'suspendido', 'retirado', 'inactivo'];
 

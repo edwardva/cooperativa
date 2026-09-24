@@ -1,11 +1,9 @@
 import bcrypt from 'bcrypt'
 import jwt, { SignOptions } from 'jsonwebtoken'
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../lib/prisma'
 import { config } from '@/config'
 import { UnauthorizedError, BadRequestError } from '@/middleware/errorHandler'
 import { logger } from '@/utils/logger'
-
-const prisma = new PrismaClient()
 
 interface LoginCredentials {
   username: string

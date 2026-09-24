@@ -14,7 +14,8 @@
 //   con N detalles, y cada detalle impacta su servicio.
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../middleware/errorHandler';
@@ -52,8 +53,6 @@ import {
 } from '../services/abonosPrestamoService';
 import { ponerInteresAlDia } from '../services/interesPrestamoService';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
-
-const prisma = new PrismaClient();
 
 /** Búsqueda por nombre en la caja */
 const MINIMO_LETRAS_NOMBRE = 3;

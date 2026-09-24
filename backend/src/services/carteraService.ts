@@ -8,10 +8,9 @@
 // pantalla de préstamos y el reporte exportable (RF-REP-06), así los dos
 // muestran las mismas cifras.
 
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { redondear } from './cobroSemanalService';
-
-const prisma = new PrismaClient();
 
 export const VISTAS_CARTERA = {
   // Los que esperan la reunión de los martes para entregarse

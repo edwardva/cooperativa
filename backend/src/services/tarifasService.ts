@@ -16,10 +16,8 @@
 //
 // Se cargan como parámetro editable, nunca como constante.
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // CLAVES Y VALORES POR DEFECTO

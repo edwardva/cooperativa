@@ -1,9 +1,7 @@
 import type { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { indicadores } from '../services/indicadoresService';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // INTERFACES

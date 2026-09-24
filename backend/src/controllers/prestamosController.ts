@@ -10,7 +10,8 @@
 // Un abono se aplica SIEMPRE en el orden mora → interés → capital.
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../middleware/errorHandler';
@@ -29,8 +30,6 @@ import {
   ajustarGarantias,
   sincronizarCuotas,
 } from '../services/abonosPrestamoService';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN

@@ -10,14 +10,13 @@
  */
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { leerParametroNumerico } from '../services/tarifasService';
 import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN

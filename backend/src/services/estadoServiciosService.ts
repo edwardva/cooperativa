@@ -22,13 +22,11 @@
 // número. Suspender a cientos de socios con un umbral no confirmado sería
 // bastante peor que no suspender a nadie.
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { semanaActual } from '../utils/calendarioSemanal';
 import { coberturaDe, semanasSinPagoDerivadas } from './coberturaService';
 import { obtenerTarifas } from './tarifasService';
-
-const prisma = new PrismaClient();
 
 /** Interruptor de la suspensión automática. Apagado mientras no se confirme. */
 export const CLAVE_SUSPENSION_AUTOMATICA = 'SUSPENSION_AUTOMATICA';

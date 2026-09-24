@@ -67,12 +67,32 @@ app.use(
 );
 
 // Rate limiting
+//
+// El techo general es alto a proposito: una sola pantalla dispara varias
+// llamadas —el tablero hace siete— y en la cooperativa todos salen a internet
+// por la misma IP, asi que el limite se reparte entre todos los que estan
+// trabajando a la vez. Con un techo bajo, una manana normal de colecta
+// terminaba devolviendo 429 a gente que no habia hecho nada raro.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // Límite de 100 requests por ventana
+  max: 2000,
   message: 'Demasiadas peticiones desde esta IP, intente de nuevo más tarde',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use('/api/', limiter);
+
+// Login aparte y estricto: es el unico sitio donde probar a ciegas sirve de
+// algo, y quien escribe mal su clave no lo hace veinte veces en cinco minutos.
+const limiterLogin = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 20,
+  message: 'Demasiados intentos de acceso, espere unos minutos',
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/auth/login', limiterLogin);
 
 // ============================================
 // MIDDLEWARE DE PARSEO

@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { validarCedula } from '../utils/cedula';
@@ -8,8 +8,6 @@ import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/perso
 import { etiquetaFeria } from '../services/trabajadoresService';
 import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -149,7 +147,6 @@ const buscarExpedientesActivosConCedula = async (cedula: string, excluirSocioId?
     select: { id: true, codigo_socio: true, nombre: true, apellido: true, fecha_inscripcion: true },
   });
 };
-
 
 /**
  * Convertir base64 a Buffer para almacenar en DB
