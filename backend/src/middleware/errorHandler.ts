@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 
 export interface ApiError extends Error {
   statusCode?: number;
@@ -32,7 +33,9 @@ export const errorHandler = (
     error: {
       code,
       message: err.message || 'Error interno del servidor',
-      ...(process.env.NODE_ENV === 'development' && {
+      // La traza queda siempre en el log de arriba; al cliente solo se le
+      // manda si alguien la pidio explicitamente.
+      ...(config.exponerErrores && {
         details: err.details,
         stack: err.stack,
       }),

@@ -8,6 +8,7 @@ interface Config {
   jwtExpiresIn: string;
   bcryptSaltRounds: number;
   corsOrigin: string;
+  exponerErrores: boolean;
 }
 
 export const config: Config = {
@@ -18,6 +19,13 @@ export const config: Config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   bcryptSaltRounds: parseInt(process.env.BCRYPT_SALT_ROUNDS || '12', 10),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  // Devolver la traza del error al cliente. Va aparte de NODE_ENV a proposito:
+  // el servidor arranca con NODE_ENV=development —no se puede cambiar mientras
+  // el sitio siga sin HTTPS, porque la cookie de sesion se marca Secure y el
+  // navegador dejaria de enviarla—, asi que atar la traza a ese valor era
+  // publicar las rutas internas del servidor en cada error. Hay que pedirla
+  // explicitamente, y en produccion no se define.
+  exponerErrores: process.env.EXPONER_ERRORES === 'true',
 };
 
 // Validar variables críticas
