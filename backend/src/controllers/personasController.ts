@@ -8,7 +8,8 @@
 // se muestra su registro y se le agrega el rol, nunca se duplica (RF-SOC-04).
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { ConflictError, NotFoundError, BadRequestError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
@@ -20,8 +21,6 @@ import {
 import { fichaPersona } from '../services/fichaPersonaService';
 import { responderError, responderInvalido } from '../utils/responderError';
 import { fechaDia } from '../utils/fechaDia';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // SCHEMAS

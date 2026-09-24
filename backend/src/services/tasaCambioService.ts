@@ -19,10 +19,8 @@
 // sistema sin tasa.
 
 import * as https from 'https';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
-
-const prisma = new PrismaClient();
 
 const CLAVE_TASA = 'TASA_CAMBIO_USD_BS';
 

@@ -13,7 +13,7 @@
 // existan las semanas del horizonte configurado hacia adelante. En diciembre
 // las de enero ya están creadas y el cobro adelantado no encuentra un hueco.
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import {
   type Periodo,
@@ -23,8 +23,6 @@ import {
   semanasEnAno,
   sumarSemanas,
 } from '../utils/calendarioSemanal';
-
-const prisma = new PrismaClient();
 
 /**
  * Cuántas semanas hacia adelante se mantienen creadas.

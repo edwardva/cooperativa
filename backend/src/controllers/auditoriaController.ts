@@ -7,12 +7,11 @@
 // usuario, fecha, módulo y acción, con los valores anteriores y nuevos.
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { BadRequestError } from '../middleware/errorHandler';
 import { fechaDia } from '../utils/fechaDia';
 import { responderError } from '../utils/responderError';
-
-const prisma = new PrismaClient();
 
 /** GET /api/auditoria?usuario=&modulo=&accion=&registro_id=&desde=&hasta=&page=&limit= */
 export const listarAuditoria = async (req: Request, res: Response): Promise<void> => {

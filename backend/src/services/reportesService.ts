@@ -6,7 +6,8 @@
  */
 
 import ExcelJS from 'exceljs';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 // `import * as pdfMake` compila a __importStar(), que copia solo las propiedades
 // propias enumerables y pierde setFonts/createPdf: el proceso entra en
 // crash-loop en cuanto se carga este modulo. Con `import = require` se emite un
@@ -19,8 +20,6 @@ import pdfMake = require('pdfmake');
 import type { TDocumentDefinitions, TableCell, Content } from 'pdfmake/interfaces';
 import * as fs from 'fs';
 import * as path from 'path';
-
-const prisma = new PrismaClient();
 
 // Independiente de src/dist: queda fuera de ambos, así que la misma ruta
 // relativa sirve tanto en desarrollo (tsx corriendo src/) como en producción

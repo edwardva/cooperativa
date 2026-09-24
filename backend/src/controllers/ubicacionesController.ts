@@ -6,11 +6,9 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { registrarAuditoria } from '../services/auditoriaService';
-
-const prisma = new PrismaClient();
 
 /**
  * Trabajadores activos de la feria: asociación abierta y expediente activo.

@@ -7,12 +7,10 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { consultarTasaBcv, sincronizarTasa } from '../services/tasaCambioService';
 import { logger } from '../utils/logger';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN

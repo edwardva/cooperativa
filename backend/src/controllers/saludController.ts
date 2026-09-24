@@ -13,14 +13,13 @@
  */
 
 import type { Request, Response } from 'express';
-import { PrismaClient, Prisma, type AcuerdoSalud, type Beneficiario } from '@prisma/client';
+import { Prisma, type AcuerdoSalud, type Beneficiario } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocios } from '../utils/bloqueos';
 import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
-
-const prisma = new PrismaClient();
 
 // REGLA DE NEGOCIO: Suspensión automática a las 11 semanas sin pago
 const SEMANAS_LIMITE_SUSPENSION = 11;

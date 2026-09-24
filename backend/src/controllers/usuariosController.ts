@@ -12,14 +12,13 @@
 // desactivarse a sí mismo, para que no quede el sistema sin administrador.
 
 import type { Request, Response, NextFunction } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import bcrypt from 'bcrypt';
 import { z } from 'zod';
 import { config } from '../config';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
-
-const prisma = new PrismaClient();
 
 /** Lo que se devuelve de un usuario: nunca el hash de la clave */
 const CAMPOS = {

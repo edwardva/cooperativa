@@ -8,7 +8,8 @@
 // volver a calcular nada. Las consultas son las mismas que usan las pantallas
 // de cada módulo, así un total del reporte coincide con el de su pantalla.
 
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { BadRequestError } from '../middleware/errorHandler';
 import { carteraPrestamos, VISTAS_CARTERA } from './carteraService';
 import { conversionDePrestamos } from './conversionPrestamosService';
@@ -21,8 +22,6 @@ import { formatearPeriodo, semanaActual, semanaDeFecha } from '../utils/calendar
 import { fechaDia, hoyDia } from '../utils/fechaDia';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
 import { adelantoDelRenglon, type Reporte } from '../utils/reportes';
-
-const prisma = new PrismaClient();
 
 export const REPORTES = {
   'ferias-pendientes': 'Ferias pendientes de pago de salud',

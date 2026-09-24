@@ -3,10 +3,8 @@
 // Motor de Impresión (Tickets y Documentos)
 // ============================================
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { registrarAuditoria } from './auditoriaService';
-
-const prisma = new PrismaClient();
 
 // ============================================
 // TIPOS Y CONFIGURACIONES

@@ -1,9 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../lib/prisma'
 import { ForbiddenError, UnauthorizedError } from './errorHandler'
 import { logger } from '@/utils/logger'
-
-const prisma = new PrismaClient()
 
 /**
  * Cache de permisos de roles para optimizar performance

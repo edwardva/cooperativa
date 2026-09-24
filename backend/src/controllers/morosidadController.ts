@@ -9,7 +9,7 @@
 // porque hoy la cooperativa revisa esa lista a mano.
 
 import type { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { revisarMorosidad, SEMANAS } from '../services/morosidadService';
@@ -20,8 +20,6 @@ import { hoyDia } from '../utils/fechaDia';
 
 /** dd/mm/aaaa, que es como la lee el cajero */
 const comoFecha = (d: Date) => d.toISOString().slice(0, 10).split('-').reverse().join('/');
-
-const prisma = new PrismaClient();
 
 /** POST /api/morosidad/revisar  body: { aplicar?: boolean } */
 export const revisarMorosidadSocios = async (req: Request, res: Response): Promise<void> => {

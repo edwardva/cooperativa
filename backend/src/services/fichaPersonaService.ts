@@ -10,15 +10,13 @@
 // La situación de cada servicio sale de la misma cobertura (año, semana) que
 // usa la colecta: la ficha y la caja no pueden decir cosas distintas.
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { calcularSituacion, type SituacionServicio } from './coberturaService';
 import { redondear } from './cobroSemanalService';
 import { obtenerTarifas } from './tarifasService';
 import { formatearTrabajador, includeFerias } from './trabajadoresService';
 import { aOrdinal, formatearPeriodo, semanaActual } from '../utils/calendarioSemanal';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
-
-const prisma = new PrismaClient();
 
 const selectAcuerdo = {
   id: true,
