@@ -125,6 +125,14 @@ reinicio los roles nuevos no se ven de inmediato.
 | `SINCRONIZAR_TASA` | `true` | Sincronizacion automatica de la tasa BCV |
 | `TASA_INTERVALO_HORAS` | `6` | Cada cuanto se consulta |
 | `BCV_TLS_INSEGURO` | `false` | Leer del BCV salteando validacion TLS. **Dejar en false** |
+| `EXPONER_ERRORES` | `false` | Devuelve la traza del error en la respuesta de la API. **No definirla en produccion** |
+
+Sobre `EXPONER_ERRORES`: va aparte de `NODE_ENV` a proposito. El servidor corre
+con `NODE_ENV=development`, y no se puede cambiar mientras el sitio siga sin
+HTTPS: la cookie de sesion se marca `Secure` en produccion y el navegador
+dejaria de enviarla por HTTP, con lo que nadie podria entrar. Mientras tanto,
+atar la traza a `NODE_ENV` significaba publicar las rutas internas del servidor
+en cada error. El log del servidor registra la traza completa igual.
 
 La sincronizacion de tasa necesita **salida HTTPS a `ve.dolarapi.com`**. Si el
 grupo de seguridad o el NAT lo bloquean, no rompe nada: conserva la ultima tasa
