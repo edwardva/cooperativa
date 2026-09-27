@@ -5,6 +5,7 @@
 
 import { prisma } from '../lib/prisma';
 import { registrarAuditoria } from './auditoriaService';
+import { nombreEnMayusculas } from '../utils/reportes';
 
 // ============================================
 // TIPOS Y CONFIGURACIONES
@@ -172,7 +173,7 @@ export function generarTicketColecta(data: TicketColecta): string {
   // Información del socio
   lineas.push(`Socio:  ${data.socio.codigo}`);
   lineas.push(`Cedula: ${data.socio.cedula}`);
-  lineas.push(`Nombre: ${data.socio.nombre}`);
+  lineas.push(`Nombre: ${nombreEnMayusculas(data.socio.nombre)}`);
   lineas.push('');
   lineas.push(SEPARADOR_LIGERO);
 
@@ -249,7 +250,7 @@ export function generarNotaOperacion(data: NotaOperacion): string {
 
   if (data.socio) {
     lineas.push(SEPARADOR_LIGERO);
-    lineas.push(`Socio:      ${data.socio.nombre}`);
+    lineas.push(`Socio:      ${nombreEnMayusculas(data.socio.nombre)}`);
     lineas.push(`Cédula:     ${data.socio.cedula}`);
     lineas.push('');
   }
@@ -296,7 +297,7 @@ export function generarCarnetSocio(data: CarnetSocio): string {
   lineas.push('');
   lineas.push(`Código:        ${data.codigo}`);
   lineas.push(`Cédula:        ${data.cedula}`);
-  lineas.push(`Nombre:        ${data.nombre}`);
+  lineas.push(`Nombre:        ${nombreEnMayusculas(data.nombre)}`);
   lineas.push(`Tipo:          ${data.tipo_socio}`);
   lineas.push(`Ubicación:     ${data.ubicacion}`);
   lineas.push(`Fecha Ingreso: ${formatearFechaHora(data.fecha_ingreso)}`);
@@ -342,7 +343,7 @@ export function generarFichaAcuerdoBeneficios(data: FichaAcuerdoBeneficios, titu
   lineas.push('DATOS DEL TITULAR');
   lineas.push(`Expediente: ${data.socio.codigo}`);
   lineas.push(`Cédula:     ${data.socio.cedula}`);
-  lineas.push(`Nombre:     ${data.socio.nombre}`);
+  lineas.push(`Nombre:     ${nombreEnMayusculas(data.socio.nombre)}`);
   if (data.socio.direccion) {
     lineas.push(`Dirección:  ${data.socio.direccion}`);
   }
@@ -356,7 +357,7 @@ export function generarFichaAcuerdoBeneficios(data: FichaAcuerdoBeneficios, titu
   lineas.push('');
 
   data.beneficiarios.forEach((beneficiario) => {
-    lineas.push(`[${beneficiario.id}] ${beneficiario.nombre}`);
+    lineas.push(`[${beneficiario.id}] ${nombreEnMayusculas(beneficiario.nombre)}`);
     lineas.push(`    Cédula: ${beneficiario.cedula}   Parentesco: ${beneficiario.parentesco}`);
     const edadTexto = beneficiario.edad !== undefined ? `${beneficiario.edad} años` : 'N/D';
     const fechaNacTexto = beneficiario.fecha_nacimiento

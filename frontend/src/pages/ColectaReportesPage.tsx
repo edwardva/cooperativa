@@ -385,6 +385,7 @@ export default function ColectaReportesPage() {
               'USD',
               'Bs',
             ]}
+            columnasMayusculas={['Socio']}
             filas={filasServicios}
           />
         </>
@@ -556,6 +557,7 @@ export default function ColectaReportesPage() {
               { label: 'Total Bs', value: money(caja?.consolidado.total_bs ?? 0) },
             ]}
             columnas={['Fecha', 'Colecta', 'Expediente', 'Socio', 'Oficina', 'Colector', 'USD', 'Bs']}
+            columnasMayusculas={['Socio']}
             filas={(caja?.detalle ?? []).map((d) => [
               new Date(d.fecha).toLocaleDateString('es-VE'),
               String(d.colecta_id),

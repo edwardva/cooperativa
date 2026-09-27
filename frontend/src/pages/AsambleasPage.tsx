@@ -664,6 +664,7 @@ export default function AsambleasPage() {
               { label: 'Participación', value: `${reporte?.resumen.porcentaje_participacion ?? 0}%` },
             ]}
             columnas={['Expediente', 'Cédula', 'Socio', 'Teléfono', 'Feria', 'Inscripción']}
+            columnasMayusculas={['Socio']}
             filas={filasImpresion}
           />
         </div>

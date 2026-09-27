@@ -743,6 +743,7 @@ export const SociosPage = () => {
           { label: 'Retirados', value: String(estadisticas.sociosRetirados) },
         ]}
         columnas={['Expediente', 'Cédula', 'Socio', 'Teléfono', 'Fecha ingreso', 'Estado', 'Feria']}
+        columnasMayusculas={['Socio']}
         filas={filasImpresion}
       />
 

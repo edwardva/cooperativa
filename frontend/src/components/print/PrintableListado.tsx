@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { nombreEnMayusculas } from '../../utils/formatters';
 
 interface FiltroResumen {
   label: string;
@@ -17,6 +18,8 @@ interface PrintableListadoProps {
   columnas: string[];
   filas: string[][];
   resumenes?: ResumenImpresion[];
+  /** Columnas con nombres de socios/beneficiarios: sus celdas se imprimen en MAYUSCULAS. */
+  columnasMayusculas?: string[];
   nota?: string;
   children?: ReactNode;
 }
@@ -28,6 +31,7 @@ export const PrintableListado = ({
   columnas,
   filas,
   resumenes = [],
+  columnasMayusculas = [],
   nota,
   children,
 }: PrintableListadoProps) => {
@@ -172,7 +176,9 @@ export const PrintableListado = ({
                 filas.map((fila, index) => (
                   <tr key={`${index}-${fila.join('-')}`}>
                     {fila.map((celda, celdaIndex) => (
-                      <td key={`${index}-${celdaIndex}`}>{celda}</td>
+                      <td key={`${index}-${celdaIndex}`}>
+                        {columnasMayusculas.includes(columnas[celdaIndex] ?? '') ? nombreEnMayusculas(celda) : celda}
+                      </td>
                     ))}
                   </tr>
                 ))

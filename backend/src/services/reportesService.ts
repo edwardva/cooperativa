@@ -18,6 +18,7 @@ import { prisma } from '../lib/prisma';
 // volvio a colarse en un merge, asi que NO cambiar a `import * as`.
 import pdfMake = require('pdfmake');
 import type { TDocumentDefinitions, TableCell, Content } from 'pdfmake/interfaces';
+import { nombreEnMayusculas } from '../utils/reportes';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -260,7 +261,7 @@ export const generarReporteFunerariaSuspendidos = async (formato: 'pdf' | 'excel
     acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
     acuerdo.numero_acuerdo || 'N/D',
     acuerdo.numero_contrato || 'N/D',
-    `${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`,
+    nombreEnMayusculas(`${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`),
     acuerdo.beneficiario.cedula,
     acuerdo.beneficiario.socio?.telefono || acuerdo.beneficiario.telefono || 'N/D',
     acuerdo.semanas_sin_pago,
@@ -309,7 +310,7 @@ export const generarReporteSaludAcuerdos = async (formato: 'pdf' | 'excel') => {
     acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
     acuerdo.numero_acuerdo || 'N/D',
     acuerdo.numero_contrato || 'N/D',
-    `${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`,
+    nombreEnMayusculas(`${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`),
     acuerdo.beneficiario.cedula,
     acuerdo.beneficiario.parentesco,
     acuerdo.tipo_acuerdo.nombre,
@@ -360,7 +361,7 @@ export const generarReporteSaludSuspendidos = async (formato: 'pdf' | 'excel') =
     acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
     acuerdo.numero_acuerdo || 'N/D',
     acuerdo.numero_contrato || 'N/D',
-    `${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`,
+    nombreEnMayusculas(`${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`),
     acuerdo.beneficiario.cedula,
     acuerdo.beneficiario.socio?.telefono || acuerdo.beneficiario.telefono || 'N/D',
     acuerdo.semanas_sin_pago,
@@ -524,7 +525,7 @@ export const generarReporteSaludGrupos = async (tipo: TipoListadoSalud): Promise
       'Titular',
       expediente,
       titularRow.numero_acuerdo || 'N/D',
-      `${titularRow.beneficiario.apellido} ${titularRow.beneficiario.nombre}`,
+      nombreEnMayusculas(`${titularRow.beneficiario.apellido} ${titularRow.beneficiario.nombre}`),
       titularRow.beneficiario.cedula,
       titularRow.beneficiario.parentesco,
       titularRow.semanas_sin_pago,
@@ -544,7 +545,7 @@ export const generarReporteSaludGrupos = async (tipo: TipoListadoSalud): Promise
         'Beneficiario',
         expediente,
         b.numero_acuerdo || 'N/D',
-        `${b.beneficiario.apellido} ${b.beneficiario.nombre}`,
+        nombreEnMayusculas(`${b.beneficiario.apellido} ${b.beneficiario.nombre}`),
         b.beneficiario.cedula,
         b.beneficiario.parentesco,
         '',

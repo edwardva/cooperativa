@@ -21,7 +21,7 @@ import { etiquetaFeria } from './trabajadoresService';
 import { formatearPeriodo, semanaActual, semanaDeFecha } from '../utils/calendarioSemanal';
 import { fechaDia, hoyDia } from '../utils/fechaDia';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
-import { adelantoDelRenglon, type Reporte } from '../utils/reportes';
+import { adelantoDelRenglon, nombresEnMayusculas, type Reporte } from '../utils/reportes';
 
 export const REPORTES = {
   'ferias-pendientes': 'Ferias pendientes de pago de salud',
@@ -732,4 +732,4 @@ const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
 export const esClaveReporte = (clave: string): clave is ClaveReporte => clave in GENERADORES;
 
 export const generarReporte = (clave: ClaveReporte, parametros: Parametros): Promise<Reporte> =>
-  GENERADORES[clave](parametros);
+  GENERADORES[clave](parametros).then(nombresEnMayusculas);

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import logo from '@/logoR.png';
+import { nombreEnMayusculas } from '../../utils/formatters';
 
 export interface BeneficiarioFichaImpresion {
   numero: number;
@@ -185,7 +186,7 @@ export const PrintableFichaAcuerdo = ({
             </div>
             <div className="col-span-2">
               <span className="font-semibold">Apellidos y Nombres: </span>
-              {socio.nombre}
+              {nombreEnMayusculas(socio.nombre)}
             </div>
             {socio.direccion && (
               <div className="col-span-2">
@@ -224,7 +225,7 @@ export const PrintableFichaAcuerdo = ({
                 beneficiarios.map((b) => (
                   <tr key={b.numero}>
                     <td>{String(b.numero).padStart(3, '0')}</td>
-                    <td>{b.nombre}</td>
+                    <td>{nombreEnMayusculas(b.nombre)}</td>
                     <td>{b.cedula}</td>
                     <td>{b.parentesco}</td>
                     <td>{formatearFecha(b.fecha_ingreso)}</td>

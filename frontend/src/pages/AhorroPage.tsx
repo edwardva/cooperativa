@@ -794,6 +794,7 @@ export const AhorroPage = () => {
           { label: 'Saldo USD', value: `$${estadisticas.total_saldo_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
         ]}
         columnas={['Cuenta', 'Socio', 'Tipo', 'Saldo USD', 'Saldo Bs', 'Bloqueado USD', 'Movimientos', 'Estado']}
+        columnasMayusculas={['Socio']}
         filas={filasImpresion}
       />
 

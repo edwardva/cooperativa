@@ -50,3 +50,26 @@ export const adelantoDelRenglon = (
   if (adelantadas <= 0) return null;
   return { desde: sumarSemanas(antes, 1), hasta: despues, adelantadas };
 };
+
+/**
+ * Nombres y apellidos de socios titulares, beneficiarios y trabajadores en
+ * MAYUSCULAS, como deben salir en toda hoja impresa y en los reportes. En la
+ * base de datos se conservan tal cual se registraron.
+ */
+export const nombreEnMayusculas = (valor: string | null | undefined): string =>
+  (valor ?? '').toLocaleUpperCase('es-VE');
+
+/** Columnas de reporte cuyas celdas son nombres de personas. */
+const COLUMNAS_DE_NOMBRES = new Set(['Socio', 'Trabajador', 'Beneficiario', 'Titular', 'Apellidos y Nombres']);
+
+/** El mismo reporte con las columnas de nombres en MAYUSCULAS (pantalla, Excel y PDF). */
+export const nombresEnMayusculas = (reporte: Reporte): Reporte => {
+  const indices = reporte.columnas.flatMap((c, i) => (COLUMNAS_DE_NOMBRES.has(c) ? [i] : []));
+  if (indices.length === 0) return reporte;
+  return {
+    ...reporte,
+    filas: reporte.filas.map((fila) =>
+      fila.map((celda, i) => (indices.includes(i) && typeof celda === 'string' ? nombreEnMayusculas(celda) : celda))
+    ),
+  };
+};

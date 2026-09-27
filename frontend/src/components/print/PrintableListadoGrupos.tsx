@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import logo from '@/logoR.png';
+import { nombreEnMayusculas } from '../../utils/formatters';
 import type { GrupoSalud } from '../../services/saludService';
 
 export type TipoListadoGrupos = 'activos' | 'suspendidos' | 'proximos_suspender';
@@ -105,7 +106,7 @@ export const PrintableListadoGrupos = ({ tipo, grupos }: PrintableListadoGruposP
               <div key={grupo.numero_acuerdo ?? grupo.socio?.id} className="listado-grupos-card">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-[11px]">
                   <div>
-                    <span className="font-semibold">{grupo.socio?.nombre_completo || 'N/D'}</span>
+                    <span className="font-semibold">{nombreEnMayusculas(grupo.socio?.nombre_completo) || 'N/D'}</span>
                     <span className="ml-2 text-neutral-500">
                       Exp. {grupo.socio?.codigo_socio || 'N/D'} &middot; C.I. {grupo.socio?.cedula || 'N/D'}
                     </span>
@@ -123,7 +124,7 @@ export const PrintableListadoGrupos = ({ tipo, grupos }: PrintableListadoGruposP
                     <span className="font-semibold text-neutral-500">Beneficiarios: </span>
                     {grupo.beneficiarios.map((b) => (
                       <span key={b.beneficiario_id} className="listado-grupos-chip">
-                        {b.nombre} {b.apellido} &middot; {b.parentesco}
+                        {nombreEnMayusculas(`${b.nombre} ${b.apellido}`)} &middot; {b.parentesco}
                       </span>
                     ))}
                   </div>

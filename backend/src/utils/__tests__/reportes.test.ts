@@ -1,6 +1,6 @@
-// Forma común de los reportes: totales en la exportación y semanas adelantadas.
+// Forma común de los reportes: totales en la exportación, semanas adelantadas y nombres en mayúsculas.
 
-import { adelantoDelRenglon, filasParaExportar, nombreArchivo, type Reporte } from '../reportes';
+import { adelantoDelRenglon, filasParaExportar, nombreArchivo, nombresEnMayusculas, type Reporte } from '../reportes';
 
 const reporte: Reporte = {
   clave: 'prueba',
@@ -46,5 +46,18 @@ describe('adelantoDelRenglon', () => {
     const r = adelantoDelRenglon({ ano: 2026, semana: 52 }, { ano: 2026, semana: 52 }, { ano: 2027, semana: 2 });
     expect(r?.adelantadas).toBe(3);
     expect(r?.desde).toEqual({ ano: 2026, semana: 53 });
+  });
+});
+
+describe('nombresEnMayusculas', () => {
+  it('pone en MAYUSCULAS solo las columnas de nombres, con tildes y Ñ', () => {
+    const r = nombresEnMayusculas({
+      clave: 'prueba',
+      titulo: 'Prueba',
+      columnas: ['Expediente', 'Socio', 'Feria', 'Monto USD'],
+      filas: [['e-01', 'Peña, maría josé', 'Feria centro', 10]],
+      totales: [],
+    });
+    expect(r.filas).toEqual([['e-01', 'PEÑA, MARÍA JOSÉ', 'Feria centro', 10]]);
   });
 });

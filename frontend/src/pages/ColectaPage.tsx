@@ -697,7 +697,7 @@ export default function ColectaPage() {
                     className="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3 text-left transition hover:border-primary-400 hover:bg-primary-50/40"
                   >
                     <div>
-                      <p className="text-sm font-medium text-neutral-900">
+                      <p className="text-sm font-medium text-neutral-900 print:uppercase">
                         {c.apellido}, {c.nombre}
                       </p>
                       <p className="text-xs text-neutral-500">
@@ -721,7 +721,7 @@ export default function ColectaPage() {
                     <p className="text-lg font-semibold text-emerald-900">
                       Colecta #{recibo.id} registrada
                     </p>
-                    <p className="mt-1 text-sm text-emerald-800">
+                    <p className="mt-1 text-sm text-emerald-800 print:uppercase">
                       {recibo.socio?.apellido}, {recibo.socio?.nombre} ·{' '}
                       {recibo.socio?.codigo_socio}
                     </p>
@@ -748,7 +748,7 @@ export default function ColectaPage() {
                 <Card className="p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-xl font-semibold text-neutral-900">
+                      <h2 className="text-xl font-semibold text-neutral-900 print:uppercase">
                         {socio.apellido}, {socio.nombre}
                       </h2>
                       <p className="mt-1 text-sm text-neutral-500">

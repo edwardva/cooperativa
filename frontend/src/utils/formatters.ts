@@ -119,3 +119,12 @@ export function formatearFechaCorta(fecha: string | null | undefined): string {
   if (isNaN(d.getTime())) return '-'
   return d.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
 }
+
+/**
+ * Nombres y apellidos de socios titulares y beneficiarios en MAYUSCULAS, como
+ * deben salir en toda hoja impresa y en los reportes. Solo afecta lo que se
+ * imprime/exporta: en pantalla y en la base de datos se conservan tal cual.
+ */
+export function nombreEnMayusculas(valor: string | null | undefined): string {
+  return (valor ?? '').toLocaleUpperCase('es-VE')
+}

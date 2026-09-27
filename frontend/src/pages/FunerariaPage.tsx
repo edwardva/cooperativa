@@ -46,7 +46,7 @@ import * as saludService from '../services/saludService'
 import type { AcuerdoFuneraria, AcuerdoDetalle, TipoAcuerdo } from '../services/funerariaService'
 import type { Socio, Beneficiario, BeneficiarioFormData } from '../services/sociosService'
 import { getErrorMessage } from '../services/api'
-import { formatearFecha, calcularEdad } from '../utils/formatters'
+import { formatearFecha, calcularEdad, nombreEnMayusculas } from '../utils/formatters'
 import { usePermissions } from '../store/authStore'
 
 type Tab = 'activo' | 'suspendido' | 'retirado' | 'todos'
@@ -845,13 +845,13 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     socio: {
       codigo: detalle.socio?.codigo_socio || '',
       cedula: detalle.socio?.cedula || '',
-      nombre: detalle.socio?.nombre_completo || '',
+      nombre: nombreEnMayusculas(detalle.socio?.nombre_completo),
       direccion: detalle.socio?.direccion || undefined,
       telefono: detalle.socio?.telefono || undefined,
     },
     beneficiarios: beneficiarios.map((b) => ({
       id: b.id,
-      nombre: `${b.nombre} ${b.apellido}`,
+      nombre: nombreEnMayusculas(`${b.nombre} ${b.apellido}`),
       cedula: b.cedula,
       parentesco: b.parentesco,
       fecha_ingreso: b.fecha_ingreso || b.created_at,
@@ -968,7 +968,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           <tr class="${i % 2 === 1 ? 'par' : ''}">
             <td>${fila.expediente}</td>
             <td>${fila.numero_acuerdo}</td>
-            <td>${fila.apellidos} ${fila.nombres}</td>
+            <td>${nombreEnMayusculas(`${fila.apellidos} ${fila.nombres}`)}</td>
             <td>${fila.cedula}</td>
             <td>${fila.telefono}</td>
             <td class="text-center atraso">${fila.semanas_atraso}</td>
@@ -1230,6 +1230,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           { label: 'Suspendidos', value: String(estadisticas.suspendidos) },
         ]}
         columnas={['N° Expediente', 'N° Acuerdo', 'Socio', 'Beneficiario', 'Tipo de acuerdo', 'Semanas sin pago', 'Estado', 'Fecha']}
+        columnasMayusculas={['Socio', 'Beneficiario']}
         filas={filasImpresion}
       />
 

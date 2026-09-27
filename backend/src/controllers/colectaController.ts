@@ -53,6 +53,7 @@ import {
 } from '../services/abonosPrestamoService';
 import { ponerInteresAlDia } from '../services/interesPrestamoService';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
+import { nombreEnMayusculas } from '../utils/reportes';
 
 /** Búsqueda por nombre en la caja */
 const MINIMO_LETRAS_NOMBRE = 3;
@@ -1750,7 +1751,7 @@ export const reportePorServicio = async (req: Request, res: Response): Promise<v
             servicio: d.servicio,
             codigo_socio: colecta.socio.codigo_socio,
             cedula: colecta.socio.cedula,
-            socio: `${colecta.socio.apellido}, ${colecta.socio.nombre}`,
+            socio: nombreEnMayusculas(`${colecta.socio.apellido}, ${colecta.socio.nombre}`),
             // Datos que el cliente pidió ver en el reporte de servicios
             numero_acuerdo: d.referencia_id
               ? (numeroAcuerdo.get(`${d.servicio}-${d.referencia_id}`) ?? null)
@@ -1943,7 +1944,7 @@ export const reporteCaja = async (req: Request, res: Response): Promise<void> =>
       colecta_id: c.id,
       fecha: c.fecha_colecta,
       codigo_socio: c.socio.codigo_socio,
-      socio: `${c.socio.apellido}, ${c.socio.nombre}`,
+      socio: nombreEnMayusculas(`${c.socio.apellido}, ${c.socio.nombre}`),
       oficina: c.ubicacion?.nombre ?? null,
       colector: c.usuario.nombre_completo || c.usuario.username,
       canal: c.canal,

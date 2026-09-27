@@ -549,6 +549,7 @@ export default function PrestamosPage() {
           { label: 'Mora', value: `$${money(cartera?.resumen.mora_usd)}` },
         ]}
         columnas={['Prestamo', 'Expediente', 'Socio', 'Tipo', 'Otorgado', 'Deuda', 'Cuotas', 'Vencidas', 'Estado']}
+        columnasMayusculas={['Socio']}
         filas={filasImpresion}
       />
 
