@@ -61,7 +61,7 @@ const crearGrupoAcuerdoSchema = z
     numero_acuerdo: z.string().trim().min(1, 'El número de acuerdo es requerido').max(20),
     numero_contrato: z.string().trim().max(20).optional(),
     fecha_inicio: z.string().optional(),
-    beneficiarios: z.array(beneficiarioGrupoSchema).max(MAX_BENEFICIARIOS_POR_GRUPO).default([]),
+    beneficiarios: z.array(beneficiarioGrupoSchema).max(MAX_BENEFICIARIOS_POR_GRUPO, 'Un acuerdo puede tener como máximo 8 beneficiarios (9 personas con el titular)').default([]),
   })
   .refine(
     (data) => new Set(data.beneficiarios.map((b) => b.cedula)).size === data.beneficiarios.length,
@@ -152,9 +152,12 @@ async function obtenerOCrearBeneficiario(tx: TxClient, socioId: number): Promise
 }
 
 /**
- * Encuentra (por cédula) o crea un beneficiario, respetando el tope familiar
- * de 8 beneficiarios activos por socio (excluyendo la fila sintética
- * "titular"), igual que sociosController.agregarBeneficiario.
+ * Encuentra (por cédula) o crea un beneficiario del socio.
+ *
+ * REGLA DE NEGOCIO: el tope de 8 beneficiarios es POR ACUERDO, no por socio.
+ * Un titular puede tener varios acuerdos de salud, cada uno con hasta 8
+ * beneficiarios; el tope lo validan crearGrupoAcuerdo (schema) y
+ * agregarBeneficiarioAGrupo (contarMiembrosGrupo), no esta función.
  */
 async function encontrarOCrearBeneficiarioFamiliar(
   tx: TxClient,
@@ -164,20 +167,6 @@ async function encontrarOCrearBeneficiarioFamiliar(
   const existente = await tx.beneficiario.findUnique({ where: { cedula: datos.cedula } });
   if (existente) {
     return existente;
-  }
-
-  const beneficiariosActivos = await tx.beneficiario.count({
-    where: {
-      socio_id: socioId,
-      estado: 'activo',
-      NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
-    },
-  });
-
-  if (beneficiariosActivos >= MAX_BENEFICIARIOS_POR_GRUPO) {
-    const err: any = new Error('Un socio no puede tener más de 8 beneficiarios activos (9 personas en total, incluyendo al titular)');
-    err.code = 'LIMITE_BENEFICIARIOS';
-    throw err;
   }
 
   return tx.beneficiario.create({
@@ -898,7 +887,7 @@ export const crearGrupoAcuerdo = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    if (error.code === 'LIMITE_BENEFICIARIOS' || error.code === 'CEDULA_DUPLICADA') {
+    if (error.code === 'CEDULA_DUPLICADA') {
       res.status(409).json({ success: false, error: { code: error.code, message: error.message } });
       return;
     }
@@ -988,7 +977,7 @@ export const agregarBeneficiarioAGrupo = async (req: Request, res: Response): Pr
       return;
     }
 
-    if (['LIMITE_GRUPO_SALUD', 'LIMITE_BENEFICIARIOS', 'BENEFICIARIO_YA_EN_GRUPO'].includes(error.code)) {
+    if (['LIMITE_GRUPO_SALUD', 'BENEFICIARIO_YA_EN_GRUPO'].includes(error.code)) {
       res.status(409).json({ success: false, error: { code: error.code, message: error.message } });
       return;
     }
