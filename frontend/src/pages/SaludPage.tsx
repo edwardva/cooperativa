@@ -42,7 +42,6 @@ import {
   ArrowRight,
   ArrowLeft,
   ArrowRightLeft,
-  Wallet,
   X,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
@@ -57,7 +56,6 @@ import type { ActionMenuItem } from '../components/ui/ActionMenu'
 import * as saludService from '../services/saludService'
 import * as sociosService from '../services/sociosService'
 import * as funerariaService from '../services/funerariaService'
-import * as feriasService from '../services/feriasService'
 import * as ahorroService from '../services/ahorroService'
 import type {
   AcuerdoSalud,
@@ -104,7 +102,7 @@ const emptyBeneficiarioGrupoForm = (): BeneficiarioGrupoInput => ({
   telefono: '',
 })
 
-/** Mini-formulario "buscar por número" reutilizado en los modales de Eliminar, Retirar, Pagos y Traspaso. */
+/** Mini-formulario "buscar por número" reutilizado en los modales de Eliminar, Retirar y Traspaso. */
 function BuscarPorNumeroInline({
   label,
   value,
@@ -891,115 +889,6 @@ const handleSort = (field: string) => {
   }
 
   // ============================================
-  // MODAL: GENERAR PAGO DE SALUD
-  // ============================================
-  const [pagosAbierto, setPagosAbierto] = useState(false)
-  const [pagosNumeroAcuerdo, setPagosNumeroAcuerdo] = useState('')
-  const [pagosBuscando, setPagosBuscando] = useState(false)
-  const [pagosGrupo, setPagosGrupo] = useState<GrupoSalud | null>(null)
-  const [pagosError, setPagosError] = useState<string | null>(null)
-  const [pagosFecha, setPagosFecha] = useState(hoyISO())
-  const [pagosMontoUsd, setPagosMontoUsd] = useState('')
-  const [pagosMontoBs, setPagosMontoBs] = useState('')
-  const [pagosTasaCambio, setPagosTasaCambio] = useState('')
-  const [pagosSemanas, setPagosSemanas] = useState('1')
-  const [pagosAnio, setPagosAnio] = useState(String(new Date().getFullYear()))
-  const [pagosNumeroRecibo, setPagosNumeroRecibo] = useState('')
-  const [pagosUbicacionId, setPagosUbicacionId] = useState<number | ''>('')
-  const [pagosUbicaciones, setPagosUbicaciones] = useState<feriasService.Ubicacion[]>([])
-  const [pagosEnviando, setPagosEnviando] = useState(false)
-
-  const abrirPagosModal = async (numeroAcuerdoPrefill?: string) => {
-    setPagosAbierto(true)
-    setPagosNumeroAcuerdo(numeroAcuerdoPrefill || '')
-    setPagosGrupo(null)
-    setPagosError(null)
-    setPagosFecha(hoyISO())
-    setPagosMontoUsd('')
-    setPagosMontoBs('')
-    setPagosTasaCambio('')
-    setPagosSemanas('1')
-    setPagosAnio(String(new Date().getFullYear()))
-    setPagosNumeroRecibo('')
-    setPagosUbicacionId('')
-
-    if (pagosUbicaciones.length === 0) {
-      try {
-        const respuesta = await feriasService.obtenerUbicacionesActivas()
-        if (respuesta.success && respuesta.data) setPagosUbicaciones(respuesta.data)
-      } catch {
-        // El selector quedará vacío
-      }
-    }
-
-    if (numeroAcuerdoPrefill) {
-      await buscarGrupoParaPago(numeroAcuerdoPrefill)
-    }
-  }
-
-  const buscarGrupoParaPago = async (numeroAcuerdoParam?: string) => {
-    const numero = (numeroAcuerdoParam ?? pagosNumeroAcuerdo).trim()
-    if (!numero) return
-    setPagosBuscando(true)
-    setPagosError(null)
-    setPagosGrupo(null)
-    try {
-      const respuesta = await saludService.obtenerGrupoPorNumeroAcuerdo(numero)
-      if (!respuesta.success) throw new Error('Acuerdo no encontrado')
-      setPagosGrupo(respuesta.data)
-    } catch (err) {
-      setPagosError(getErrorMessage(err) || 'Acuerdo no encontrado')
-    } finally {
-      setPagosBuscando(false)
-    }
-  }
-
-  const pagosFormularioValido =
-    !!pagosGrupo &&
-    pagosFecha.trim() !== '' &&
-    pagosMontoUsd.trim() !== '' &&
-    pagosMontoBs.trim() !== '' &&
-    pagosTasaCambio.trim() !== '' &&
-    pagosSemanas.trim() !== '' &&
-    pagosAnio.trim() !== '' &&
-    pagosNumeroRecibo.trim() !== '' &&
-    pagosUbicacionId !== ''
-
-  const confirmarPago = async () => {
-    if (!pagosGrupo?.numero_acuerdo || !pagosFormularioValido) return
-    const ubicacionId: number = pagosUbicacionId
-
-    setPagosEnviando(true)
-    setPagosError(null)
-    try {
-      const respuesta = await saludService.registrarPago(pagosGrupo.numero_acuerdo, {
-        fecha_pago: pagosFecha,
-        monto_usd: Number(pagosMontoUsd),
-        monto_bs: Number(pagosMontoBs),
-        tasa_cambio: Number(pagosTasaCambio),
-        semanas: Number(pagosSemanas),
-        anio: Number(pagosAnio),
-        numero_recibo: pagosNumeroRecibo.trim(),
-        ubicacion_id: ubicacionId,
-      })
-      if (!respuesta.success) throw new Error('No fue posible registrar el pago')
-
-      setPagosAbierto(false)
-      await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
-      if (grupoModalAbierto) await recargarGrupoActual()
-      window.alert(
-        respuesta.data.reactivado
-          ? 'Pago registrado. El acuerdo estaba suspendido y fue reactivado.'
-          : 'Pago registrado correctamente.'
-      )
-    } catch (err) {
-      setPagosError(getErrorMessage(err))
-    } finally {
-      setPagosEnviando(false)
-    }
-  }
-
-  // ============================================
   // MODAL: TRASPASO A FUNERARIA
   // ============================================
   const [traspasoAbierto, setTraspasoAbierto] = useState(false)
@@ -1362,12 +1251,6 @@ const handleSort = (field: string) => {
             Ir a acuerdo
           </Button>
           {puedeEscribir && (
-            <Button variant="outline" size="sm" onClick={() => void abrirPagosModal()}>
-              <Wallet className="w-4 h-4" />
-              Generar Pago
-            </Button>
-          )}
-          {puedeEscribir && (
             <Button size="sm" onClick={() => setWizardAbierto(true)}>
               <PlusCircle className="w-4 h-4" />
               Nuevo Acuerdo
@@ -1724,16 +1607,6 @@ const handleSort = (field: string) => {
                               disabled: imprimiendoFilaId === acuerdo.id,
                               onSelect: () => void imprimirFichaDesdeFila(acuerdo),
                             },
-                            ...(puedeEscribir && acuerdo.numero_acuerdo && acuerdo.estado !== 'retirado'
-                              ? [
-                                  {
-                                    key: 'generar-pago',
-                                    label: 'Generar pago',
-                                    icon: <Wallet className="h-4 w-4 text-primary-600" />,
-                                    onSelect: () => void abrirPagosModal(acuerdo.numero_acuerdo || undefined),
-                                  } satisfies ActionMenuItem,
-                                ]
-                              : []),
                             ...(puedeEscribir && acuerdo.estado === 'suspendido'
                               ? [
                                   {
@@ -2164,12 +2037,6 @@ const handleSort = (field: string) => {
                 Imprimir Ficha
               </Button>
               {puedeEscribir && grupoActual.estado !== 'retirado' && (
-                <Button variant="outline" onClick={() => void abrirPagosModal(grupoActual.numero_acuerdo || undefined)}>
-                  <Wallet className="h-4 w-4" />
-                  Generar Pago
-                </Button>
-              )}
-              {puedeEscribir && grupoActual.estado !== 'retirado' && (
                 <Button
                   variant="outline"
                   onClick={() => void abrirTraspasoModal(grupoActual.numero_acuerdo || undefined)}
@@ -2557,62 +2424,6 @@ const handleSort = (field: string) => {
             </table>
           </div>
         )}
-      </Modal>
-
-      {/* ============================================ */}
-      {/* MODAL: GENERAR PAGO DE SALUD */}
-      {/* ============================================ */}
-      <Modal open={pagosAbierto} onClose={() => setPagosAbierto(false)} title="Generar Pago de Salud" size="md">
-        {pagosError && (
-          <Alert variant="error" className="mb-4">{pagosError}</Alert>
-        )}
-
-        <div className="space-y-4">
-          <BuscarPorNumeroInline
-            label="Número de acuerdo"
-            value={pagosNumeroAcuerdo}
-            onChange={setPagosNumeroAcuerdo}
-            onBuscar={() => void buscarGrupoParaPago()}
-            buscando={pagosBuscando}
-            autoFocus
-          />
-
-          {pagosGrupo && (
-            <>
-              <ResumenSocioCard
-                nombre={pagosGrupo.socio?.nombre_completo || ''}
-                detalle={`${pagosGrupo.total_personas} persona(s) cubierta(s) por este pago`}
-              />
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Input label="Fecha de pago" type="date" value={pagosFecha} onChange={(e) => setPagosFecha(e.target.value)} required />
-                <Input label="N° de recibo" value={pagosNumeroRecibo} onChange={(e) => setPagosNumeroRecibo(e.target.value)} required />
-                <Input label="Monto (USD)" type="number" step="0.01" value={pagosMontoUsd} onChange={(e) => setPagosMontoUsd(e.target.value)} required />
-                <Input label="Monto (Bs)" type="number" step="0.01" value={pagosMontoBs} onChange={(e) => setPagosMontoBs(e.target.value)} required />
-                <Input label="Tasa de cambio" type="number" step="0.0001" value={pagosTasaCambio} onChange={(e) => setPagosTasaCambio(e.target.value)} required />
-                <Input label="Cantidad de semanas" type="number" min="1" value={pagosSemanas} onChange={(e) => setPagosSemanas(e.target.value)} required />
-                <Input label="Año" type="number" value={pagosAnio} onChange={(e) => setPagosAnio(e.target.value)} required />
-                <Select
-                  label="Ubicación / Feria"
-                  value={pagosUbicacionId}
-                  onChange={(e) => setPagosUbicacionId(Number(e.target.value))}
-                >
-                  <option value="">Selecciona...</option>
-                  {pagosUbicaciones.map((u) => (
-                    <option key={u.id} value={u.id}>{u.nombre}</option>
-                  ))}
-                </Select>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <Button variant="secondary" onClick={() => setPagosAbierto(false)} className="flex-1">Cerrar</Button>
-                <Button onClick={() => void confirmarPago()} disabled={!pagosFormularioValido} isLoading={pagosEnviando} className="flex-1">
-                  Guardar
-                </Button>
-              </div>
-            </>
-          )}
-        </div>
       </Modal>
 
       {/* ============================================ */}
