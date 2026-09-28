@@ -29,7 +29,8 @@ const crearSocioSchema = z.object({
   sexo: vacioANulo(z.enum(['M', 'F']).optional().nullable()),
   fecha_nacimiento: vacioANulo(z.string().optional().nullable()),
   direccion: vacioANulo(z.string().max(500).optional().nullable()),
-  telefono: vacioANulo(z.string().max(20).optional().nullable()),
+  // 100, como la columna: media cooperativa tiene dos numeros en el campo
+  telefono: vacioANulo(z.string().max(100).optional().nullable()),
   email: vacioANulo(z.string().email('Email inválido').max(100).optional().nullable()),
   fecha_inscripcion: z.string(),
   ubicacion_id: z.number().int().positive().optional().nullable(),
@@ -49,8 +50,10 @@ const actualizarSocioSchema = z.object({
   sexo: vacioANulo(z.enum(['M', 'F']).optional().nullable()),
   fecha_nacimiento: vacioANulo(z.string().optional().nullable()),
   direccion: vacioANulo(z.string().max(500).optional().nullable()),
-  telefono: vacioANulo(z.string().max(20).optional().nullable()),
-  email: vacioANulo(z.string().email('Email inválido').max(100).optional().nullable()),
+  // 100, como la columna: media cooperativa tiene dos numeros en el campo
+  telefono: vacioANulo(z.string().max(100).optional().nullable()),
+  // El formato se revisa en el handler y solo si cambia (ver más abajo)
+  email: vacioANulo(z.string().max(100).optional().nullable()),
   fecha_inscripcion: z.string().optional(),
   ubicacion_id: z.number().int().positive().optional().nullable(),
   autorizado_nombre: vacioANulo(z.string().max(100).optional().nullable()),
@@ -59,7 +62,7 @@ const actualizarSocioSchema = z.object({
   foto_url: vacioANulo(z.string().max(255).optional().nullable()),
   foto: z.string().optional(), // Base64 de la foto
   es_delegado: z.boolean().optional(),
-  estado: z.enum(['activo', 'retirado', 'invalido']).optional(),
+  estado: z.enum(['activo', 'suspendido', 'retirado', 'invalido']).optional(),
 });
 
 const actualizarCodigoSocialSchema = z.object({
@@ -239,7 +242,7 @@ const calcularEdadDesde = (fechaNacimiento: Date): number => {
 /**
  * Obtener todos los socios con paginación y búsqueda optimizada
  * Query params: page, limit, search, estado, ubicacion_id
- * Búsqueda por: codigo_socio, cedula, nombre, apellido
+ * Búsqueda por: codigo_socio, cedula, nombre, apellido, telefono
  */
 export const obtenerSocios = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -741,6 +744,20 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
       } else {
         // Sin cambio real: se conserva el valor existente tal cual está guardado
         datos.cedula = socioExistente.cedula;
+      }
+    }
+
+    // El email se valida SOLO SI CAMBIA, por lo mismo que la cedula: hay 68
+    // correos heredados de la migracion con formato invalido, y exigirselos
+    // impedia editarle el telefono o la feria a esos socios.
+    if (datos.email && datos.email !== socioExistente.email) {
+      const formatoEmail = z.string().email().safeParse(datos.email);
+      if (!formatoEmail.success) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'EMAIL_INVALIDO', message: 'Email inválido' },
+        });
+        return;
       }
     }
 
