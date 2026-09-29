@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
-import { validarCedula } from '../utils/cedula';
+import { revisarCedula } from '../utils/personas';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
 import { etiquetaFeria } from '../services/trabajadoresService';
@@ -122,16 +122,6 @@ const retiroSocioSchema = z.object({
 // ============================================
 // HELPERS
 // ============================================
-
-/**
- * Valida y normaliza la cédula. Devuelve el mensaje de error si no es válida.
- * La validación es de formato/rango: confirma que el número sea plausible,
- * no que exista en el registro del CNE.
- */
-const revisarCedula = (entrada: string): { cedula: string; error: string | null } => {
-  const resultado = validarCedula(entrada);
-  return { cedula: resultado.cedula, error: resultado.valida ? null : resultado.error ?? 'Cédula inválida' };
-};
 
 /**
  * Busca expedientes ACTIVOS con la misma cédula.

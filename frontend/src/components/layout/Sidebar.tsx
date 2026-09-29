@@ -22,6 +22,7 @@ import {
   Calendar,
   CalendarCheck,
   Calculator,
+  Smartphone,
   Printer,
   Shield,
   HardHat,
@@ -48,6 +49,8 @@ const navigationItems: NavItem[] = [
   { name: 'Préstamos', path: '/prestamos', icon: DollarSign, modulo: 'prestamos' },
   { name: 'Colecta', path: '/colecta', icon: ClipboardList, modulo: 'colecta' },
   { name: 'Reportes Colecta', path: '/colecta/reportes', icon: Calculator, modulo: 'colecta' },
+  // Lo que los socios declararon desde el celular, para cotejarlo contra el banco
+  { name: 'Cajero Digital', path: '/cajero-digital', icon: Smartphone, modulo: 'colecta' },
   { name: 'Funeraria', path: '/funeraria', icon: Shield, modulo: 'funeraria' },
   { name: 'Salud', path: '/salud', icon: HeartPulse, modulo: 'salud' },
   { name: 'Salud por Feria', path: '/salud/pago-feria', icon: HeartPulse, modulo: 'salud_feria' },
