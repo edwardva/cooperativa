@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   FileDown,
   Loader2,
@@ -19,6 +20,7 @@ import {
   ListFilter,
   AlertTriangle,
   Wallet,
+  ShieldAlert,
   Users,
   Download,
   Shield,
@@ -64,6 +66,7 @@ const etiquetaServicio: Record<string, string> = {
 }
 
 export default function ColectaReportesPage() {
+  const navegar = useNavigate()
   const [vista, setVista] = useState<Vista>('servicios')
   const [modoPeriodo, setModoPeriodo] = useState<ModoPeriodo>('rango')
   const [desde, setDesde] = useState(hoyISO())
@@ -166,10 +169,19 @@ export default function ColectaReportesPage() {
             Detalle de lo cobrado por servicio y asiento contable del periodo.
           </p>
         </div>
-        <Button variant="outline" onClick={() => window.print()}>
-          <FileDown className="h-4 w-4" />
-          Imprimir
-        </Button>
+        <div className="flex gap-2">
+          {/* Pedido por la cooperativa: tener a mano desde colecta el listado de
+              suspendidos. El reporte ya existe en Reportes con su motivo, feria
+              y semanas sin pagar; se enlaza en vez de duplicarlo. */}
+          <Button variant="outline" onClick={() => navegar('/reportes?reporte=socios-suspendidos')}>
+            <ShieldAlert className="h-4 w-4" />
+            Socios suspendidos
+          </Button>
+          <Button variant="outline" onClick={() => window.print()}>
+            <FileDown className="h-4 w-4" />
+            Imprimir
+          </Button>
+        </div>
       </div>
 
       {/* Pestanas */}

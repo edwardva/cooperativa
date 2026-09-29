@@ -294,6 +294,24 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       orderBy: [{ apellido: 'asc' }, { nombre: 'asc' }],
       include: {
         ubicacion: { select: { id: true, codigo: true, direccion: true } },
+        // Historial de suspensiones. Pedido por la cooperativa: "muestra el
+        // historial del socio si ha sido suspendido o no, con motivo de
+        // suspension y fecha... para evaluar a la hora de dar prestamos". Se
+        // ve aqui porque es donde el cajero ya tiene al socio delante.
+        historial_estados: {
+          orderBy: { fecha: 'desc' },
+          take: 10,
+          select: {
+            id: true,
+            estado_anterior: true,
+            estado_nuevo: true,
+            motivo: true,
+            origen: true,
+            semanas_atraso: true,
+            suspendido_hasta: true,
+            fecha: true,
+          },
+        },
         // Expediente de trabajador vigente de la misma persona: el cajero ve si
         // el ahorrista también trabaja en una feria
         persona: {
@@ -384,6 +402,17 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       where: { socio_id: { in: socios.map((s) => s.id) }, asamblea: { ano: anoActual } },
       select: { socio_id: true, asamblea_id: true },
     });
+
+    // Cuantas veces ha estado suspendido CADA socio, contando todo su historial.
+    // Va aparte del historial que se muestra —que trae solo los ultimos diez—
+    // porque este numero es el que pesa al decidir un prestamo y tiene que ser
+    // el real, no el de la ventana que se enseña.
+    const suspensiones = await prisma.historialEstadoSocio.groupBy({
+      by: ['socio_id'],
+      where: { socio_id: { in: socios.map((s) => s.id) }, estado_nuevo: 'suspendido' },
+      _count: { _all: true },
+    });
+    const vecesSuspendido = new Map(suspensiones.map((f) => [f.socio_id, f._count._all]));
 
     // Préstamos vigentes: son el cuarto servicio cobrable en caja
     const prestamos = await prisma.prestamo.findMany({
@@ -636,6 +665,21 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         asambleas_asistidas: asistencias
           .filter((a) => a.socio_id === socio.id)
           .map((a) => a.asamblea_id),
+
+        // Historial de estados, del mas reciente al mas viejo. `veces_suspendido`
+        // es el dato que la cooperativa pidio para decidir un prestamo: no tanto
+        // si hoy esta suspendido, sino cuantas veces lo ha estado.
+        historial_estados: socio.historial_estados.map((h) => ({
+          id: h.id,
+          estado_anterior: h.estado_anterior,
+          estado_nuevo: h.estado_nuevo,
+          motivo: h.motivo,
+          origen: h.origen,
+          semanas_atraso: h.semanas_atraso,
+          suspendido_hasta: h.suspendido_hasta,
+          fecha: h.fecha,
+        })),
+        veces_suspendido: vecesSuspendido.get(socio.id) ?? 0,
         alertas: {
           // Se avisa, no se bloquea: la decisión es del cajero
           socio_retirado: socio.estado === 'retirado',

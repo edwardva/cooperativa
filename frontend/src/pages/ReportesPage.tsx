@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { AlertTriangle, CalendarRange, DollarSign, Eye, FileSpreadsheet, FileText, HardHat, HeartPulse, ListChecks, Loader2, Wallet } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -193,7 +194,16 @@ export const ReportesPage = () => {
   const puedeExportar = hasPermission('reportes', 'export')
   const alEnter = useEnterNavigation()
 
-  const [seleccion, setSeleccion] = useState<ClaveReporte>('ferias-pendientes')
+  // Se puede llegar con el reporte ya elegido: /reportes?reporte=socios-suspendidos.
+  // Colecta enlaza asi al listado de suspendidos, que la cooperativa pidio tener
+  // a mano desde alli sin duplicar el reporte.
+  const [parametrosUrl] = useSearchParams()
+  const pedido = parametrosUrl.get('reporte')
+  const inicial: ClaveReporte = REPORTES.some((r) => r.clave === pedido)
+    ? (pedido as ClaveReporte)
+    : 'ferias-pendientes'
+
+  const [seleccion, setSeleccion] = useState<ClaveReporte>(inicial)
   const [valores, setValores] = useState<Record<ClaveReporte, Record<string, string>>>(
     () => Object.fromEntries(REPORTES.map((r) => [r.clave, r.inicial])) as Record<ClaveReporte, Record<string, string>>
   )
