@@ -21,14 +21,18 @@ type Db = PrismaClient | Prisma.TransactionClient;
 const TOPE = 5_000;
 
 export interface OpcionesBusqueda {
-  /** Campos donde buscar cada palabra. Por defecto, los cuatro del listado */
-  campos?: ('codigo_socio' | 'cedula' | 'nombre' | 'apellido')[];
+  /** Campos donde buscar cada palabra. Por defecto, los cinco del listado */
+  campos?: ('codigo_socio' | 'cedula' | 'nombre' | 'apellido' | 'telefono')[];
   limite?: number;
 }
 
 /**
  * Ids de los socios donde CADA palabra del texto aparece en alguno de los
  * campos, sin importar acentos, mayúsculas ni el orden de las palabras.
+ *
+ * El telefono entra en los campos por defecto: en la caja se busca al socio
+ * por el numero que dejo, y muchos tienen dos en el mismo campo separados por
+ * una barra, asi que buscar el fragmento es la unica forma de dar con ellos.
  */
 export const idsSociosPorTexto = async (
   db: Db,
@@ -38,7 +42,7 @@ export const idsSociosPorTexto = async (
   const palabras = texto.trim().split(/\s+/).filter(Boolean);
   if (palabras.length === 0) return [];
 
-  const campos = opciones.campos ?? ['codigo_socio', 'cedula', 'nombre', 'apellido'];
+  const campos = opciones.campos ?? ['codigo_socio', 'cedula', 'nombre', 'apellido', 'telefono'];
   const limite = Math.min(opciones.limite ?? TOPE, TOPE);
 
   // Una columna con todo lo buscable, sin acentos y en minúsculas. El orden

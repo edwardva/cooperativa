@@ -7,8 +7,13 @@
 //
 //   - Trabajadores cuya feria DEL PERÍODO es esta (ver `feriaDelPeriodo`):
 //     si lo trasladaron a mitad de período, le toca a la última feria.
-//   - Activos, o retirados que trabajaron parte del período. Suspendidos e
-//     inactivos no tienen salud (misma regla que la ficha del trabajador).
+//   - Solo ACTIVOS. Confirmado por la cooperativa al probar el sistema: "aparece
+//     el status retirado, pero al momento de hacer pagos suma también a ese
+//     retirado, y eso es incorrecto". Antes se cobraba tambien al retirado que
+//     habia trabajado parte del periodo; ya no. Suspendidos e inactivos
+//     tampoco tienen salud.
+//     Lo que YA se le pago a un retirado se sigue listando (ver mas abajo): si
+//     desapareciera, la suma de renglones dejaria de cuadrar con el pago.
 //   - Pagado = tiene un renglón VIGENTE para ese período, en esta u otra feria.
 //     Un anulado no cuenta, y el trabajador vuelve a pendiente.
 //   - NO se le cobra a la feria el trabajador que ya paga su salud como socio
@@ -92,7 +97,7 @@ export const calcularDeuda = async (
 
   const candidatos = await db.socioTrabajador.findMany({
     where: {
-      estado: { in: ['activo', 'retirado'] },
+      estado: 'activo',
       ferias: {
         some: {
           feria_id: feriaId,

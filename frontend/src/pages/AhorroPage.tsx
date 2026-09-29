@@ -34,7 +34,10 @@ import {
   Calendar,
   Filter,
   FileText,
+  Printer,
 } from 'lucide-react';
+import { nombreEnMayusculas } from '../utils/formatters';
+import { getErrorMessage } from '../services/api';
 import * as ahorroService from '../services/ahorroService';
 import { usePermissions } from '../store/authStore';
 import * as sociosService from '../services/sociosService';
@@ -783,6 +786,9 @@ export const AhorroPage = () => {
         </div>
       </div>
 
+      {/* Solo cuando no hay modal abierto: dos bloques de impresion montados a
+          la vez se superponen, porque cada uno se coloca sobre toda la pagina */}
+      {!modalAbierto && (
       <PrintableListado
         titulo="Listado de Cuentas de Ahorro"
         subtitulo="Listado generado con los filtros y orden actual del módulo de ahorro"
@@ -797,6 +803,7 @@ export const AhorroPage = () => {
         columnasMayusculas={['Socio']}
         filas={filasImpresion}
       />
+      )}
 
       {/* ============================================ */}
       {/* ESTADÍSTICAS */}
@@ -1241,24 +1248,24 @@ export const AhorroPage = () => {
         />
       )}
 
-      {modalAbierto === 'movimiento' && createPortal(
-        <div className="fixed top-0 left-0 right-0 bottom-0 m-0 bg-black/50 flex items-center justify-center z-[100] p-4 overflow-y-auto">
-          <Card className="max-w-2xl w-full p-6 my-8">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">Registrar Movimiento</h2>
-              <button
-                onClick={() => setModalAbierto(null)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            <p className="text-gray-600">
-              Formulario de depósito/retiro (próximamente)
-            </p>
-          </Card>
-        </div>,
-        document.body
+      {modalAbierto === 'movimiento' && (
+        <ModalMovimiento
+          onClose={() => setModalAbierto(null)}
+          onSuccess={() => {
+            setModalAbierto(null);
+            // El movimiento cambia el saldo: hay que refrescar las cuentas y
+            // tambien los totales de la cabecera
+            const recargar = async () => {
+              const [resCuentas, resEstadisticas] = await Promise.all([
+                ahorroService.obtenerCuentas({ page: paginaActual, limit: registrosPorPagina }),
+                ahorroService.obtenerEstadisticas(),
+              ]);
+              if (resCuentas.success) setCuentas(resCuentas.data);
+              if (resEstadisticas.success) setEstadisticas(resEstadisticas.data);
+            };
+            void recargar();
+          }}
+        />
       )}
 
       {modalAbierto === 'detalle' && cuentaSeleccionada && createPortal(
@@ -1963,9 +1970,67 @@ export const AhorroPage = () => {
                 </p>
               </div>
             )}
+
+            {/* Impresion de lo que se esta viendo. El modulo ya imprime el
+                listado de cuentas y el reporte general; faltaba aqui, que es
+                donde se consulta la cuenta de UN socio para entregarsela. */}
+            {movimientos.length > 0 && (
+              <div className="mt-6 flex justify-end">
+                <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+                  <Printer className="w-4 h-4" />
+                  Imprimir movimientos
+                </Button>
+              </div>
+            )}
           </Card>
         </div>,
         document.body
+      )}
+
+      {/* Lo que sale por la impresora al pulsar "Imprimir movimientos" */}
+      {modalAbierto === 'consultar_movimientos' && movimientos.length > 0 && (
+        <PrintableListado
+          titulo="Movimientos de la Cuenta de Ahorro"
+          subtitulo={
+            cuentaEncontrada
+              ? `Cuenta ${cuentaEncontrada.numero_cuenta} — ${cuentaEncontrada.socio?.codigo_socio ?? ''} ${nombreEnMayusculas(
+                  `${cuentaEncontrada.socio?.nombre ?? ''} ${cuentaEncontrada.socio?.apellido ?? ''}`
+                )}`.trim()
+              : 'Movimientos consultados'
+          }
+          filtros={[
+            { label: 'Desde', value: fechaDesde || 'Sin límite' },
+            { label: 'Hasta', value: fechaHasta || 'Sin límite' },
+            {
+              label: 'Tipo',
+              value:
+                tipoMovimiento === 'todos'
+                  ? 'Todos'
+                  : tipoMovimiento === 'deposito'
+                    ? 'Depósitos'
+                    : 'Retiros',
+            },
+          ]}
+          resumenes={[
+            { label: 'Movimientos', value: String(movimientos.length) },
+            {
+              label: 'Saldo actual USD',
+              value: cuentaEncontrada
+                ? `$${Number(cuentaEncontrada.saldo_usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : '-',
+            },
+          ]}
+          columnas={['Fecha', 'Tipo', 'Monto USD', 'Monto Bs', 'Saldo resultante USD', 'Concepto', 'Referencia']}
+          filas={movimientos.map((m) => [
+            new Date(m.fecha_movimiento).toLocaleDateString('es-VE'),
+            m.tipo_movimiento === 'deposito' ? 'Depósito' : 'Retiro',
+            Number(m.monto_usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            Number(m.monto_bs).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            Number(m.saldo_nuevo_usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            m.concepto ?? '',
+            m.referencia ?? '',
+          ])}
+        />
       )}
 
       {/* Modal Reporte de Movimientos */}
@@ -1993,6 +2058,8 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
   const [tiposCuenta, setTiposCuenta] = useState<TipoCuentaAhorro[]>([]);
   const [tipoCuentaId, setTipoCuentaId] = useState<string>('');
   const [montoInicial, setMontoInicial] = useState<string>('');
+  // La moneda del tipo de cuenta elegido decide en que se pide el deposito
+  const monedaDelTipo = tiposCuenta.find((t) => String(t.id) === tipoCuentaId)?.moneda ?? 'bs';
   
   // Estados de UI
   const [buscandoSocio, setBuscandoSocio] = useState(false);
@@ -2089,7 +2156,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
       const response = await ahorroService.aperturarCuenta({
         socio_id: socioSeleccionado.id,
         tipo_cuenta_id: parseInt(tipoCuentaId),
-        monto_inicial_usd: monto > 0 ? monto : undefined,
+        monto_inicial: monto > 0 ? monto : undefined,
       });
 
       if (response.success) {
@@ -2337,8 +2404,10 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
             <div className="space-y-4">
               <h3 className="font-semibold text-gray-900">3. Depósito Inicial (Opcional)</h3>
               
+              {/* El monto va en la moneda del tipo de cuenta elegido: la cuenta
+                  a la vista se lleva en bolivares, la de divisas en dolares */}
               <Input
-                label="Monto en USD"
+                label={monedaDelTipo === 'usd' ? 'Monto en dólares' : 'Monto en bolívares'}
                 type="number"
                 step="0.01"
                 min="0"
@@ -2378,6 +2447,313 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
             </Button>
           </div>
         </form>
+      </Card>
+    </div>,
+    document.body
+  );
+};
+
+// ============================================
+// COMPONENTE: MODAL REGISTRAR MOVIMIENTO
+// ============================================
+//
+// Deposito y retiro de una cuenta de ahorro. El backend ya resolvia el
+// movimiento (POST /ahorro/movimientos); lo que faltaba era esta pantalla, asi
+// que en la caja no habia forma de registrar un deposito ni un retiro.
+//
+// El retiro se compara contra el DISPONIBLE, no contra el saldo: lo que
+// respalda un prestamo esta bloqueado y no se puede sacar. La comprobacion se
+// repite en el backend dentro de la transaccion, porque entre que se carga la
+// pantalla y se pulsa guardar puede haber entrado un cobro del mismo socio.
+
+interface ModalMovimientoProps {
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
+  const alEnter = useEnterNavigation();
+
+  const [busqueda, setBusqueda] = useState('');
+  const [cuentasEncontradas, setCuentasEncontradas] = useState<CuentaAhorro[]>([]);
+  const [cuenta, setCuenta] = useState<CuentaAhorro | null>(null);
+  const [tipo, setTipo] = useState<'deposito' | 'retiro'>('deposito');
+  const [monto, setMonto] = useState('');
+  const [concepto, setConcepto] = useState('');
+  const [referencia, setReferencia] = useState('');
+
+  const [buscando, setBuscando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [exito, setExito] = useState<string | null>(null);
+
+  // La cuenta a la vista se lleva en bolivares y la de divisas en dolares: se
+  // deposita, se retira y se compara el disponible en la moneda de la cuenta.
+  const enBolivares = cuenta?.tipo_cuenta.moneda === 'bs';
+  const simbolo = enBolivares ? 'Bs' : '$';
+  const importe = (n: number) =>
+    `${simbolo} ${n.toLocaleString(enBolivares ? 'es-VE' : 'en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  const saldo = cuenta ? Number(enBolivares ? cuenta.saldo_bs : cuenta.saldo_usd) : 0;
+  const bloqueado = cuenta
+    ? Number(enBolivares ? cuenta.monto_bloqueado_bs : cuenta.monto_bloqueado_usd)
+    : 0;
+  const disponible = saldo - bloqueado;
+  const montoNumero = Number(monto);
+
+  const buscarCuentas = async () => {
+    if (!busqueda.trim()) {
+      setError('Escriba el número de cuenta, el expediente o la cédula');
+      return;
+    }
+    setBuscando(true);
+    setError(null);
+    setCuenta(null);
+    setCuentasEncontradas([]);
+    try {
+      const respuesta = await ahorroService.obtenerCuentas({ busqueda: busqueda.trim(), limit: 20 });
+      if (respuesta.success && respuesta.data.length > 0) {
+        // Una cuenta inactiva no admite movimientos: el backend la rechaza
+        const activas = respuesta.data.filter((c) => c.estado);
+        if (activas.length === 0) {
+          setError('Las cuentas encontradas están inactivas');
+          return;
+        }
+        setCuentasEncontradas(activas);
+        if (activas.length === 1) setCuenta(activas[0]!);
+      } else {
+        setError('No se encontró ninguna cuenta con ese dato');
+      }
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Error al buscar la cuenta');
+    } finally {
+      setBuscando(false);
+    }
+  };
+
+  const validar = (): string | null => {
+    if (!cuenta) return 'Seleccione la cuenta';
+    if (!monto.trim()) return 'Escriba el monto';
+    if (Number.isNaN(montoNumero) || montoNumero <= 0) return 'El monto debe ser mayor que cero';
+    if (tipo === 'retiro' && montoNumero > disponible) {
+      return `No hay saldo disponible: ${importe(disponible)}${bloqueado > 0 ? ` (hay ${importe(bloqueado)} bloqueados)` : ''}`;
+    }
+    return null;
+  };
+
+  const guardar = async () => {
+    const problema = validar();
+    if (problema) {
+      setError(problema);
+      return;
+    }
+    setEnviando(true);
+    setError(null);
+    try {
+      const respuesta = await ahorroService.registrarMovimiento({
+        cuenta_id: cuenta!.id,
+        tipo_movimiento: tipo,
+        monto: montoNumero,
+        concepto: concepto.trim() || undefined,
+        referencia: referencia.trim() || undefined,
+      });
+      if (respuesta.success) {
+        setExito(
+          `${tipo === 'deposito' ? 'Depósito' : 'Retiro'} de ${importe(montoNumero)} registrado en la cuenta ${cuenta!.numero_cuenta}`
+        );
+        setTimeout(onSuccess, 1200);
+      } else {
+        setError(respuesta.error?.message || 'No se pudo registrar el movimiento');
+      }
+    } catch (err) {
+      setError(getErrorMessage(err) || 'No se pudo registrar el movimiento');
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed top-0 left-0 right-0 bottom-0 m-0 bg-black/50 flex items-center justify-center z-[100] p-4 overflow-y-auto">
+      <Card className="max-w-2xl w-full p-6 my-8">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold">Registrar Movimiento</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        {exito ? (
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <CheckCircle2 className="w-14 h-14 text-emerald-500 mb-4" />
+            <p className="text-lg font-medium text-gray-900">{exito}</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Paso 1: la cuenta */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Cuenta, expediente o cédula
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void buscarCuentas();
+                    }
+                  }}
+                  placeholder="Ej. 0001-0002 o 12345678"
+                  className="flex-1"
+                />
+                <Button onClick={() => void buscarCuentas()} disabled={buscando}>
+                  {buscando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+
+            {cuentasEncontradas.length > 1 && !cuenta && (
+              <div className="border border-gray-200 rounded-lg divide-y max-h-52 overflow-y-auto">
+                {cuentasEncontradas.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setCuenta(c)}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50"
+                  >
+                    <p className="font-medium text-gray-900">
+                      {c.numero_cuenta} · {c.tipo_cuenta.nombre}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {c.socio.codigo_socio} — {c.socio.nombre} {c.socio.apellido}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {cuenta && (
+              <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="font-semibold text-gray-900">
+                      {cuenta.numero_cuenta} · {cuenta.tipo_cuenta.nombre}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {cuenta.socio.codigo_socio} — {cuenta.socio.nombre} {cuenta.socio.apellido}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { setCuenta(null); setCuentasEncontradas([]); }}
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-3 mt-4 text-sm">
+                  <div>
+                    <p className="text-gray-500">Saldo</p>
+                    <p className="font-semibold">{importe(saldo)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Bloqueado</p>
+                    <p className="font-semibold">{importe(bloqueado)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Disponible</p>
+                    <p className="font-semibold text-emerald-600">{importe(disponible)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Paso 2: el movimiento */}
+            {cuenta && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setTipo('deposito')}
+                    className={`rounded-lg border-2 px-4 py-3 font-medium transition ${
+                      tipo === 'deposito'
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    Depósito
+                  </button>
+                  <button
+                    onClick={() => setTipo('retiro')}
+                    className={`rounded-lg border-2 px-4 py-3 font-medium transition ${
+                      tipo === 'retiro'
+                        ? 'border-amber-500 bg-amber-50 text-amber-700'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    Retiro
+                  </button>
+                </div>
+
+                <Input
+                  label={enBolivares ? 'Monto en bolívares' : 'Monto en dólares'}
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                  onKeyDown={alEnter}
+                  placeholder="0.00"
+                  helperText={
+                    tipo === 'retiro'
+                      ? `Disponible para retirar: ${importe(disponible)}`
+                      : `Esta cuenta se lleva en ${enBolivares ? 'bolívares' : 'dólares'}`
+                  }
+                />
+
+                <Input
+                  label="Concepto (opcional)"
+                  value={concepto}
+                  onChange={(e) => setConcepto(e.target.value)}
+                  onKeyDown={alEnter}
+                  placeholder="Motivo del movimiento"
+                />
+
+                <Input
+                  label="Referencia (opcional)"
+                  value={referencia}
+                  onChange={(e) => setReferencia(e.target.value)}
+                  onKeyDown={alEnter}
+                  maxLength={50}
+                  placeholder="Número de recibo o transferencia"
+                />
+              </>
+            )}
+
+            {error && (
+              <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={onClose} disabled={enviando}>
+                Cancelar
+              </Button>
+              <Button onClick={() => void guardar()} disabled={!cuenta || enviando}>
+                {enviando ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Guardando...
+                  </>
+                ) : (
+                  'Registrar'
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>,
     document.body

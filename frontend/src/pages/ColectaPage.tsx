@@ -56,6 +56,7 @@ import { usePermissions } from '../store/authStore'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
 import { MovimientosDelDia } from '../components/colecta/MovimientosDelDia'
 import { SituacionSocio } from '../components/colecta/SituacionSocio'
+import { HistorialSuspensiones } from '../components/colecta/HistorialSuspensiones'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
 
 const controlClass =
@@ -806,6 +807,13 @@ export default function ColectaPage() {
                     tasa={tasa}
                   />
                 </OpcionesColecta>
+
+                {/* Si ha estado suspendido y por que: pesa al decidir un prestamo */}
+                <HistorialSuspensiones
+                  key={`historial-${socio.id}`}
+                  historial={socio.historial_estados ?? []}
+                  vecesSuspendido={socio.veces_suspendido ?? 0}
+                />
 
                 {/* PERIODO Y SEMANAS: el driver de todo el cobro */}
                 <Card className="p-5">

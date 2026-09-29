@@ -152,6 +152,19 @@ export interface AsambleaOpcion {
   tipo: string
 }
 
+/** Un cambio de estado del socio: quien lo movio, por que y cuando */
+export interface HistorialEstado {
+  id: number
+  estado_anterior: string
+  estado_nuevo: string
+  motivo: string
+  /** 'automatico' (el proceso de morosidad) o 'manual' (alguien del sistema) */
+  origen: string
+  semanas_atraso: number | null
+  suspendido_hasta: string | null
+  fecha: string
+}
+
 export interface SocioColecta {
   id: number
   codigo_socio: string
@@ -188,6 +201,12 @@ export interface SocioColecta {
   /** Mayor atraso entre sus acuerdos: sugiere cuantas semanas cobrar */
   mayor_atraso: number
   asambleas_asistidas: number[]
+
+  /** Cambios de estado del socio, del mas reciente al mas viejo (ultimos 10) */
+  historial_estados: HistorialEstado[]
+  /** Cuantas veces ha estado suspendido en TODO su historial, no solo en los 10 */
+  veces_suspendido: number
+
   alertas: {
     socio_retirado: boolean
     acuerdos_suspendidos: number

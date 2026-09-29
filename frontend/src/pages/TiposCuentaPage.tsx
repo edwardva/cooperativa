@@ -13,6 +13,8 @@ interface TipoCuentaAhorro {
   codigo: string;
   nombre: string;
   descripcion?: string | null;
+  /** Moneda en que se lleva el ahorro: a la vista en bolivares, divisas en dolares */
+  moneda: 'bs' | 'usd';
   estado: boolean;
   _count?: {
     cuentas: number;
@@ -60,6 +62,7 @@ export const TiposCuentaPage = () => {
   const filasImpresion = tiposCuentaFiltrados.map((tipo) => [
     tipo.codigo,
     tipo.nombre,
+    tipo.moneda === 'usd' ? 'Dólares' : 'Bolívares',
     tipo.descripcion || 'Sin descripción',
     String(tipo._count?.cuentas ?? 0),
     tipo.estado ? 'Activo' : 'Inactivo',
@@ -155,7 +158,7 @@ export const TiposCuentaPage = () => {
         titulo="Tipos de Cuenta de Ahorro"
         subtitulo="Listado generado con los filtros actuales"
         filtros={filtrosImpresion}
-        columnas={['Código', 'Nombre', 'Descripción', 'Cuentas activas', 'Estado', 'Registrado']}
+        columnas={['Código', 'Nombre', 'Moneda', 'Descripción', 'Cuentas activas', 'Estado', 'Registrado']}
         filas={filasImpresion}
       />
 
@@ -181,6 +184,9 @@ export const TiposCuentaPage = () => {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Nombre
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Moneda
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Descripción
@@ -221,6 +227,19 @@ export const TiposCuentaPage = () => {
                     ) : (
                       <span className="text-sm text-gray-900 font-medium">{tipo.nombre}</span>
                     )}
+                  </td>
+                  {/* En que moneda se lleva el ahorro. La cuenta a la vista es un
+                      producto en bolivares; solo divisas se lleva en dolares. */}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                        tipo.moneda === 'usd'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-sky-100 text-sky-800'
+                      }`}
+                    >
+                      {tipo.moneda === 'usd' ? 'Dólares' : 'Bolívares'}
+                    </span>
                   </td>
                   <td className="px-6 py-4">
                     {editando === tipo.id ? (
