@@ -37,6 +37,8 @@ model Usuario {
   movimientos_boveda MovimientoBoveda[]
   audit_logs         AuditLog[]
 
+  pagos_web_revisados PagoWeb[]
+
   @@map("usuarios")
 }
 
@@ -781,6 +783,8 @@ model Prestamo {
   plan_pagos    PlanPago[]
   abonos        AbonoPrestamo[]
 
+  pagos_web PagoWeb[]
+
   @@index([socio_id])
   @@index([numero_prestamo])
   @@index([estado])
@@ -940,6 +944,8 @@ model Colecta {
   ubicacion      Ubicacion?       @relation(fields: [ubicacion_id], references: [id])
   detalles       DetalleColecta[]
 
+  pagos_web PagoWeb[]
+
   @@index([ubicacion_id])
   @@index([socio_id])
   @@index([fecha_colecta])
@@ -1052,11 +1058,22 @@ enum Moneda {
 // CAJERO DIGITAL
 // ============================================
 
+/// El acceso del SOCIO al cajero digital, aparte del de los empleados.
+///
+/// Confirmado por la cooperativa: "el socio accede con usuario y clave creada
+/// aparte solo del socio, es decir como un usuario externo que al ingresar solo
+/// accede a un formulario que llena con datos del pago". Y: "el cajero digital
+/// la gente lo paga desde el celular".
+///
+/// Son credenciales SEPARADAS de las del personal a proposito: un socio nunca
+/// debe poder entrar al administrativo, ni al reves.
 model UsuarioDigital {
   id            Int       @id @default(autoincrement())
   socio_id      Int       @unique
   username      String    @unique @db.VarChar(50)
   password_hash String    @db.VarChar(255)
+  /// Celular con el que se registro; por ahi va la recuperacion de clave
+  telefono      String?   @db.VarChar(100)
   estado        Boolean   @default(true)
   ultimo_acceso DateTime?
   created_at    DateTime  @default(now())
@@ -1069,6 +1086,12 @@ model UsuarioDigital {
   @@map("usuarios_digitales")
 }
 
+/// Lo que el socio DECLARA haber pagado desde el celular.
+///
+/// No es un cobro: es un aviso. El socio dice "transferi tanto, con esta
+/// referencia, para tantas semanas", y la cooperativa lo verifica contra el
+/// banco antes de convertirlo en un cobro real. Por eso vive aparte de
+/// `colecta` y no toca ningun saldo mientras esta pendiente.
 model PagoWeb {
   id                  Int           @id @default(autoincrement())
   usuario_digital_id  Int
@@ -1080,13 +1103,31 @@ model PagoWeb {
   estado              EstadoPagoWeb @default(pendiente)
   fecha_conciliacion  DateTime?     @db.Date
   observaciones       String?       @db.Text
-  created_at          DateTime      @default(now())
-  updated_at          DateTime      @updatedAt
+
+  /// Para que dice el socio que es el pago
+  destino        DestinoPagoWeb @default(semanas)
+  /// Semanas que quiere cubrir. Atrasadas mas hasta 10 de adelanto.
+  semanas        Int            @default(0)
+  /// Si abona a un prestamo concreto, cual
+  prestamo_id    Int?
+  /// Quien lo concilio o lo rechazo, y por que
+  revisado_por   Int?
+  motivo_rechazo String?        @db.Text
+  /// La colecta que se genero al conciliarlo, si ya se cobro
+  colecta_id     Int?
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
 
   // Relaciones
   usuario_digital UsuarioDigital @relation(fields: [usuario_digital_id], references: [id])
+  prestamo        Prestamo?      @relation(fields: [prestamo_id], references: [id])
+  colecta         Colecta?       @relation(fields: [colecta_id], references: [id])
+  revisor         Usuario?       @relation(fields: [revisado_por], references: [id])
 
+  @@unique([referencia_bancaria])
   @@index([usuario_digital_id])
+  @@index([prestamo_id])
+  @@index([colecta_id])
   @@index([estado])
   @@index([fecha_pago])
   @@map("pagos_web")
@@ -1096,6 +1137,16 @@ enum EstadoPagoWeb {
   pendiente
   conciliado
   rechazado
+}
+
+/// Para que dice el socio que es lo que pago
+enum DestinoPagoWeb {
+  /// Semanas de funeraria y salud, que van juntas
+  semanas
+  /// Abono a uno de sus prestamos
+  prestamo
+  /// Deposito a su cuenta de ahorro
+  ahorro
 }
 
 // ============================================

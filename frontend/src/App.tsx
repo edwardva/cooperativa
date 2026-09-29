@@ -23,6 +23,7 @@ import AsambleasPage from './pages/AsambleasPage'
 import ColectaPage from './pages/ColectaPage'
 import PrestamosPage from './pages/PrestamosPage'
 import ColectaReportesPage from './pages/ColectaReportesPage'
+import CajeroDigitalPage from './pages/CajeroDigitalPage'
 import TrabajadoresPage from './pages/TrabajadoresPage'
 import SaludFeriaPage from './pages/SaludFeriaPage'
 
@@ -201,6 +202,17 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <ColectaReportesPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/cajero-digital"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <CajeroDigitalPage />
               </MainLayout>
             </ProtectedRoute>
           }
