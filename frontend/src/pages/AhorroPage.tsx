@@ -2055,6 +2055,8 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
   const [tiposCuenta, setTiposCuenta] = useState<TipoCuentaAhorro[]>([]);
   const [tipoCuentaId, setTipoCuentaId] = useState<string>('');
   const [montoInicial, setMontoInicial] = useState<string>('');
+  // La moneda del tipo de cuenta elegido decide en que se pide el deposito
+  const monedaDelTipo = tiposCuenta.find((t) => String(t.id) === tipoCuentaId)?.moneda ?? 'bs';
   
   // Estados de UI
   const [buscandoSocio, setBuscandoSocio] = useState(false);
@@ -2151,7 +2153,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
       const response = await ahorroService.aperturarCuenta({
         socio_id: socioSeleccionado.id,
         tipo_cuenta_id: parseInt(tipoCuentaId),
-        monto_inicial_usd: monto > 0 ? monto : undefined,
+        monto_inicial: monto > 0 ? monto : undefined,
       });
 
       if (response.success) {
@@ -2399,8 +2401,10 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
             <div className="space-y-4">
               <h3 className="font-semibold text-gray-900">3. Depósito Inicial (Opcional)</h3>
               
+              {/* El monto va en la moneda del tipo de cuenta elegido: la cuenta
+                  a la vista se lleva en bolivares, la de divisas en dolares */}
               <Input
-                label="Monto en USD"
+                label={monedaDelTipo === 'usd' ? 'Monto en dólares' : 'Monto en bolívares'}
                 type="number"
                 step="0.01"
                 min="0"
@@ -2480,8 +2484,20 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
   const [error, setError] = useState<string | null>(null);
   const [exito, setExito] = useState<string | null>(null);
 
-  const disponible = cuenta ? Number(cuenta.saldo_usd) - Number(cuenta.monto_bloqueado_usd) : 0;
-  const bloqueado = cuenta ? Number(cuenta.monto_bloqueado_usd) : 0;
+  // La cuenta a la vista se lleva en bolivares y la de divisas en dolares: se
+  // deposita, se retira y se compara el disponible en la moneda de la cuenta.
+  const enBolivares = cuenta?.tipo_cuenta.moneda === 'bs';
+  const simbolo = enBolivares ? 'Bs' : '$';
+  const importe = (n: number) =>
+    `${simbolo} ${n.toLocaleString(enBolivares ? 'es-VE' : 'en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  const saldo = cuenta ? Number(enBolivares ? cuenta.saldo_bs : cuenta.saldo_usd) : 0;
+  const bloqueado = cuenta
+    ? Number(enBolivares ? cuenta.monto_bloqueado_bs : cuenta.monto_bloqueado_usd)
+    : 0;
+  const disponible = saldo - bloqueado;
   const montoNumero = Number(monto);
 
   const buscarCuentas = async () => {
@@ -2519,7 +2535,7 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
     if (!monto.trim()) return 'Escriba el monto';
     if (Number.isNaN(montoNumero) || montoNumero <= 0) return 'El monto debe ser mayor que cero';
     if (tipo === 'retiro' && montoNumero > disponible) {
-      return `No hay saldo disponible: $${disponible.toFixed(2)}${bloqueado > 0 ? ` (hay $${bloqueado.toFixed(2)} bloqueados)` : ''}`;
+      return `No hay saldo disponible: ${importe(disponible)}${bloqueado > 0 ? ` (hay ${importe(bloqueado)} bloqueados)` : ''}`;
     }
     return null;
   };
@@ -2536,13 +2552,13 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
       const respuesta = await ahorroService.registrarMovimiento({
         cuenta_id: cuenta!.id,
         tipo_movimiento: tipo,
-        monto_usd: montoNumero,
+        monto: montoNumero,
         concepto: concepto.trim() || undefined,
         referencia: referencia.trim() || undefined,
       });
       if (respuesta.success) {
         setExito(
-          `${tipo === 'deposito' ? 'Depósito' : 'Retiro'} de $${montoNumero.toFixed(2)} registrado en la cuenta ${cuenta!.numero_cuenta}`
+          `${tipo === 'deposito' ? 'Depósito' : 'Retiro'} de ${importe(montoNumero)} registrado en la cuenta ${cuenta!.numero_cuenta}`
         );
         setTimeout(onSuccess, 1200);
       } else {
@@ -2636,15 +2652,15 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
                 <div className="grid grid-cols-3 gap-3 mt-4 text-sm">
                   <div>
                     <p className="text-gray-500">Saldo</p>
-                    <p className="font-semibold">${Number(cuenta.saldo_usd).toFixed(2)}</p>
+                    <p className="font-semibold">{importe(saldo)}</p>
                   </div>
                   <div>
                     <p className="text-gray-500">Bloqueado</p>
-                    <p className="font-semibold">${bloqueado.toFixed(2)}</p>
+                    <p className="font-semibold">{importe(bloqueado)}</p>
                   </div>
                   <div>
                     <p className="text-gray-500">Disponible</p>
-                    <p className="font-semibold text-emerald-600">${disponible.toFixed(2)}</p>
+                    <p className="font-semibold text-emerald-600">{importe(disponible)}</p>
                   </div>
                 </div>
               </div>
@@ -2677,7 +2693,7 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
                 </div>
 
                 <Input
-                  label="Monto en dólares"
+                  label={enBolivares ? 'Monto en bolívares' : 'Monto en dólares'}
                   type="number"
                   step="0.01"
                   min="0"
@@ -2686,7 +2702,9 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
                   onKeyDown={alEnter}
                   placeholder="0.00"
                   helperText={
-                    tipo === 'retiro' ? `Disponible para retirar: $${disponible.toFixed(2)}` : undefined
+                    tipo === 'retiro'
+                      ? `Disponible para retirar: ${importe(disponible)}`
+                      : `Esta cuenta se lleva en ${enBolivares ? 'bolívares' : 'dólares'}`
                   }
                 />
 

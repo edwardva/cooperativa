@@ -426,13 +426,27 @@ model Ubicacion {
 // AHORRO
 // ============================================
 
+/// En que moneda se lleva el ahorro de este tipo de cuenta.
+///
+/// Confirmado por la cooperativa al probar: "ahorros a la vista debe ser en
+/// bolivares, no debe hacer el cambio a $". La cuenta a la vista es un producto
+/// en bolivares; la de divisas es la que se lleva en dolares. Antes el sistema
+/// trataba todo como dolares y derivaba los bolivares con la tasa del dia, que
+/// es lo que hacia "el cambio a $".
+enum MonedaCuenta {
+  bs
+  usd
+}
+
 model TipoCuentaAhorro {
-  id          Int      @id @default(autoincrement())
-  codigo      String   @unique @db.VarChar(10)
-  nombre      String   @db.VarChar(100)
-  descripcion String?  @db.Text
-  estado      Boolean  @default(true)
-  created_at  DateTime @default(now())
+  id          Int          @id @default(autoincrement())
+  codigo      String       @unique @db.VarChar(10)
+  nombre      String       @db.VarChar(100)
+  descripcion String?      @db.Text
+  /// La moneda en que se deposita, se retira y se guarda el saldo real
+  moneda      MonedaCuenta @default(bs)
+  estado      Boolean      @default(true)
+  created_at  DateTime     @default(now())
 
   // Relaciones
   cuentas CuentaAhorro[]

@@ -33,6 +33,8 @@ export interface CuentaAhorro {
     codigo: string;
     nombre: string;
     descripcion?: string;
+    /** En que moneda se lleva el ahorro: la cuenta a la vista va en bolivares */
+    moneda: 'bs' | 'usd';
   };
   _count: {
     movimientos: number;
@@ -82,18 +84,22 @@ export interface TipoCuentaAhorro {
   codigo: string;
   nombre: string;
   descripcion?: string;
+  /** En que moneda se lleva el ahorro de este tipo de cuenta */
+  moneda: 'bs' | 'usd';
 }
 
 export interface AperturaCuentaData {
   socio_id: number;
   tipo_cuenta_id: number;
-  monto_inicial_usd?: number;
+  /** En la moneda del tipo de cuenta */
+  monto_inicial?: number;
 }
 
 export interface MovimientoData {
   cuenta_id: number;
   tipo_movimiento: 'deposito' | 'retiro';
-  monto_usd: number;
+  /** En la moneda del tipo de cuenta: bolivares a la vista, dolares en divisas */
+  monto: number;
   concepto?: string;
   referencia?: string;
 }

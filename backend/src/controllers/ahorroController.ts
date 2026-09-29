@@ -25,13 +25,20 @@ import { bloquearSocio } from '../utils/bloqueos';
 const aperturaCuentaSchema = z.object({
   socio_id: z.number().int().positive(),
   tipo_cuenta_id: z.number().int().positive(),
-  monto_inicial_usd: z.number().nonnegative().optional().default(0),
+  /** En la moneda del tipo de cuenta, igual que los movimientos */
+  monto_inicial: z.number().nonnegative().optional().default(0),
 });
 
 const movimientoSchema = z.object({
   cuenta_id: z.number().int().positive(),
   tipo_movimiento: z.enum(['deposito', 'retiro']),
-  monto_usd: z.number().positive(),
+  /**
+   * El monto va SIEMPRE en la moneda de la cuenta: bolivares en la cuenta a la
+   * vista, dolares en la de divisas. Antes solo se aceptaban dolares y los
+   * bolivares se derivaban con la tasa del dia, asi que el saldo en bolivares
+   * de un socio subia o bajaba solo porque cambiaba la tasa.
+   */
+  monto: z.number().positive(),
   concepto: z.string().optional(),
   referencia: z.string().max(50).optional(),
 });
@@ -53,6 +60,12 @@ const consultaMovimientosSchema = z.object({
 
 /**
  * Obtener la tasa de cambio actual
+ *
+ * Se exige que sea POSITIVA. Con la cuenta a la vista llevada en bolívares, el
+ * dólar de referencia se obtiene dividiendo entre la tasa: una tasa en cero
+ * escribía `Infinity` en el saldo. Y al revés ya pasaba lo mismo de forma
+ * silenciosa: una cuenta en dólares con tasa cero guardaba 0 bolívares. Es un
+ * error de configuración de la semana y debe verse, no absorberse.
  */
 async function obtenerTasaActual(): Promise<number> {
   // Buscar la semana de colecta activa actual
@@ -67,7 +80,15 @@ async function obtenerTasaActual(): Promise<number> {
     throw new Error('No hay semana de colecta activa. Configure la tasa de cambio.');
   }
 
-  return Number(semanaActual.tasa_usd_bs);
+  const tasa = Number(semanaActual.tasa_usd_bs);
+
+  if (!Number.isFinite(tasa) || tasa <= 0) {
+    throw new BadRequestError(
+      `La semana de colecta ${semanaActual.ano}-S${semanaActual.semana} no tiene tasa de cambio configurada`
+    );
+  }
+
+  return tasa;
 }
 
 /**
@@ -193,6 +214,8 @@ export const listarCuentas = async (req: Request, res: Response): Promise<void> 
               codigo: true,
               nombre: true,
               descripcion: true,
+              // La pantalla necesita saber en que moneda se opera la cuenta
+              moneda: true,
             },
           },
           _count: {
@@ -404,6 +427,8 @@ export const listarTiposCuenta = async (_req: Request, res: Response): Promise<v
         codigo: true,
         nombre: true,
         descripcion: true,
+        // La apertura pide el monto en la moneda del tipo elegido
+        moneda: true,
       },
     });
 
@@ -535,6 +560,13 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
     // Obtener tasa de cambio actual
     const tasaCambio = await obtenerTasaActual();
 
+    // El monto de apertura llega en la moneda del tipo de cuenta, igual que
+    // los movimientos: bolivares en la cuenta a la vista, dolares en divisas
+    const enBolivares = tipoCuenta.moneda === 'bs';
+    const inicial = datos.monto_inicial || 0;
+    const inicialBs = enBolivares ? inicial : inicial * tasaCambio;
+    const inicialUsd = enBolivares ? inicial / tasaCambio : inicial;
+
     // Generar número de cuenta (formato: XX-XX-XX-XXXXXX)
     const numeroCuenta = await generarNumeroCuenta(datos.tipo_cuenta_id, datos.socio_id);
 
@@ -546,8 +578,8 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
           socio_id: datos.socio_id,
           tipo_cuenta_id: datos.tipo_cuenta_id,
           numero_cuenta: numeroCuenta,
-          saldo_usd: datos.monto_inicial_usd || 0,
-          saldo_bs: (datos.monto_inicial_usd || 0) * tasaCambio,
+          saldo_usd: inicialUsd,
+          saldo_bs: inicialBs,
           monto_bloqueado_usd: 0,
           monto_bloqueado_bs: 0,
           estado: true,
@@ -566,19 +598,19 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
       });
 
       // Si hay monto inicial, crear movimiento de apertura
-      if (datos.monto_inicial_usd && datos.monto_inicial_usd > 0) {
+      if (inicial > 0) {
         await tx.movimientoAhorro.create({
           data: {
             cuenta_id: cuenta.id,
             tipo_movimiento: 'deposito',
-            monto_usd: datos.monto_inicial_usd,
-            monto_bs: datos.monto_inicial_usd * tasaCambio,
+            monto_usd: inicialUsd,
+            monto_bs: inicialBs,
             tasa_cambio: tasaCambio,
             saldo_anterior_usd: 0,
-            saldo_nuevo_usd: datos.monto_inicial_usd,
+            saldo_nuevo_usd: inicialUsd,
             // En bolivares tal cual: derivarlo de los dolares por la tasa
             // pierde centimos y descuadra la libreta
-            saldo_nuevo_bs: Math.round(datos.monto_inicial_usd * tasaCambio * 100) / 100,
+            saldo_nuevo_bs: Math.round(inicialBs * 100) / 100,
             concepto: 'Apertura de cuenta',
             fecha_movimiento: new Date(),
           },
@@ -787,16 +819,25 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
     // Obtener tasa de cambio actual
     const tasaCambio = await obtenerTasaActual();
 
-    // Calcular saldo disponible (sin bloqueos)
-    const saldoDisponibleUsd = Number(cuenta.saldo_usd) - Number(cuenta.monto_bloqueado_usd);
+    // La moneda de la cuenta manda: es la que el socio deposita y retira, y la
+    // que guarda su saldo real. La otra queda como referencia del dia.
+    const enBolivares = cuenta.tipo_cuenta.moneda === 'bs';
+    const simbolo = enBolivares ? 'Bs ' : '$';
+    const montoBs = enBolivares ? datos.monto : datos.monto * tasaCambio;
+    const montoUsd = enBolivares ? datos.monto / tasaCambio : datos.monto;
+
+    // Calcular saldo disponible (sin bloqueos), en la moneda de la cuenta
+    const disponible = enBolivares
+      ? Number(cuenta.saldo_bs) - Number(cuenta.monto_bloqueado_bs)
+      : Number(cuenta.saldo_usd) - Number(cuenta.monto_bloqueado_usd);
 
     // Validar retiro
-    if (datos.tipo_movimiento === 'retiro' && datos.monto_usd > saldoDisponibleUsd) {
+    if (datos.tipo_movimiento === 'retiro' && datos.monto > disponible) {
       res.status(400).json({
         success: false,
         error: {
           code: 'SALDO_INSUFICIENTE',
-          message: `Saldo disponible insuficiente. Disponible: $${saldoDisponibleUsd.toFixed(2)}`,
+          message: `Saldo disponible insuficiente. Disponible: ${simbolo}${disponible.toFixed(2)}`,
         },
       });
       return;
@@ -812,36 +853,36 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
       const vigente = await tx.cuentaAhorro.findUniqueOrThrow({ where: { id: datos.cuenta_id } });
 
       if (datos.tipo_movimiento === 'retiro') {
-        const disponible = Number(vigente.saldo_usd) - Number(vigente.monto_bloqueado_usd);
-        if (datos.monto_usd > disponible) {
-          throw new BadRequestError(`Saldo disponible insuficiente. Disponible: $${disponible.toFixed(2)}`);
+        const disponibleVigente = enBolivares
+          ? Number(vigente.saldo_bs) - Number(vigente.monto_bloqueado_bs)
+          : Number(vigente.saldo_usd) - Number(vigente.monto_bloqueado_usd);
+        if (datos.monto > disponibleVigente) {
+          throw new BadRequestError(
+            `Saldo disponible insuficiente. Disponible: ${simbolo}${disponibleVigente.toFixed(2)}`
+          );
         }
       }
 
-      // Calcular nuevo saldo
+      // Calcular nuevo saldo. Cada moneda se mueve por su propio monto: el de
+      // la cuenta es el real, el otro acompaña como referencia. Antes el saldo
+      // en bolívares se recalculaba desde el de dólares con la tasa del día,
+      // así que se movía solo aunque nadie tocara la cuenta.
+      const signo = datos.tipo_movimiento === 'deposito' ? 1 : -1;
       const saldoAnteriorUsd = Number(vigente.saldo_usd);
-      const nuevoSaldoUsd =
-        datos.tipo_movimiento === 'deposito'
-          ? saldoAnteriorUsd + datos.monto_usd
-          : saldoAnteriorUsd - datos.monto_usd;
-
-      const montoBs = datos.monto_usd * tasaCambio;
-      const nuevoSaldoBs =
-        datos.tipo_movimiento === 'deposito'
-          ? Number(vigente.saldo_bs) + montoBs
-          : Number(vigente.saldo_bs) - montoBs;
+      const nuevoSaldoUsd = saldoAnteriorUsd + signo * montoUsd;
+      const nuevoSaldoBs = Number(vigente.saldo_bs) + signo * montoBs;
 
       // Crear movimiento
       const movimiento = await tx.movimientoAhorro.create({
         data: {
           cuenta_id: datos.cuenta_id,
           tipo_movimiento: datos.tipo_movimiento,
-          monto_usd: datos.monto_usd,
+          monto_usd: montoUsd,
           monto_bs: montoBs,
           tasa_cambio: tasaCambio,
           saldo_anterior_usd: saldoAnteriorUsd,
           saldo_nuevo_usd: nuevoSaldoUsd,
-          saldo_nuevo_bs: Math.round(nuevoSaldoUsd * tasaCambio * 100) / 100,
+          saldo_nuevo_bs: Math.round(nuevoSaldoBs * 100) / 100,
           concepto: datos.concepto,
           referencia: datos.referencia,
           fecha_movimiento: new Date(),
@@ -884,7 +925,7 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
     });
 
     logger.info(
-      `${datos.tipo_movimiento.toUpperCase()} registrado: ${resultado.cuenta.numero_cuenta} - $${datos.monto_usd}`
+      `${datos.tipo_movimiento.toUpperCase()} registrado: ${resultado.cuenta.numero_cuenta} - ${simbolo}${datos.monto}`
     );
 
     res.status(201).json({
@@ -1107,22 +1148,33 @@ export const recalcularSaldos = async (req: Request, res: Response): Promise<voi
     // Obtener todas las cuentas activas
     const cuentas = await prisma.cuentaAhorro.findMany({
       where: { estado: true },
+      include: { tipo_cuenta: { select: { moneda: true } } },
     });
 
     let actualizadas = 0;
 
-    // Recalcular en lotes para evitar timeout
+    // Se recalcula SIEMPRE la moneda de referencia, nunca la de la cuenta.
+    //
+    // Antes esto hacia `saldo_bs = saldo_usd * tasa` para todas. Con las
+    // cuentas a la vista —que son un producto en bolivares— eso reescribia el
+    // saldo real del socio con la tasa del dia: 16.136 cuentas habrian pasado
+    // de 7.626.385 Bs a 4.539.066 Bs de golpe, sin que nadie retirara nada.
     for (const cuenta of cuentas) {
-      const nuevoSaldoBs = Number(cuenta.saldo_usd) * tasaCambio;
-      const nuevoBloqueadoBs = Number(cuenta.monto_bloqueado_usd) * tasaCambio;
+      const enBolivares = cuenta.tipo_cuenta.moneda === 'bs';
 
-      await prisma.cuentaAhorro.update({
-        where: { id: cuenta.id },
-        data: {
-          saldo_bs: nuevoSaldoBs,
-          monto_bloqueado_bs: nuevoBloqueadoBs,
-        },
-      });
+      const datos = enBolivares
+        ? {
+            // El bolivar es el saldo real: el dolar se deriva de el
+            saldo_usd: Number(cuenta.saldo_bs) / tasaCambio,
+            monto_bloqueado_usd: Number(cuenta.monto_bloqueado_bs) / tasaCambio,
+          }
+        : {
+            // En divisas manda el dolar, como hasta ahora
+            saldo_bs: Number(cuenta.saldo_usd) * tasaCambio,
+            monto_bloqueado_bs: Number(cuenta.monto_bloqueado_usd) * tasaCambio,
+          };
+
+      await prisma.cuentaAhorro.update({ where: { id: cuenta.id }, data: datos });
 
       actualizadas++;
     }
