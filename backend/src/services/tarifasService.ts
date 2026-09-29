@@ -50,6 +50,18 @@ export const PARAMETROS_COLECTA = {
     descripcion:
       'Si vale 1, pasar del máximo de adelanto se rechaza; si vale 0, sólo se advierte',
   },
+  DIAS_ABONO_PRESTAMO: {
+    // Confirmado por la cooperativa: "cada 21 dias el socio debe ir a abonar a
+    // los prestamos, de lo contrario entra en morosidad"
+    porDefecto: 21,
+    descripcion: 'Dias que pueden pasar sin abonar a un prestamo antes de caer en morosidad',
+  },
+  DIAS_AVISO_ABONO_PRESTAMO: {
+    // "el mensaje de advertencia se debe mostrar a partir del dia 18 para ir
+    // informando": son tres dias de margen para que el socio reaccione
+    porDefecto: 18,
+    descripcion: 'Dia a partir del cual se avisa al cajero de que el abono esta por vencer',
+  },
   SEMANAS_SUSPENSION_FUNERARIA: {
     porDefecto: 6,
     descripcion: 'Semanas de atraso que suspenden el servicio de funeraria',
@@ -160,6 +172,10 @@ export interface TarifasColecta {
   bloquear_adelanto_excedido: boolean;
   semanas_suspension_funeraria: number;
   semanas_suspension_salud: number;
+  /** Dias sin abonar tras los que el socio entra en morosidad */
+  dias_abono_prestamo: number;
+  /** Dia a partir del cual se avisa, antes de que venza */
+  dias_aviso_abono_prestamo: number;
 }
 
 export async function obtenerTarifas(): Promise<TarifasColecta> {
@@ -190,6 +206,8 @@ export async function obtenerTarifas(): Promise<TarifasColecta> {
     bloquear_adelanto_excedido: leer('BLOQUEAR_ADELANTO_EXCEDIDO') === 1,
     semanas_suspension_funeraria: leer('SEMANAS_SUSPENSION_FUNERARIA'),
     semanas_suspension_salud: leer('SEMANAS_SUSPENSION_SALUD'),
+    dias_abono_prestamo: leer('DIAS_ABONO_PRESTAMO'),
+    dias_aviso_abono_prestamo: leer('DIAS_AVISO_ABONO_PRESTAMO'),
   };
 }
 

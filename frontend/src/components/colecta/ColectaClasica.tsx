@@ -30,6 +30,7 @@
  */
 
 import { Printer, RotateCcw, Search } from 'lucide-react'
+import { AvisoAbono } from './AvisoAbono'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import type {
@@ -196,6 +197,10 @@ export const ColectaClasica = ({
           </span>
         )}
       </div>
+
+      {/* El aviso de los 21 dias, arriba del todo: es lo que el cajero tiene
+          que decirle al socio antes de cobrarle nada */}
+      <AvisoAbono aviso={socio?.aviso_abono_prestamo ?? null} />
 
       {/* ---- Asamblea y referencia ---- */}
       <div className="flex flex-wrap items-center gap-4 px-1">

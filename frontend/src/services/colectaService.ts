@@ -64,6 +64,8 @@ export interface Cobrable {
   moneda?: string
   fecha_desembolso?: string
   fecha_ultimo_abono?: string | null
+  /** Dias sin recibir un abono. Si nunca abono, desde el desembolso */
+  dias_sin_abonar?: number | null
   monto_original_usd?: number
   monto_original_bs?: number
   abonado_usd?: number
@@ -152,6 +154,21 @@ export interface AsambleaOpcion {
   tipo: string
 }
 
+/**
+ * El socio tiene que abonar a sus prestamos cada cierto numero de dias o entra
+ * en morosidad. Se avisa unos dias antes para que le de tiempo a venir.
+ */
+export interface AvisoAbonoPrestamo {
+  /** Del prestamo que peor esta: si uno vencio, el socio ya esta en morosidad */
+  dias_sin_abonar: number
+  dias_limite: number
+  dias_aviso: number
+  vencido: boolean
+  /** Dias que le quedan. Cero o menos significa que ya paso el plazo */
+  dias_restantes: number
+  prestamos_afectados: number
+}
+
 /** Un cambio de estado del socio: quien lo movio, por que y cuando */
 export interface HistorialEstado {
   id: number
@@ -201,6 +218,12 @@ export interface SocioColecta {
   /** Mayor atraso entre sus acuerdos: sugiere cuantas semanas cobrar */
   mayor_atraso: number
   asambleas_asistidas: number[]
+
+  /**
+   * Aviso de los 21 dias para abonar a los prestamos. Null cuando no hay nada
+   * que avisar: sin prestamos, o todos dentro de plazo.
+   */
+  aviso_abono_prestamo: AvisoAbonoPrestamo | null
 
   /** Cambios de estado del socio, del mas reciente al mas viejo (ultimos 10) */
   historial_estados: HistorialEstado[]

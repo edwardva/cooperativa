@@ -53,11 +53,28 @@ import {
 } from '../services/abonosPrestamoService';
 import { ponerInteresAlDia } from '../services/interesPrestamoService';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
+import { hoyDia } from '../utils/fechaDia';
 import { nombreEnMayusculas } from '../utils/reportes';
 
 /** Búsqueda por nombre en la caja */
 const MINIMO_LETRAS_NOMBRE = 3;
 const LIMITE_RESULTADOS = 20;
+
+/**
+ * Dias enteros transcurridos desde una fecha, contando por DIA y no por horas:
+ * un abono de ayer a las 23:00 es 1 dia, no 0. El plazo de los 21 dias se
+ * cuenta en dias de calendario, como lo cuenta la cooperativa.
+ *
+ * La fecha se lee en UTC a proposito. `fecha_desembolso` es una columna DATE y
+ * Prisma la devuelve como medianoche UTC; leerla con los captadores locales la
+ * corria un dia hacia atras y el aviso saltaba antes de tiempo. `hoyDia()`
+ * pone el hoy en esa misma base, que es la convencion del resto del sistema.
+ */
+const diasDesde = (fecha: Date | null): number | null => {
+  if (!fecha) return null;
+  const desde = Date.UTC(fecha.getUTCFullYear(), fecha.getUTCMonth(), fecha.getUTCDate());
+  return Math.max(0, Math.round((hoyDia().getTime() - desde) / 86_400_000));
+};
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -557,6 +574,10 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
           fecha_desembolso: p.fecha_desembolso,
           // El dato que hoy obliga a abrir otra pantalla (req. 5)
           fecha_ultimo_abono: p.fecha_ultimo_abono,
+          // Dias sin abonar, para el aviso de los 21 dias. Si nunca abono se
+          // cuentan desde el desembolso: el plazo corre igual desde que se
+          // llevo el dinero.
+          dias_sin_abonar: diasDesde(p.fecha_ultimo_abono ?? p.fecha_desembolso),
           cuota_semanal_usd: Number(p.cuota_semanal_usd),
           cuota_semanal_bs: Number(p.cuota_semanal_bs),
 
@@ -694,6 +715,38 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
             cuentas.reduce((total, c) => total + c.bloqueado_usd, 0)
           ),
         },
+
+        // Aviso de los 21 dias. Confirmado por la cooperativa: "cada 21 dias el
+        // socio debe ir a abonar a los prestamos, de lo contrario entra en
+        // morosidad; el mensaje de advertencia se debe mostrar a partir del dia
+        // 18 para ir informando". Se avisa, no se bloquea: quien decide si le
+        // cobra o no es el cajero, como con el resto de las alertas.
+        //
+        // Los dos umbrales son parametros, no numeros escritos en el codigo:
+        // la cooperativa ya cambio otras reglas parecidas.
+        aviso_abono_prestamo: (() => {
+          const conPlazo = prestamos
+            .map((p) => p.dias_sin_abonar)
+            .filter((d): d is number => d !== null);
+          if (conPlazo.length === 0) return null;
+
+          // El peor de sus prestamos manda: si uno vencio, el socio ya esta en
+          // morosidad aunque los demas esten al dia
+          const dias = Math.max(...conPlazo);
+          if (dias < tarifas.dias_aviso_abono_prestamo) return null;
+
+          return {
+            dias_sin_abonar: dias,
+            dias_limite: tarifas.dias_abono_prestamo,
+            dias_aviso: tarifas.dias_aviso_abono_prestamo,
+            vencido: dias >= tarifas.dias_abono_prestamo,
+            /** Cuantos dias le quedan; 0 o menos significa que ya vencio */
+            dias_restantes: tarifas.dias_abono_prestamo - dias,
+            prestamos_afectados: prestamos.filter(
+              (p) => p.dias_sin_abonar !== null && p.dias_sin_abonar >= tarifas.dias_aviso_abono_prestamo
+            ).length,
+          };
+        })(),
       };
     });
 
