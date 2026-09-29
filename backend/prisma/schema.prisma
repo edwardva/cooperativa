@@ -419,6 +419,8 @@ model Ubicacion {
   asambleas         Asamblea[]
   colectas          Colecta[]
 
+  cajas Caja[]
+
   @@map("ubicaciones")
 }
 
@@ -940,6 +942,11 @@ model Colecta {
   ubicacion      Ubicacion?       @relation(fields: [ubicacion_id], references: [id])
   detalles       DetalleColecta[]
 
+  /// Desde que caja se cobro. Nulo en lo cobrado antes de que existieran.
+  caja_id Int?
+  caja    Caja? @relation(fields: [caja_id], references: [id])
+
+  @@index([caja_id])
   @@index([ubicacion_id])
   @@index([socio_id])
   @@index([fecha_colecta])
@@ -1011,6 +1018,11 @@ model CierreCaja {
   // Relaciones
   usuario Usuario @relation(fields: [usuario_id], references: [id])
 
+  /// La caja que se cerro. Cada caja cuadra la suya por separado.
+  caja_id Int?
+  caja    Caja? @relation(fields: [caja_id], references: [id])
+
+  @@index([caja_id])
   @@index([usuario_id])
   @@index([fecha_cierre])
   @@map("cierre_caja")
@@ -1209,9 +1221,40 @@ enum TipoAsamblea {
 // AUDITORÍA
 // ============================================
 
+/// Las cajas desde las que se atiende.
+///
+/// Confirmado por la cooperativa: "asi como esta la oficina sede central que se
+/// llama caja1, tambien existe otra sede principal llamada caja2, tiene otra
+/// ubicacion y ellos tambien acceden al mismo sistema administrativo; se
+/// necesita que ellos con su usuario accedan preguntando en que caja van a
+/// ingresar, para llevar el registro de lo que hacen y desde donde, porque por
+/// supuesto tienen otros clientes y cierres de caja".
+///
+/// La caja NO es el usuario: una misma persona puede atender hoy en una y
+/// manana en otra, asi que se elige al entrar y viaja con la sesion.
+model Caja {
+  id           Int      @id @default(autoincrement())
+  codigo       String   @unique @db.VarChar(20)
+  nombre       String   @db.VarChar(100)
+  /// Donde esta fisicamente, si corresponde a una feria o sede cargada
+  ubicacion_id Int?
+  estado       Boolean  @default(true)
+  created_at   DateTime @default(now())
+
+  ubicacion Ubicacion?   @relation(fields: [ubicacion_id], references: [id])
+  auditoria AuditLog[]
+  colectas  Colecta[]
+  cierres   CierreCaja[]
+
+  @@index([estado])
+  @@map("cajas")
+}
+
 model AuditLog {
   id            Int      @id @default(autoincrement())
   usuario_id    Int?
+  /// Desde que caja se hizo. Nulo en lo registrado antes de que existieran.
+  caja_id       Int?
   accion        String   @db.VarChar(50) // CREATE, UPDATE, DELETE, LOGIN, etc.
   modulo        String   @db.VarChar(50) // socios, prestamos, colecta, etc.
   registro_id   Int? // ID del registro afectado
@@ -1223,8 +1266,10 @@ model AuditLog {
 
   // Relaciones
   usuario Usuario? @relation(fields: [usuario_id], references: [id])
+  caja    Caja?    @relation(fields: [caja_id], references: [id])
 
   @@index([usuario_id])
+  @@index([caja_id])
   @@index([accion])
   @@index([modulo])
   @@index([created_at])

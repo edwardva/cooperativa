@@ -12,9 +12,18 @@ export interface User {
   }
 }
 
+/** Una caja desde la que se atiende */
+export interface Caja {
+  id: number
+  codigo: string
+  nombre: string
+}
+
 export interface LoginCredentials {
   username: string
   password: string
+  /** Caja desde la que entra. El backend la valida: aqui solo se propone */
+  caja_id?: number | null
 }
 
 export interface LoginResponse {
@@ -22,6 +31,8 @@ export interface LoginResponse {
   data: {
     token: string
     user: User
+    /** La caja con la que quedo abierta la sesion, ya validada */
+    caja: Caja | null
   }
 }
 
@@ -34,6 +45,12 @@ export interface ChangePasswordData {
  * Servicio de autenticación - Cliente
  */
 class AuthService {
+  /** Cajas activas, para elegir al entrar. No necesita sesion. */
+  async cajas(): Promise<Caja[]> {
+    const response = await apiClient.get<{ success: boolean; data: Caja[] }>('/auth/cajas')
+    return response.data.data
+  }
+
   /**
    * Login de usuario
    */

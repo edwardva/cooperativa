@@ -1,10 +1,13 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import authService from '@/services/authService'
+import type { Caja } from '../services/authService'
 import type { User, LoginCredentials } from '@/services/authService'
 
 interface AuthState {
   user: User | null
+  /** Caja en la que se abrio la sesion. Nula si no eligio ninguna. */
+  caja: Caja | null
   isAuthenticated: boolean
   isLoading: boolean
   error: string | null
@@ -24,6 +27,7 @@ export const useAuthStore = create<AuthState>()(
   devtools(
     (set) => ({
       user: null,
+      caja: null,
       isAuthenticated: false,
       isLoading: false,
       error: null,
@@ -37,6 +41,7 @@ export const useAuthStore = create<AuthState>()(
           const response = await authService.login(credentials)
           set({
             user: response.data.user,
+            caja: response.data.caja ?? null,
             isAuthenticated: true,
             isLoading: false,
             error: null,
@@ -45,6 +50,7 @@ export const useAuthStore = create<AuthState>()(
           const errorMessage = error.response?.data?.error?.message || 'Error al iniciar sesión'
           set({
             user: null,
+            caja: null,
             isAuthenticated: false,
             isLoading: false,
             error: errorMessage,

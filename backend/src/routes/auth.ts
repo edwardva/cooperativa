@@ -4,6 +4,7 @@ import authService from '@/services/authService'
 import { authenticate } from '@/middleware/authenticate'
 import { BadRequestError } from '@/middleware/errorHandler'
 import { logger } from '@/utils/logger'
+import { prisma } from '../lib/prisma'
 
 const router = Router()
 
@@ -16,6 +17,8 @@ router.post(
   [
     body('username').trim().notEmpty().withMessage('Username es requerido'),
     body('password').notEmpty().withMessage('Password es requerido'),
+    // La caja desde la que entra. Opcional: hay usuarios que no atienden caja
+    body('caja_id').optional({ nullable: true }).isInt({ min: 1 }).withMessage('Caja inválida'),
   ],
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -25,10 +28,14 @@ router.post(
         throw new BadRequestError('Datos de login inválidos', errors.array())
       }
 
-      const { username, password } = req.body
+      const { username, password, caja_id } = req.body
 
       // Autenticar
-      const authResponse = await authService.login({ username, password })
+      const authResponse = await authService.login({
+        username,
+        password,
+        caja_id: caja_id === undefined || caja_id === null ? null : Number(caja_id),
+      })
 
       // Guardar token en httpOnly cookie (seguro contra XSS)
       res.cookie('token', authResponse.token, {
@@ -44,6 +51,8 @@ router.post(
         data: {
           token: authResponse.token,
           user: authResponse.user,
+          // Para que la pantalla muestre en que caja se esta trabajando
+          caja: authResponse.caja,
         },
       })
     } catch (error) {
@@ -51,6 +60,26 @@ router.post(
     }
   }
 )
+
+/**
+ * GET /api/auth/cajas
+ *
+ * Las cajas activas, para el desplegable del login. Va SIN autenticar porque
+ * se necesita antes de entrar; solo devuelve codigo y nombre, que es lo que ya
+ * esta escrito en la puerta de cada oficina.
+ */
+router.get('/cajas', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const cajas = await prisma.caja.findMany({
+      where: { estado: true },
+      select: { id: true, codigo: true, nombre: true },
+      orderBy: { codigo: 'asc' },
+    })
+    res.json({ success: true, data: cajas })
+  } catch (error) {
+    next(error)
+  }
+})
 
 /**
  * POST /api/auth/logout
