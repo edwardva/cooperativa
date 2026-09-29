@@ -23,6 +23,7 @@ import { ahorroLibre, bloquearAhorro } from '../services/garantiaPrestamoService
 import { condicionesDelMonto, DIAS_POR_CUOTA, planDeCuotas, situacionDeAtraso } from '../utils/planPrestamo';
 import { fechaDia, hoyDia } from '../utils/fechaDia';
 import { resolverTasa } from '../services/tasaCambioService';
+import { diferencialDePrestamo } from '../services/diferencialCambiarioService';
 import { carteraPrestamos } from '../services/carteraService';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio, bloquearSocios } from '../utils/bloqueos';
@@ -215,6 +216,11 @@ async function prestamoConResumen(id: number) {
   });
   if (!prestamo) throw new NotFoundError('Préstamo no encontrado');
 
+  // Cuanto se esta cobrando de mas por los cambios de la tasa. Se calcula con
+  // lo YA cobrado, abono por abono y a la tasa de cada uno: no es una
+  // estimacion con la tasa de hoy, asi que no se mueve al volver a mirarlo.
+  const diferencial = await diferencialDePrestamo(prisma, id, await obtenerTasaActual());
+
   const cuotasPagadas = prestamo.plan_pagos.filter((c) => c.estado === 'pagada').length;
   const cuotasVencidas = prestamo.plan_pagos.filter((c) => c.estado === 'vencida').length;
   // Los abonos reversados siguen en la lista, pero ya no cuentan como pagados
@@ -222,6 +228,7 @@ async function prestamoConResumen(id: number) {
 
   return {
     ...prestamo,
+    diferencial_cambiario: diferencial,
     resumen: {
       cuotas_totales: prestamo.plan_pagos.length,
       cuotas_pagadas: cuotasPagadas,
