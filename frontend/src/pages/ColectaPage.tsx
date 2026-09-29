@@ -55,6 +55,7 @@ import { getErrorMessage } from '../services/api'
 import { usePermissions } from '../store/authStore'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
 import { MovimientosDelDia } from '../components/colecta/MovimientosDelDia'
+import { ColectaClasica } from '../components/colecta/ColectaClasica'
 import { SituacionSocio } from '../components/colecta/SituacionSocio'
 import { HistorialSuspensiones } from '../components/colecta/HistorialSuspensiones'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
@@ -119,6 +120,29 @@ export default function ColectaPage() {
   const puedeCobrar = hasPermission('colecta', 'create')
 
   const [pestana, setPestana] = useState<'cobrar' | 'movimientos'>('cobrar')
+
+  // Disposicion de la pantalla. La cooperativa pidio ver la colecta "muy
+  // parecido a la vista del sistema actual": horizontal y sin desplazarse. En
+  // vez de un segundo modulo de colecta —que duplicaria la logica que escribe
+  // dinero— es la MISMA pantalla dispuesta de otra forma, y cada quien elige.
+  // Se recuerda en el navegador para que la caja no tenga que elegir cada dia.
+  const [disposicion, setDisposicion] = useState<'clasica' | 'nueva'>(() => {
+    try {
+      return localStorage.getItem('colecta.disposicion') === 'nueva' ? 'nueva' : 'clasica'
+    } catch {
+      // Navegador sin almacenamiento disponible: se arranca en la clasica
+      return 'clasica'
+    }
+  })
+
+  const cambiarDisposicion = (valor: 'clasica' | 'nueva') => {
+    setDisposicion(valor)
+    try {
+      localStorage.setItem('colecta.disposicion', valor)
+    } catch {
+      // Que no se recuerde no impide usarla
+    }
+  }
 
   // --- Busqueda ---
   const campoBusqueda = useRef<HTMLInputElement>(null)
@@ -595,11 +619,66 @@ export default function ColectaPage() {
             </button>
           )
         })}
+
+        {/* Misma colecta, dos disposiciones. La clasica reproduce la pantalla
+            del sistema actual; la nueva es la guiada por pasos. */}
+        {pestana === 'cobrar' && (
+          <div className="ml-auto flex items-center gap-1 self-center rounded-lg bg-neutral-100 p-0.5">
+            {([
+              { id: 'clasica' as const, label: 'Vista clásica' },
+              { id: 'nueva' as const, label: 'Vista guiada' },
+            ]).map((v) => (
+              <button
+                key={v.id}
+                onClick={() => cambiarDisposicion(v.id)}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition ${
+                  disposicion === v.id
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {pestana === 'movimientos' && <MovimientosDelDia onCambio={() => void cargarResumen()} />}
 
-      {pestana === 'cobrar' && (
+      {/* Disposicion clasica: todo el socio a la vez, como el sistema actual.
+          Recibe el mismo estado y los mismos manejadores que la guiada — no
+          calcula ni cobra nada por su cuenta. */}
+      {pestana === 'cobrar' && disposicion === 'clasica' && (
+        <ColectaClasica
+          termino={termino}
+          onTermino={setTermino}
+          onBuscar={() => void buscar()}
+          buscando={buscando}
+          socio={socio}
+          semanas={semanas}
+          onSemanas={setSemanas}
+          semanaCobro={semanaCobro}
+          anoCobro={anoCobro}
+          ultimaSemanaTexto={socio?.ultima_semana_pagada_texto ?? ''}
+          referencia={referencia}
+          onReferencia={setReferencia}
+          asambleas={asambleas}
+          asambleaId={asambleaId}
+          onAsamblea={setAsambleaId}
+          adicionalAhorro={adicionalAhorro}
+          onAdicionalAhorro={setAdicionalAhorro}
+          paquete={paquete}
+          tasa={tasa}
+          totalUsd={totalUsd}
+          onReverso={() => setPestana('movimientos')}
+          onCobrar={() => void cobrar()}
+          cobrando={cobrando}
+          puedeCobrar={puedeCobrar && !!paquete && !calculandoPaquete}
+        />
+      )}
+
+      {pestana === 'cobrar' && disposicion === 'nueva' && (
         <>
           <ol aria-label="Pasos del cobro" className="grid grid-cols-3 gap-2">
             {['Buscar asociado', 'Preparar cobro', 'Revisar y cobrar'].map((paso, index) => (
