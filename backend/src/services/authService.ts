@@ -8,10 +8,14 @@ import { logger } from '@/utils/logger'
 interface LoginCredentials {
   username: string
   password: string
+  /** Caja desde la que entra. Opcional: hay usuarios que no atienden caja */
+  caja_id?: number | null
 }
 
 interface AuthResponse {
   token: string
+  /** La caja con la que quedo abierta la sesion, ya validada */
+  caja: { id: number; codigo: string; nombre: string } | null
   user: {
     id: number
     username: string
@@ -34,7 +38,7 @@ class AuthService {
    * Autenticar usuario con username y password
    */
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
-    const { username, password } = credentials
+    const { username, password, caja_id } = credentials
 
     // Buscar usuario con su rol y permisos
     const usuario = await prisma.usuario.findUnique({
@@ -63,11 +67,29 @@ class AuthService {
       throw new UnauthorizedError('Credenciales inválidas')
     }
 
+    // La caja desde la que entra. Se valida aqui y no se confia en lo que
+    // mande la pantalla: el registro de "quien hizo que y desde donde" no
+    // sirve de nada si el dato se puede inventar desde el navegador.
+    let caja: { id: number; codigo: string; nombre: string } | null = null;
+    if (caja_id !== undefined && caja_id !== null) {
+      const encontrada = await prisma.caja.findUnique({
+        where: { id: caja_id },
+        select: { id: true, codigo: true, nombre: true, estado: true },
+      })
+      if (!encontrada || !encontrada.estado) {
+        throw new UnauthorizedError('La caja seleccionada no existe o está inactiva')
+      }
+      caja = { id: encontrada.id, codigo: encontrada.codigo, nombre: encontrada.nombre }
+    }
+
     // Generar JWT token
     const payload = {
       userId: usuario.id,
       username: usuario.username,
       rolId: usuario.rol_id,
+      // Viaja en el token: cada peticion sabe de que caja viene sin volver a
+      // preguntarlo ni fiarse del cuerpo de la peticion
+      cajaId: caja?.id ?? null,
     };
     const token = jwt.sign(payload, config.jwtSecret, { 
       expiresIn: config.jwtExpiresIn
@@ -79,10 +101,13 @@ class AuthService {
       data: { ultimo_acceso: new Date() },
     })
 
-    logger.info(`Login exitoso: usuario ${username} (ID: ${usuario.id})`)
+    logger.info(
+      `Login exitoso: usuario ${username} (ID: ${usuario.id})${caja ? ` desde ${caja.codigo}` : ''}`
+    )
 
     return {
       token,
+      caja,
       user: {
         id: usuario.id,
         username: usuario.username,
@@ -100,12 +125,16 @@ class AuthService {
   /**
    * Verificar y decodificar un JWT token
    */
-  async verifyToken(token: string): Promise<{ userId: number; username: string; rolId: number }> {
+  async verifyToken(
+    token: string
+  ): Promise<{ userId: number; username: string; rolId: number; cajaId: number | null }> {
     try {
       const decoded = jwt.verify(token, config.jwtSecret) as {
         userId: number
         username: string
         rolId: number
+        // Las sesiones emitidas antes de que existieran las cajas no lo traen
+        cajaId?: number | null
       }
 
       // Verificar que el usuario siga existiendo y activo
@@ -117,7 +146,7 @@ class AuthService {
         throw new UnauthorizedError('Token inválido o usuario inactivo')
       }
 
-      return decoded
+      return { ...decoded, cajaId: decoded.cajaId ?? null }
     } catch (error) {
       if (error instanceof jwt.JsonWebTokenError) {
         throw new UnauthorizedError('Token inválido')

@@ -65,6 +65,13 @@ export const registrarAuditoria = (db: ClienteBD, evento: EventoAuditoria) => {
   return db.auditLog.create({
     data: {
       usuario_id: evento.usuarioId ?? req?.user?.userId ?? null,
+      // De que caja salio. Se toma de la sesion y no del cuerpo de la
+      // peticion: el registro de "quien hizo que y desde donde" no vale nada
+      // si el dato se puede inventar desde el navegador.
+      //
+      // Al ponerlo aqui queda en TODAS las acciones auditadas sin tocar ni un
+      // controlador; si se pidiera en cada sitio, alguno se olvidaria.
+      caja_id: req?.user?.cajaId ?? null,
       accion: evento.accion,
       modulo: evento.modulo,
       registro_id: evento.registro_id ?? null,

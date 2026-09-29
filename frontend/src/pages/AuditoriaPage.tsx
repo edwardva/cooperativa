@@ -22,6 +22,8 @@ interface Registro {
   ip_address: string | null
   created_at: string
   usuario: { id: number; username: string; nombre_completo: string } | null
+  /** Desde que caja se hizo. Nula en lo registrado antes de que existieran. */
+  caja: { id: number; codigo: string; nombre: string } | null
 }
 
 const controlClass =
@@ -31,7 +33,7 @@ const controlClass =
 const selectClass = `${controlClass} appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M7%207l3%203%203-3%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem] bg-[center_right_0.5rem] bg-no-repeat pr-10`
 const labelClass = 'block text-sm font-medium text-neutral-700'
 
-const filtrosVacios = { usuario: '', modulo: '', accion: '', registro_id: '', desde: '', hasta: '' }
+const filtrosVacios = { usuario: '', caja: '', modulo: '', accion: '', registro_id: '', desde: '', hasta: '' }
 
 const Json = ({ titulo, valor }: { titulo: string; valor: unknown }) => (
   <div className="min-w-0 flex-1">
@@ -43,7 +45,7 @@ const Json = ({ titulo, valor }: { titulo: string; valor: unknown }) => (
 )
 
 export default function AuditoriaPage() {
-  const [opciones, setOpciones] = useState<{ modulos: string[]; acciones: string[] }>({ modulos: [], acciones: [] })
+  const [opciones, setOpciones] = useState<{ modulos: string[]; acciones: string[]; cajas: { id: number; codigo: string; nombre: string }[] }>({ modulos: [], acciones: [], cajas: [] })
   const [filtros, setFiltros] = useState(filtrosVacios)
   const [aplicados, setAplicados] = useState(filtrosVacios)
   const [pagina, setPagina] = useState(1)
@@ -105,6 +107,15 @@ export default function AuditoriaPage() {
             <span className="mb-1.5 block">Usuario</span>
             <input value={filtros.usuario} onChange={(e) => setFiltros({ ...filtros, usuario: e.target.value })} className={controlClass} />
           </label>
+          {/* Desde que caja se hizo: la cooperativa atiende en dos sedes y
+              quiere poder mirar por separado lo que pasa en cada una */}
+          <label className={labelClass}>
+            <span className="mb-1.5 block">Caja</span>
+            <select value={filtros.caja} onChange={(e) => setFiltros({ ...filtros, caja: e.target.value })} className={selectClass}>
+              <option value="">Todas</option>
+              {opciones.cajas.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          </label>
           <label className={labelClass}>
             <span className="mb-1.5 block">Modulo</span>
             <select value={filtros.modulo} onChange={(e) => setFiltros({ ...filtros, modulo: e.target.value })} className={selectClass}>
@@ -145,6 +156,7 @@ export default function AuditoriaPage() {
                 <th className="w-8 px-3 py-3" />
                 <th className="px-3 py-3">Fecha</th>
                 <th className="px-3 py-3">Usuario</th>
+                <th className="px-3 py-3">Caja</th>
                 <th className="px-3 py-3">Modulo</th>
                 <th className="px-3 py-3">Accion</th>
                 <th className="px-3 py-3">Registro</th>
@@ -163,6 +175,7 @@ export default function AuditoriaPage() {
                       <td className="px-3 py-2 text-neutral-400">{abierto === r.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(r.created_at).toLocaleString('es-VE')}</td>
                       <td className="px-3 py-2">{r.usuario ? `${r.usuario.nombre_completo} (${r.usuario.username})` : 'Proceso automatico'}</td>
+                      <td className="px-3 py-2">{r.caja ? r.caja.codigo : '—'}</td>
                       <td className="px-3 py-2">{r.modulo}</td>
                       <td className="px-3 py-2 font-medium">{r.accion}</td>
                       <td className="px-3 py-2">{r.registro_id ?? '—'}</td>
