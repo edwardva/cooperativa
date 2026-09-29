@@ -56,6 +56,7 @@ import { usePermissions } from '../store/authStore'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
 import { MovimientosDelDia } from '../components/colecta/MovimientosDelDia'
 import { ColectaClasica } from '../components/colecta/ColectaClasica'
+import { AvisoAbono } from '../components/colecta/AvisoAbono'
 import { SituacionSocio } from '../components/colecta/SituacionSocio'
 import { HistorialSuspensiones } from '../components/colecta/HistorialSuspensiones'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
@@ -886,6 +887,9 @@ export default function ColectaPage() {
                     tasa={tasa}
                   />
                 </OpcionesColecta>
+
+                {/* Cada 21 dias debe abonar a sus prestamos; se avisa desde el 18 */}
+                <AvisoAbono aviso={socio.aviso_abono_prestamo} />
 
                 {/* Si ha estado suspendido y por que: pesa al decidir un prestamo */}
                 <HistorialSuspensiones
