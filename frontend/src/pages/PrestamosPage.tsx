@@ -29,6 +29,7 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
+import { DiferencialCambiario } from '../components/prestamos/DiferencialCambiario'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { PrintableListado } from '../components/print/PrintableListado'
@@ -921,6 +922,9 @@ export default function PrestamosPage() {
                   </div>
                   {badgeEstado(detalle.estado)}
                 </div>
+
+                {/* Cuanto se lleva cobrado de mas por los cambios de la tasa */}
+                <DiferencialCambiario datos={detalle.diferencial_cambiario} />
 
                 {/* Fiadores */}
                 {detalle.estado === 'solicitado' && (
