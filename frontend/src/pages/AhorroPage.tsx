@@ -36,6 +36,7 @@ import {
   FileText,
   Printer,
 } from 'lucide-react';
+import { nombreEnMayusculas } from '../utils/formatters';
 import { getErrorMessage } from '../services/api';
 import * as ahorroService from '../services/ahorroService';
 import { usePermissions } from '../store/authStore';
@@ -1992,7 +1993,9 @@ export const AhorroPage = () => {
           titulo="Movimientos de la Cuenta de Ahorro"
           subtitulo={
             cuentaEncontrada
-              ? `Cuenta ${cuentaEncontrada.numero_cuenta} — ${cuentaEncontrada.socio?.codigo_socio ?? ''} ${cuentaEncontrada.socio?.nombre ?? ''} ${cuentaEncontrada.socio?.apellido ?? ''}`.trim()
+              ? `Cuenta ${cuentaEncontrada.numero_cuenta} — ${cuentaEncontrada.socio?.codigo_socio ?? ''} ${nombreEnMayusculas(
+                  `${cuentaEncontrada.socio?.nombre ?? ''} ${cuentaEncontrada.socio?.apellido ?? ''}`
+                )}`.trim()
               : 'Movimientos consultados'
           }
           filtros={[
