@@ -20,7 +20,8 @@ import { leerParametroNumerico } from './tarifasService';
 import { deudoresDelAno } from './multasService';
 import { feriasPendientesDelPeriodo, periodoDesdeParametros } from './saludFeriaService';
 import { etiquetaFeria } from './trabajadoresService';
-import { formatearPeriodo, semanaActual, semanaDeFecha } from '../utils/calendarioSemanal';
+import { aOrdinal, formatearPeriodo, semanaActual, semanaDeFecha, semanasEnAno, type Periodo } from '../utils/calendarioSemanal';
+import { coberturaDe } from './coberturaService';
 import { fechaDia, hoyDia } from '../utils/fechaDia';
 import { etiquetaPeriodo } from '../utils/periodoSalud';
 import { adelantoDelRenglon, nombresEnMayusculas, type Reporte } from '../utils/reportes';
@@ -38,6 +39,8 @@ export const REPORTES = {
   'socios-suspendidos': 'Socios suspendidos',
   'saldos-ahorro': 'Saldos de ahorro',
   'inasistencia-asambleas': 'Inasistencia a asambleas',
+  'corte-ano': 'Corte de año',
+  'beneficiarios-retirados': 'Beneficiarios retirados',
 } as const;
 
 export type ClaveReporte = keyof typeof REPORTES;
@@ -948,6 +951,205 @@ const inasistenciaAsambleas = async (p: Parametros): Promise<Reporte> => {
 };
 
 // ============================================
+// Corte de año (propuesta P1, aceptada el 23/10)
+// ============================================
+//
+// Lo cobrado en el año por servicio (colectas no reversadas y multas pagadas)
+// y cómo quedan los socios frente al fin de ese año, según la cobertura de sus
+// acuerdos de funeraria y salud. La cobertura que se usa es la de HOY: para un
+// año ya cerrado dice cómo están ahora, no cómo estaban el 31/12.
+
+const NOMBRE_SERVICIO_CORTE: Record<string, string> = {
+  ahorro: 'Ahorro',
+  funeraria: 'Funeraria',
+  salud: 'Salud',
+  prestamo: 'Préstamos',
+};
+
+const corteAno = async (p: Parametros): Promise<Reporte> => {
+  const ano = Number(texto(p, 'anio')) || new Date().getFullYear();
+  if (ano < 2000 || ano > 2100) throw new BadRequestError('Año inválido');
+  const desde = new Date(ano, 0, 1);
+  const hasta = new Date(ano, 11, 31, 23, 59, 59, 999);
+
+  // --- Lo cobrado ---
+  const [porServicio, operaciones, multas] = await Promise.all([
+    prisma.detalleColecta.groupBy({
+      by: ['servicio'],
+      where: { colecta: { reversada: false, fecha_colecta: { gte: desde, lte: hasta } } },
+      _sum: { monto_usd: true, monto_bs: true },
+      _count: true,
+    }),
+    prisma.colecta.aggregate({
+      where: { reversada: false, fecha_colecta: { gte: desde, lte: hasta } },
+      _count: true,
+      _sum: { monto_total_usd: true, monto_total_bs: true },
+    }),
+    prisma.multaAsamblea.aggregate({
+      where: { estado: 'pagada', fecha_pago: { gte: desde, lte: hasta } },
+      _count: true,
+      _sum: { monto_usd: true, monto_bs: true },
+    }),
+  ]);
+
+  const filas: (string | number)[][] = ['ahorro', 'funeraria', 'salud', 'prestamo'].map((servicio) => {
+    const g = porServicio.find((x) => x.servicio === servicio);
+    return [
+      NOMBRE_SERVICIO_CORTE[servicio]!,
+      g?._count ?? 0,
+      redondear(Number(g?._sum.monto_bs ?? 0)),
+      redondear(Number(g?._sum.monto_usd ?? 0)),
+    ];
+  });
+  filas.push(['Multas por inasistencia', multas._count, redondear(Number(multas._sum.monto_bs ?? 0)), redondear(Number(multas._sum.monto_usd ?? 0))]);
+  const totalBs = redondear(Number(operaciones._sum.monto_total_bs ?? 0) + Number(multas._sum.monto_bs ?? 0));
+  const totalUsd = redondear(Number(operaciones._sum.monto_total_usd ?? 0) + Number(multas._sum.monto_usd ?? 0));
+
+  // --- Cómo quedan los socios frente al fin de año ---
+  // Por socio manda su acuerdo MENOS cubierto: es el que decide si está al día
+  const finDeAno: Periodo = { ano, semana: semanasEnAno(ano) };
+  const actual = semanaActual();
+  const seleccion = {
+    ano_pagado_hasta: true,
+    semana_pagada_hasta: true,
+    fecha_ultimo_pago: true,
+    semanas_sin_pago: true,
+    fecha_inicio: true,
+    estado: true,
+    beneficiario: { select: { socio_id: true } },
+  } as const;
+  const vigentes = { estado: { in: ['activo', 'suspendido'] as ('activo' | 'suspendido')[] }, beneficiario: { socio: { estado: { in: ['activo', 'suspendido'] as ('activo' | 'suspendido')[] } } } };
+  const [funerarias, saludes] = await Promise.all([
+    prisma.acuerdoFuneraria.findMany({ where: vigentes, select: seleccion }),
+    prisma.acuerdoSalud.findMany({ where: vigentes, select: seleccion }),
+  ]);
+  const menorPorSocio = new Map<number, number>();
+  for (const a of [...funerarias, ...saludes]) {
+    const cobertura = coberturaDe(a, actual);
+    if (!cobertura) continue;
+    const ordinal = aOrdinal(cobertura);
+    const previo = menorPorSocio.get(a.beneficiario.socio_id);
+    if (previo === undefined || ordinal < previo) menorPorSocio.set(a.beneficiario.socio_id, ordinal);
+  }
+  const ordinales = [...menorPorSocio.values()];
+  const ordFin = aOrdinal(finDeAno);
+  const ordHoy = aOrdinal(actual);
+  const cubiertosAlCierre = ordinales.filter((o) => o >= ordFin).length;
+  const adelantadosSiguiente = ordinales.filter((o) => o > ordFin).length;
+  const alDiaHoy = ordinales.filter((o) => o >= ordHoy).length;
+  const atrasadosHoy = ordinales.length - alDiaHoy;
+
+  return {
+    clave: 'corte-ano',
+    titulo: `Corte del año ${ano}`,
+    subtitulo:
+      `Cobrado del 01/01/${ano} al 31/12/${ano} (colectas no reversadas y multas pagadas). ` +
+      `Situación de los socios con funeraria o salud, según su cobertura al ${diaLocal(new Date())}.`,
+    columnas: ['Servicio', 'Operaciones', 'Cobrado Bs', 'Cobrado USD'],
+    filas,
+    totales: [
+      { etiqueta: 'Colectas del año', valor: operaciones._count },
+      { etiqueta: 'Total cobrado Bs', valor: totalBs },
+      { etiqueta: 'Total cobrado USD', valor: totalUsd },
+      { etiqueta: 'Socios con funeraria o salud', valor: ordinales.length },
+      { etiqueta: `Cubiertos hasta el fin de ${ano} (${formatearPeriodo(finDeAno)})`, valor: cubiertosAlCierre },
+      { etiqueta: `Adelantados a ${ano + 1}`, valor: adelantadosSiguiente },
+      { etiqueta: `Al día hoy (${formatearPeriodo(actual)})`, valor: alDiaHoy },
+      { etiqueta: 'Atrasados hoy', valor: atrasadosHoy },
+    ],
+  };
+};
+
+// ============================================
+// Beneficiarios retirados (propuesta P2, sugerida el 23/10)
+// ============================================
+//
+// La ficha del socio muestra los beneficiarios activos y suspendidos; los
+// retirados van aquí, por servicio, con fecha y motivo del retiro.
+
+const beneficiariosRetirados = async (p: Parametros): Promise<Reporte> => {
+  const servicio = texto(p, 'servicio');
+  const feriaId = Number(texto(p, 'feria_id')) || undefined;
+  const desdeTexto = texto(p, 'desde');
+  const hastaTexto = texto(p, 'hasta');
+  if (desdeTexto) fechaDia(desdeTexto, 'Desde');
+  if (hastaTexto) fechaDia(hastaTexto, 'Hasta');
+  // fecha_retiro es columna DATE: se compara en UTC para no correr el día
+  const fecha = {
+    ...(desdeTexto ? { gte: new Date(`${desdeTexto}T00:00:00.000Z`) } : {}),
+    ...(hastaTexto ? { lte: new Date(`${hastaTexto}T00:00:00.000Z`) } : {}),
+  };
+  const where = {
+    estado: 'retirado' as const,
+    ...(desdeTexto || hastaTexto ? { fecha_retiro: fecha } : {}),
+    ...(feriaId ? { beneficiario: { socio: { ubicacion_id: feriaId } } } : {}),
+  };
+  const seleccion = {
+    numero_acuerdo: true,
+    fecha_retiro: true,
+    motivo_retiro: true,
+    beneficiario: {
+      select: {
+        cedula: true,
+        nombre: true,
+        apellido: true,
+        parentesco: true,
+        socio: {
+          select: {
+            codigo_socio: true,
+            nombre: true,
+            apellido: true,
+            ubicacion: { select: { codigo: true, nombre: true, direccion: true } },
+          },
+        },
+      },
+    },
+  } as const;
+
+  const incluirFuneraria = servicio !== 'salud';
+  const incluirSalud = servicio !== 'funeraria';
+  const [nF, nS] = await Promise.all([
+    incluirFuneraria ? prisma.acuerdoFuneraria.count({ where }) : 0,
+    incluirSalud ? prisma.acuerdoSalud.count({ where }) : 0,
+  ]);
+  acotar(nF + nS);
+  const [funerarias, saludes] = await Promise.all([
+    incluirFuneraria ? prisma.acuerdoFuneraria.findMany({ where, select: seleccion, orderBy: { fecha_retiro: 'desc' } }) : [],
+    incluirSalud ? prisma.acuerdoSalud.findMany({ where, select: seleccion, orderBy: { fecha_retiro: 'desc' } }) : [],
+  ]);
+
+  const fila = (nombreServicio: string) => (a: (typeof funerarias)[number]) => [
+    nombreServicio,
+    a.beneficiario.socio.codigo_socio,
+    `${a.beneficiario.socio.apellido}, ${a.beneficiario.socio.nombre}`,
+    a.beneficiario.socio.ubicacion ? etiquetaFeria(a.beneficiario.socio.ubicacion) : '',
+    `${a.beneficiario.apellido}, ${a.beneficiario.nombre}`,
+    a.beneficiario.cedula,
+    a.beneficiario.parentesco,
+    a.numero_acuerdo ?? '',
+    diaBD(a.fecha_retiro),
+    a.motivo_retiro ?? '',
+  ];
+
+  return {
+    clave: 'beneficiarios-retirados',
+    titulo: REPORTES['beneficiarios-retirados'],
+    subtitulo:
+      `${servicio === 'funeraria' ? 'Funeraria' : servicio === 'salud' ? 'Salud' : 'Funeraria y salud'}` +
+      `${desdeTexto || hastaTexto ? ` · retirados ${desdeTexto ? `desde ${desdeTexto.split('-').reverse().join('/')}` : ''}${hastaTexto ? ` hasta ${hastaTexto.split('-').reverse().join('/')}` : ''}` : ''}`,
+    columnas: [
+      'Servicio', 'Expediente', 'Socio', 'Sector o feria', 'Beneficiario', 'Cédula', 'Parentesco',
+      'N° acuerdo', 'Fecha retiro', 'Motivo',
+    ],
+    filas: [...funerarias.map(fila('Funeraria')), ...saludes.map(fila('Salud'))],
+    totales: [
+      { etiqueta: 'Retirados de funeraria', valor: funerarias.length },
+      { etiqueta: 'Retirados de salud', valor: saludes.length },
+    ],
+  };
+};
+
+// ============================================
 
 const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   'ferias-pendientes': feriasPendientes,
@@ -962,6 +1164,8 @@ const GENERADORES: Record<ClaveReporte, (p: Parametros) => Promise<Reporte>> = {
   'socios-suspendidos': sociosSuspendidos,
   'saldos-ahorro': saldosAhorro,
   'inasistencia-asambleas': inasistenciaAsambleas,
+  'corte-ano': corteAno,
+  'beneficiarios-retirados': beneficiariosRetirados,
 };
 
 export const esClaveReporte = (clave: string): clave is ClaveReporte => clave in GENERADORES;

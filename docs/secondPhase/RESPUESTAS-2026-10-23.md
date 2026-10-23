@@ -123,10 +123,10 @@ Datos: la tabla nueva `multas_asamblea`, en la migración `20261023010000_multas
 | N3 | **¿La multa entra en el cierre de caja?** Hoy no: tiene su listado de "Cobradas" con su total. Si la cobra la misma cajera, puede convenir sumarla a su cierre. |
 | N4 | **Coberturas viejas de 2023.** En 2023 el sistema viejo usó ISO y la regla nueva numera ese año una semana distinta. Sólo afecta a socios cuyo último pago quedó en 2023 (más de 41 semanas sin pagar, que ya deberían estar retirados): se verían con una semana más o menos de atraso. ¿Es aceptable, o se corrigen al migrar? |
 
-### Propuestas para mostrarles
+### Propuestas para mostrarles (ya hechas)
 
-- **P1.** Reporte de **corte de año**: lo cobrado por servicio en el año, cuántos socios cerraron al día, cuántos adelantaron al año siguiente y cuántos quedaron atrasados.
-- **P2.** Reporte de **beneficiarios retirados**, por servicio (lo sugirieron en la duda 31).
+- **P1. ✅ Reportes → "Corte de año".** Lo cobrado en el año por servicio (ahorro, funeraria, salud, préstamos y multas), con operaciones, Bs y $. Debajo: cuántos socios con funeraria o salud están cubiertos hasta el fin de año, cuántos adelantados al año siguiente, al día hoy y atrasados. La situación de los socios es la de hoy: para un año ya cerrado dice cómo están ahora, no cómo estaban el 31/12.
+- **P2. ✅ Reportes → "Beneficiarios retirados".** Por servicio, con socio, sector o feria, beneficiario, cédula, parentesco, número de acuerdo, fecha y motivo del retiro. Filtra por servicio, fechas y sector o feria.
 
 ---
 
