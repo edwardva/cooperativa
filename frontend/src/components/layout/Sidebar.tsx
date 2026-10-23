@@ -26,7 +26,8 @@ import {
   Printer,
   Shield,
   HardHat,
-  ScrollText
+  ScrollText,
+  Gavel
 } from 'lucide-react'
 import logo from '@/logoR.png'
 
@@ -55,11 +56,13 @@ const navigationItems: NavItem[] = [
   { name: 'Salud', path: '/salud', icon: HeartPulse, modulo: 'salud' },
   { name: 'Salud por Feria', path: '/salud/pago-feria', icon: HeartPulse, modulo: 'salud_feria' },
   { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck, modulo: 'asambleas' },
+  // Multas por inasistencia a asamblea: se cobran aparte de la colecta
+  { name: 'Multas', path: '/multas', icon: Gavel, modulo: 'multas' },
   { name: 'Morosidad', path: '/morosidad', icon: AlertTriangle, modulo: 'socios' },
   { name: 'Reportes', path: '/reportes', icon: FileDown, modulo: 'reportes' },
   { name: 'Impresión', path: '/impresion', icon: Printer, modulo: 'impresion' },
   { name: 'Semanas Colecta', path: '/semanas-colecta', icon: Calendar, modulo: 'semanas_colecta' },
-  { name: 'Ferias', path: '/ferias', icon: MapPin, modulo: 'ubicaciones' },
+  { name: 'Sectores y ferias', path: '/ferias', icon: MapPin, modulo: 'ubicaciones' },
   { name: 'Tipos de Cuenta', path: '/tipos-cuenta', icon: CreditCard, modulo: 'tipos_cuenta' },
   { name: 'Tipos de Préstamo', path: '/tipos-prestamo', icon: FileText, modulo: 'tipos_prestamo' },
   { name: 'Usuarios', path: '/usuarios', icon: Users2, modulo: 'usuarios' },

@@ -136,7 +136,8 @@ describe('armarPaquete — cobertura resultante', () => {
   it('cruza de diciembre a enero al calcular la cobertura resultante', () => {
     const acuerdos = [crearAcuerdo('salud', { pagadoHasta: 51 })];
     const p = armarPaquete({ semanas: 5, acuerdos, tarifas: TARIFAS, tasa: TASA, cuentaAhorroId: null });
-    expect(p.renglones[0]!.cobertura_despues).toEqual({ ano: 2027, semana: 3 });
+    // Desde la 51 de 2026: 52, y 1, 2, 3 y 4 de 2027 (2026 tiene 52 semanas)
+    expect(p.renglones[0]!.cobertura_despues).toEqual({ ano: 2027, semana: 4 });
   });
 });
 

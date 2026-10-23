@@ -79,7 +79,8 @@ describe('calcularSituacion', () => {
     // Este es el caso que el personal marcó como mal calculado en la demo
     const s = calcularSituacion(acuerdo({ ano_pagado_hasta: 2027, semana_pagada_hasta: 3 }), 6, HOY);
     expect(s.semanas_pendientes).toBe(0);
-    expect(s.semanas_adelantadas).toBe(20);
+    // De la 36 a la 52 de 2026 (16) más 3 de 2027
+    expect(s.semanas_adelantadas).toBe(19);
     expect(s.estado_calculado).toBe('vigente');
   });
 
@@ -123,8 +124,8 @@ describe('aplicarPago', () => {
   });
 
   it('cruza de diciembre a enero sin intervención técnica', () => {
-    // Cubierto hasta la 50 de 2026 (año de 53 semanas) y paga 6 semanas
-    expect(aplicarPago({ ano: 2026, semana: 50 }, 6)).toEqual({ ano: 2027, semana: 3 });
+    // Cubierto hasta la 50 de 2026 (año de 52 semanas) y paga 6 semanas
+    expect(aplicarPago({ ano: 2026, semana: 50 }, 6)).toEqual({ ano: 2027, semana: 4 });
   });
 
   it('el reverso devuelve la cobertura exactamente a donde estaba', () => {

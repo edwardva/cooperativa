@@ -91,6 +91,7 @@ async function main() {
       create: {
         codigo: 'FER-PRIN',
         nombre: 'Sede Principal',
+        tipo: 'sector',
         direccion: 'Av. Principal, Edificio Cooperativa El Triunfo, Caracas',
         telefono: '0212-5556789',
         estado: true,
@@ -102,6 +103,7 @@ async function main() {
       create: {
         codigo: 'FER-CENT',
         nombre: 'Feria Central',
+        tipo: 'feria',
         direccion: 'Calle Libertad con Avenida Bolívar, Sector Centro',
         telefono: '0212-5551234',
         estado: true,
@@ -113,6 +115,7 @@ async function main() {
       create: {
         codigo: 'FER-ESTE',
         nombre: 'Feria Este',
+        tipo: 'feria',
         direccion: 'Carretera Nacional km 15, Sector Este',
         telefono: '0212-5552345',
         estado: true,
@@ -124,6 +127,7 @@ async function main() {
       create: {
         codigo: 'FER-OESTE',
         nombre: 'Feria Oeste',
+        tipo: 'feria',
         direccion: 'Zona Industrial, Sector Oeste',
         telefono: '0212-5553456',
         estado: true,
@@ -135,6 +139,7 @@ async function main() {
       create: {
         codigo: 'FER-NORTE',
         nombre: 'Feria Norte',
+        tipo: 'feria',
         direccion: 'Urbanización Los Pinos, Sector Norte',
         telefono: '0212-5554567',
         estado: true,
@@ -146,6 +151,7 @@ async function main() {
       create: {
         codigo: 'FER-SUR',
         nombre: 'Feria Sur',
+        tipo: 'feria',
         direccion: 'Parroquia La Paz, Sector Sur',
         telefono: '0212-5555678',
         estado: true,

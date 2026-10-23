@@ -25,12 +25,16 @@ describe('semanaDeFecha', () => {
   });
 
   it('devuelve el año del CALENDARIO, no el de la fecha, a fin de año', () => {
-    // El 31/12/2026 es jueves y cae en la semana 53 de 2026
-    expect(semanaDeFecha(new Date(2026, 11, 31))).toEqual({ ano: 2026, semana: 53 });
+    // Confirmado el 23/10: la semana que contiene el 1 de enero ya es la
+    // semana 1 del año nuevo. El 31/12/2026 (jueves) es semana 1 de 2027
+    expect(semanaDeFecha(new Date(2026, 11, 31))).toEqual({ ano: 2027, semana: 1 });
+    expect(semanaDeFecha(new Date(2026, 11, 28))).toEqual({ ano: 2027, semana: 1 });
+    // El domingo anterior todavía es la última de 2026
+    expect(semanaDeFecha(new Date(2026, 11, 27))).toEqual({ ano: 2026, semana: 52 });
     // El 1/1/2029 es lunes: semana 1 de 2029
     expect(semanaDeFecha(new Date(2029, 0, 1))).toEqual({ ano: 2029, semana: 1 });
-    // El 1/1/2027 es viernes: todavía es la semana 53 de 2026
-    expect(semanaDeFecha(new Date(2027, 0, 1))).toEqual({ ano: 2026, semana: 53 });
+    // Hoy coincide con la semana que tiene cargada el sistema viejo (43)
+    expect(semanaDeFecha(new Date(2026, 9, 23))).toEqual({ ano: 2026, semana: 43 });
   });
 
   it('el lunes y el domingo de una misma semana dan el mismo período', () => {
@@ -42,9 +46,11 @@ describe('semanaDeFecha', () => {
 
 describe('semanasEnAno', () => {
   it('reconoce los años de 53 semanas sin asumir 52', () => {
-    expect(semanasEnAno(2026)).toBe(53);
+    // 2026 ya no tiene semana 53: esa semana es la 1 de 2027
+    expect(semanasEnAno(2026)).toBe(52);
     expect(semanasEnAno(2027)).toBe(52);
-    expect(semanasEnAno(2032)).toBe(53);
+    // Con esta regla todavía hay años de 53: cuando el 1 de enero siguiente cae lunes
+    expect(semanasEnAno(2028)).toBe(53);
   });
 });
 
@@ -52,8 +58,9 @@ describe('ordinal', () => {
   it('ida y vuelta conserva el período', () => {
     for (const p of [
       { ano: 2026, semana: 1 },
-      { ano: 2026, semana: 53 },
+      { ano: 2026, semana: 52 },
       { ano: 2027, semana: 1 },
+      { ano: 2028, semana: 53 },
       { ano: 2030, semana: 27 },
     ]) {
       expect(deOrdinal(aOrdinal(p))).toEqual(p);
@@ -61,7 +68,7 @@ describe('ordinal', () => {
   });
 
   it('avanza de uno en uno entre semanas consecutivas, aun cruzando el año', () => {
-    const finDeAno = aOrdinal({ ano: 2026, semana: 53 });
+    const finDeAno = aOrdinal({ ano: 2026, semana: 52 });
     const inicioSiguiente = aOrdinal({ ano: 2027, semana: 1 });
     expect(inicioSiguiente - finDeAno).toBe(1);
   });
@@ -70,12 +77,12 @@ describe('ordinal', () => {
 describe('sumarSemanas', () => {
   it('cruza de diciembre a enero sin intervención', () => {
     // Escenario del cliente: cubierto hasta la 51 de 2026 y paga 5 semanas
-    expect(sumarSemanas({ ano: 2026, semana: 51 }, 5)).toEqual({ ano: 2027, semana: 3 });
+    expect(sumarSemanas({ ano: 2026, semana: 51 }, 5)).toEqual({ ano: 2027, semana: 4 });
   });
 
-  it('respeta que 2026 tenga 53 semanas', () => {
-    expect(sumarSemanas({ ano: 2026, semana: 52 }, 1)).toEqual({ ano: 2026, semana: 53 });
-    expect(sumarSemanas({ ano: 2026, semana: 52 }, 2)).toEqual({ ano: 2027, semana: 1 });
+  it('después de la 52 de 2026 viene la 1 de 2027, sin semana 53', () => {
+    expect(sumarSemanas({ ano: 2026, semana: 52 }, 1)).toEqual({ ano: 2027, semana: 1 });
+    expect(sumarSemanas({ ano: 2026, semana: 52 }, 2)).toEqual({ ano: 2027, semana: 2 });
   });
 
   it('resta y deshace un pago (reverso)', () => {
@@ -87,28 +94,30 @@ describe('sumarSemanas', () => {
   it('cubre el caso de una pendiente más diez adelantadas', () => {
     // Cubierto hasta la 50, semana actual 51: debe 1. Paga 11 (1 + 10).
     const cobertura = { ano: 2026, semana: 50 };
-    expect(sumarSemanas(cobertura, 11)).toEqual({ ano: 2027, semana: 8 });
+    expect(sumarSemanas(cobertura, 11)).toEqual({ ano: 2027, semana: 9 });
   });
 });
 
 describe('diferenciaSemanas', () => {
   it('cuenta las pendientes desde la cobertura hasta hoy', () => {
-    expect(diferenciaSemanas({ ano: 2026, semana: 50 }, { ano: 2026, semana: 53 })).toBe(3);
+    expect(diferenciaSemanas({ ano: 2026, semana: 50 }, { ano: 2026, semana: 52 })).toBe(2);
   });
 
   it('cuenta las adelantadas como diferencia negativa', () => {
-    expect(diferenciaSemanas({ ano: 2027, semana: 5 }, { ano: 2026, semana: 53 })).toBe(-5);
+    expect(diferenciaSemanas({ ano: 2027, semana: 5 }, { ano: 2026, semana: 52 })).toBe(-5);
   });
 
   it('mide correctamente a través del cambio de año', () => {
-    expect(diferenciaSemanas({ ano: 2026, semana: 51 }, { ano: 2027, semana: 3 })).toBe(5);
+    expect(diferenciaSemanas({ ano: 2026, semana: 51 }, { ano: 2027, semana: 3 })).toBe(4);
   });
 });
 
 describe('normalizarPeriodo', () => {
   it('corrige una semana fuera de rango en vez de guardarla mal', () => {
     expect(normalizarPeriodo({ ano: 2027, semana: 53 })).toEqual({ ano: 2028, semana: 1 });
-    expect(normalizarPeriodo({ ano: 2027, semana: 0 })).toEqual({ ano: 2026, semana: 53 });
+    expect(normalizarPeriodo({ ano: 2027, semana: 0 })).toEqual({ ano: 2026, semana: 52 });
+    // Una "semana 53 de 2026" (como las que guardaba el sistema viejo) es la 1 de 2027
+    expect(normalizarPeriodo({ ano: 2026, semana: 53 })).toEqual({ ano: 2027, semana: 1 });
   });
 });
 
@@ -135,7 +144,6 @@ describe('periodosEntre', () => {
     const periodos = periodosEntre({ ano: 2026, semana: 52 }, { ano: 2027, semana: 2 });
     expect(periodos).toEqual([
       { ano: 2026, semana: 52 },
-      { ano: 2026, semana: 53 },
       { ano: 2027, semana: 1 },
       { ano: 2027, semana: 2 },
     ]);

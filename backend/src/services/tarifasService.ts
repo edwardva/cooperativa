@@ -76,6 +76,12 @@ export const PARAMETROS_COLECTA = {
     porDefecto: 10,
     descripcion: 'Semanas que una feria puede pagar por adelantado en el pago de salud',
   },
+  // Pedido del 15/10: el socio que no va a ninguna asamblea sectorial del año
+  // paga una multa. La cooperativa fija el monto cada año. 0 = sin configurar.
+  MULTA_INASISTENCIA_ASAMBLEA_USD: {
+    porDefecto: 0,
+    descripcion: 'Multa por no asistir a ninguna asamblea sectorial del año, en USD (0 = sin configurar)',
+  },
   // En 0 no se puede registrar ningún pago de salud por feria (confirmado: 0,96)
   TARIFA_SALUD_TRABAJADOR_USD: {
     porDefecto: 0,
@@ -110,6 +116,34 @@ export async function periodicidadSaludFeria(): Promise<'mensual' | 'semanal'> {
     return 'semanal';
   }
 }
+
+/**
+ * Sectores cuyos socios no pagan el ahorro obligatorio (USD 0,03 por semana)
+ * en la colecta: los trabajadores de El Triunfo, sector 01-06. Pedido de la
+ * cooperativa el 2026-10-21. Códigos de ubicación separados por coma.
+ */
+export const CLAVE_SECTORES_SIN_AHORRO = 'SECTORES_SIN_AHORRO_OBLIGATORIO';
+const SECTORES_SIN_AHORRO_POR_DEFECTO = '01-06';
+
+export async function sectoresSinAhorroObligatorio(): Promise<string[]> {
+  let valor = SECTORES_SIN_AHORRO_POR_DEFECTO;
+  try {
+    const p = await prisma.parametroSistema.findUnique({ where: { clave: CLAVE_SECTORES_SIN_AHORRO } });
+    if (p) valor = p.valor ?? '';
+  } catch {
+    // Sin parámetro legible vale el de por defecto
+  }
+  return valor
+    .split(',')
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+/** Si el socio de esa ubicación queda fuera del ahorro obligatorio */
+export const exentoDeAhorroObligatorio = (
+  ubicacion: { codigo: string } | null | undefined,
+  sectoresExentos: string[]
+): boolean => !!ubicacion && sectoresExentos.includes(ubicacion.codigo.trim().toUpperCase());
 
 /** Código del tipo de cuenta donde cae el ahorro obligatorio. */
 export async function tipoCuentaAhorroObligatorio(): Promise<string> {
@@ -231,6 +265,18 @@ export async function sembrarParametrosColecta(): Promise<void> {
       clave: CLAVE_TIPO_CUENTA_AHORRO,
       valor: TIPO_CUENTA_AHORRO_POR_DEFECTO,
       descripcion: 'Código del tipo de cuenta que recibe el ahorro obligatorio de la colecta',
+      tipo_dato: 'string',
+    },
+  });
+
+  await prisma.parametroSistema.upsert({
+    where: { clave: CLAVE_SECTORES_SIN_AHORRO },
+    update: {},
+    create: {
+      clave: CLAVE_SECTORES_SIN_AHORRO,
+      valor: SECTORES_SIN_AHORRO_POR_DEFECTO,
+      descripcion:
+        'Códigos de sector, separados por coma, cuyos socios no pagan el ahorro obligatorio en la colecta (01-06: trabajadores de El Triunfo)',
       tipo_dato: 'string',
     },
   });

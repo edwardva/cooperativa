@@ -32,10 +32,15 @@ import type { ResultadoIdentificacion } from '../services/personasService'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
 import { usePermissions } from '../store/authStore'
 
+/** Sector: socio particular, con ahorro. Feria: socio de feria, sólo salud */
+type TipoUbicacion = 'sector' | 'feria'
+
 interface Ubicacion {
   id: number
   codigo: string
   nombre: string
+  tipo: TipoUbicacion
+  estado?: boolean
   direccion: string | null
 }
 
@@ -93,7 +98,15 @@ interface SocioFormData {
   foto?: string // Base64 de la foto
 }
 
-type MotivoRetiro = 'Fallecimiento' | 'Renuncia' | 'Pasividad'
+/** Beneficiarios de un servicio (funeraria o salud), clasificados por estado del acuerdo */
+interface BeneficiariosDeServicio {
+  total: number
+  activos: number
+  suspendidos: number
+  lista: { id: number; cedula: string; nombre: string; parentesco: string; estado: 'activo' | 'suspendido' }[]
+}
+
+type MotivoRetiro = 'Fallecimiento' | 'Renuncia' | 'Pasividad' | 'Inasistencia a asambleas'
 
 const MOTIVOS_RETIRO: { value: MotivoRetiro; label: string; descripcion: string }[] = [
   {
@@ -109,8 +122,14 @@ const MOTIVOS_RETIRO: { value: MotivoRetiro; label: string; descripcion: string 
   {
     value: 'Pasividad',
     label: 'Pasividad mayor a 6 meses',
+    descripcion: 'Pasividad mayor a 6 meses (artículo 5, literal c).',
+  },
+  {
+    // Motivo propio, separado de Pasividad (confirmado el 23/10)
+    value: 'Inasistencia a asambleas',
+    label: 'Inasistencia a asambleas',
     descripcion:
-      'Pasividad mayor a 6 meses: dejar de asistir sin causa justificada a dos reuniones sectoriales consecutivas.',
+      'Faltó a las asambleas dos años seguidos. Se le descuenta del ahorro la multa que deba y el resto del ahorro se le devuelve. Para volver, paga la multa y lo reactiva la administración.',
   },
 ]
 
@@ -177,20 +196,41 @@ export const SociosPage = () => {
   const puedeCrear = hasPermission('socios', 'create')
   const puedeModificar = hasPermission('socios', 'update')
   const puedeRegistrarTrabajador = hasPermission('trabajadores', 'create')
+  // Devolver un retirado a activo (p. ej. faltó dos años a la asamblea y la
+  // oficina acepta sus motivos): sólo el administrador
+  const puedeReactivarRetirado = hasPermission('socios', 'reactivar_retirado')
+  const [reactivando, setReactivando] = useState<{
+    socio: Socio
+    motivo: string
+    error: string
+    procesando: boolean
+  } | null>(null)
   const [socios, setSocios] = useState<Socio[]>([])
   const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([])
   const [busqueda, setBusqueda] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroUbicacion, setFiltroUbicacion] = useState('')
+  const [filtroDelegado, setFiltroDelegado] = useState(false)
+  // Lo que se manda a la impresora: todos los socios del filtro, no sólo la página
+  const [impresion, setImpresion] = useState<{ soloDelegados: boolean; socios: sociosService.Socio[] } | null>(null)
+  const [preparandoImpresion, setPreparandoImpresion] = useState<'listado' | 'delegados' | null>(null)
+  const [errorImpresion, setErrorImpresion] = useState('')
   const [loading, setLoading] = useState(true)
   const [modalAbierto, setModalAbierto] = useState(false)
   const [modalDetalleAbierto, setModalDetalleAbierto] = useState(false)
   const [modalRetiroAbierto, setModalRetiroAbierto] = useState(false)
   const [socioSeleccionado, setSocioSeleccionado] = useState<Socio | null>(null)
   const [socioDetalle, setSocioDetalle] = useState<Socio | null>(null)
+  const [beneficiariosPorServicio, setBeneficiariosPorServicio] = useState<{
+    socioId: number
+    funeraria: BeneficiariosDeServicio
+    salud: BeneficiariosDeServicio
+  } | null>(null)
   const [socioParaRetiro, setSocioParaRetiro] = useState<Socio | null>(null)
   const [modoEdicion, setModoEdicion] = useState(false)
   const [formData, setFormData] = useState<SocioFormData>(emptyForm)
+  // Particular (sector, con ahorro) o de feria (sólo salud): decide qué lista se ofrece
+  const [tipoSocio, setTipoSocio] = useState<TipoUbicacion>('sector')
   const [formRetiro, setFormRetiro] = useState<RetiroSocioFormData>({
     fecha_retiro: getFechaHoy(),
     motivo_retiro: '',
@@ -289,8 +329,9 @@ export const SociosPage = () => {
           search: busqueda || undefined,
           estado: filtroEstado || undefined,
           ubicacion_id: filtroUbicacion ? Number(filtroUbicacion) : undefined,
+          es_delegado: filtroDelegado || undefined,
         })
-        
+
         if (sociosResponse.success) {
           setSocios(sociosResponse.data)
           setTotalPaginas(sociosResponse.meta.totalPages)
@@ -304,7 +345,42 @@ export const SociosPage = () => {
     }
 
     void cargarSocios()
-  }, [paginaActual, busqueda, filtroEstado, filtroUbicacion, registrosPorPagina])
+  }, [paginaActual, busqueda, filtroEstado, filtroUbicacion, filtroDelegado, registrosPorPagina])
+
+  // Con los datos ya en pantalla se abre el diálogo de impresión, y al cerrarlo
+  // se descarta el listado
+  useEffect(() => {
+    if (!impresion) return
+    const limpiar = () => setImpresion(null)
+    window.addEventListener('afterprint', limpiar)
+    const t = window.setTimeout(() => window.print(), 50)
+    return () => {
+      window.clearTimeout(t)
+      window.removeEventListener('afterprint', limpiar)
+    }
+  }, [impresion])
+
+  const imprimir = async (soloDelegados: boolean) => {
+    setErrorImpresion('')
+    setPreparandoImpresion(soloDelegados ? 'delegados' : 'listado')
+    try {
+      const respuesta = await sociosService.obtenerSociosParaImprimir({
+        search: busqueda || undefined,
+        estado: filtroEstado || undefined,
+        ubicacion_id: filtroUbicacion ? Number(filtroUbicacion) : undefined,
+        es_delegado: soloDelegados || filtroDelegado || undefined,
+      })
+      if (respuesta.data.length === 0) {
+        setErrorImpresion(soloDelegados ? 'No hay delegados con los filtros actuales.' : 'No hay socios con los filtros actuales.')
+        return
+      }
+      setImpresion({ soloDelegados, socios: respuesta.data })
+    } catch (err) {
+      setErrorImpresion(getErrorMessage(err) || 'No se pudo preparar el listado para imprimir.')
+    } finally {
+      setPreparandoImpresion(null)
+    }
+  }
 
   // Usar estadísticas del backend o calcular locales como fallback
   const estadisticas = useMemo<Estadisticas>(() => {
@@ -333,8 +409,9 @@ export const SociosPage = () => {
 
       const matchEstado = !filtroEstado || socio.estado === filtroEstado
       const matchUbicacion = !filtroUbicacion || socio.ubicacion_id === Number(filtroUbicacion)
+      const matchDelegado = !filtroDelegado || socio.es_delegado
 
-      return matchBusqueda && matchEstado && matchUbicacion
+      return matchBusqueda && matchEstado && matchUbicacion && matchDelegado
     })
 
     // Aplicar ordenamiento
@@ -364,7 +441,7 @@ export const SociosPage = () => {
     })
 
     return resultado
-  }, [socios, busqueda, filtroEstado, filtroUbicacion, sortField, sortOrder])
+  }, [socios, busqueda, filtroEstado, filtroUbicacion, filtroDelegado, sortField, sortOrder])
 
   // Función para manejar el ordenamiento
   const handleSort = (field: string) => {
@@ -388,6 +465,7 @@ export const SociosPage = () => {
         search: busqueda || undefined,
         estado: filtroEstado || undefined,
         ubicacion_id: filtroUbicacion ? Number(filtroUbicacion) : undefined,
+        es_delegado: filtroDelegado || undefined,
       })
 
       if (sociosResponse.success) {
@@ -440,6 +518,7 @@ export const SociosPage = () => {
     setModoEdicion(false)
     setSocioSeleccionado(null)
     setFormData({ ...emptyForm(), cedula })
+    setTipoSocio('sector')
     setIdentificacion(null)
     setFotoPreview(null)
     setErrorFormulario('')
@@ -467,6 +546,7 @@ export const SociosPage = () => {
       notas: socio.notas ?? '',
       foto: socio.foto ?? undefined,
     })
+    setTipoSocio(ubicaciones.find((u) => u.id === socio.ubicacion_id)?.tipo ?? 'sector')
     setFotoPreview(socio.foto)
     setErrorFormulario('')
     setModalAbierto(true)
@@ -475,7 +555,21 @@ export const SociosPage = () => {
   const abrirModalDetalle = (socio: Socio) => {
     setMenuAbiertoId(null)
     setSocioDetalle(socio)
+    setBeneficiariosPorServicio(null)
     setModalDetalleAbierto(true)
+    // Los beneficiarios de funeraria y de salud se cuentan aparte: el listado
+    // sólo trae el total
+    sociosService
+      .obtenerSocioPorId(socio.id)
+      .then((r) => {
+        const conteo = (r.data as {
+          beneficiarios_por_servicio?: { funeraria: BeneficiariosDeServicio; salud: BeneficiariosDeServicio }
+        }).beneficiarios_por_servicio
+        if (conteo) setBeneficiariosPorServicio({ socioId: socio.id, ...conteo })
+      })
+      .catch(() => {
+        // Si falla queda el total del listado
+      })
   }
 
   const abrirModalRetiro = (socio: Socio) => {
@@ -598,7 +692,7 @@ export const SociosPage = () => {
     }
 
     if (!formData.ubicacion_id) {
-      setErrorFormulario('Debe seleccionar la feria o el sector del socio.')
+      setErrorFormulario(tipoSocio === 'feria' ? 'Seleccione la feria del socio.' : 'Seleccione el sector del socio.')
       return false
     }
 
@@ -651,17 +745,21 @@ export const SociosPage = () => {
       const response = await sociosService.retirarSocio(socioParaRetiro.id, {
         fecha_retiro: formRetiro.fecha_retiro,
         motivo_retiro: formRetiro.motivo_retiro,
+        descontar_multa: true,
       })
 
       if (!response.success) {
         throw new Error('No fue posible retirar el socio')
       }
+      // Multa descontada, multa pendiente o ahorro por devolver
+      if (response.advertencias?.length) window.alert(response.advertencias.join('\n'))
 
       setModalRetiroAbierto(false)
       setSocioParaRetiro(null)
       await cargarSocios()
     } catch (err) {
-      const mensaje = err instanceof Error ? err.message : 'Error al retirar el socio'
+      // El motivo real del servidor (préstamo vigente, saldo, etc.)
+      const mensaje = getErrorMessage(err) || 'Error al retirar el socio'
       setErrorRetiro(mensaje)
     } finally {
       setProcesandoRetiro(false)
@@ -682,25 +780,32 @@ export const SociosPage = () => {
     { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
     { label: 'Estado', value: filtroEstado || 'Todos los estados' },
     {
-      label: 'Feria',
+      label: 'Sector o feria',
       value: filtroUbicacion
         ? (() => {
             const feria = ubicaciones.find((u) => String(u.id) === filtroUbicacion)
-            return feria ? nombreFeria(feria) : 'Todas las ferias'
+            return feria ? nombreFeria(feria) : 'Todos los sectores y ferias'
           })()
-        : 'Todas las ferias',
+        : 'Todos los sectores y ferias',
     },
-    { label: 'Registros por página', value: String(registrosPorPagina) },
+    {
+      label: 'Delegados',
+      value: impresion?.soloDelegados || filtroDelegado ? 'Sólo delegados' : 'Todos',
+    },
   ]
 
-  const filasImpresion = sociosFiltrados.map((socio) => [
+  // Se imprime lo que trajo `imprimir` (todos los del filtro); la página en
+  // pantalla sólo hasta que se pide
+  const sociosAImprimir = impresion?.socios ?? sociosFiltrados
+  const filasImpresion = sociosAImprimir.map((socio) => [
     socio.codigo_socio,
     socio.cedula,
     `${socio.apellido}, ${socio.nombre}`,
     socio.telefono ?? 'Sin teléfono',
     formatearFecha(socio.fecha_inscripcion),
     socio.estado,
-    socio.ubicacion?.direccion ?? 'Sin feria',
+    socio.ubicacion ? nombreFeria(socio.ubicacion as Ubicacion) : 'Sin sector ni feria',
+    socio.es_delegado ? 'Sí' : 'No',
   ])
 
   return (
@@ -715,12 +820,16 @@ export const SociosPage = () => {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => { setBusqueda(''); setFiltroEstado(''); setFiltroUbicacion(''); setPaginaActual(1) }}>
+            <Button variant="outline" onClick={() => { setBusqueda(''); setFiltroEstado(''); setFiltroUbicacion(''); setFiltroDelegado(false); setPaginaActual(1) }}>
               Limpiar filtros
             </Button>
-            <Button variant="secondary" onClick={() => window.print()}>
+            <Button variant="secondary" onClick={() => void imprimir(false)} disabled={preparandoImpresion !== null}>
               <Download className="h-4 w-4" />
-              Imprimir listado
+              {preparandoImpresion === 'listado' ? 'Preparando...' : 'Imprimir listado'}
+            </Button>
+            <Button variant="secondary" onClick={() => void imprimir(true)} disabled={preparandoImpresion !== null}>
+              <Download className="h-4 w-4" />
+              {preparandoImpresion === 'delegados' ? 'Preparando...' : 'Imprimir delegados'}
             </Button>
             {puedeCrear && (
               <Button onClick={() => abrirModalNuevo()}>
@@ -732,17 +841,24 @@ export const SociosPage = () => {
         </div>
       </section>
 
+      {errorImpresion && (
+        <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {errorImpresion}
+        </div>
+      )}
+
       <PrintableListado
-        titulo="Listado de Socios y Ferias"
+        titulo={impresion?.soloDelegados ? 'Listado de Delegados' : 'Listado de Socios y Ferias'}
         subtitulo="Reporte generado con los filtros actuales del módulo de socios"
         filtros={filtrosImpresion}
         resumenes={[
-          { label: 'Total visibles', value: String(sociosFiltrados.length) },
+          { label: impresion?.soloDelegados ? 'Delegados' : 'Socios en el listado', value: String(sociosAImprimir.length) },
           { label: 'Total sistema', value: String(estadisticas.totalSocios) },
           { label: 'Activos', value: String(estadisticas.sociosActivos) },
           { label: 'Retirados', value: String(estadisticas.sociosRetirados) },
         ]}
-        columnas={['Expediente', 'Cédula', 'Socio', 'Teléfono', 'Fecha ingreso', 'Estado', 'Feria']}
+        columnas={['Expediente', 'Cédula', 'Socio', 'Teléfono', 'Fecha ingreso', 'Estado', 'Sector o feria', 'Delegado']}
         columnasMayusculas={['Socio']}
         filas={filasImpresion}
       />
@@ -770,7 +886,7 @@ export const SociosPage = () => {
       <section className="grid grid-cols-1 gap-5">
         <div className="space-y-4">
           <Card className="border-neutral-200">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
               <div className="relative md:col-span-2">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                 <input
@@ -803,14 +919,28 @@ export const SociosPage = () => {
                   onChange={(e) => { setFiltroUbicacion(e.target.value); setPaginaActual(1) }}
                   className="w-full appearance-none rounded-xl border border-neutral-200 bg-white py-2.5 pl-10 pr-3 text-sm text-neutral-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                 >
-                  <option value="">Todas las ferias</option>
-                  {ubicaciones.map((ubicacion) => (
-                    <option key={ubicacion.id} value={ubicacion.id}>
-                      {nombreFeria(ubicacion)}
-                    </option>
+                  <option value="">Todos los sectores y ferias</option>
+                  {(['sector', 'feria'] as const).map((tipo) => (
+                    <optgroup key={tipo} label={tipo === 'sector' ? 'Sectores' : 'Ferias'}>
+                      {ubicaciones.filter((u) => u.tipo === tipo).map((ubicacion) => (
+                        <option key={ubicacion.id} value={ubicacion.id}>
+                          {nombreFeria(ubicacion)}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>
+
+              <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-800">
+                <input
+                  type="checkbox"
+                  checked={filtroDelegado}
+                  onChange={(e) => { setFiltroDelegado(e.target.checked); setPaginaActual(1) }}
+                  className="h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-200"
+                />
+                Sólo delegados
+              </label>
             </div>
           </Card>
 
@@ -883,7 +1013,18 @@ export const SociosPage = () => {
 
                   {!loading &&
                     sociosFiltrados.map((socio) => (
-                      <tr key={socio.id} className="border-b border-neutral-100 text-sm text-neutral-700 hover:bg-primary-50/40">
+                      <tr
+                        key={socio.id}
+                        // Clic en la fila abre el detalle de una vez (pedido del 15/10);
+                        // "Ver detalle" del menú sigue estando
+                        onClick={(e) => {
+                          // El menú de acciones (y su fondo para cerrarlo) vive dentro de la fila
+                          if ((e.target as HTMLElement).closest('button, a, input, select, label, [data-menu-socio]')) return
+                          abrirModalDetalle(socio)
+                        }}
+                        title="Clic para ver el detalle"
+                        className="cursor-pointer border-b border-neutral-100 text-sm text-neutral-700 hover:bg-primary-50/40"
+                      >
                         <td className="px-4 py-3">
                           <div className="font-mono text-sm font-semibold text-primary-700">{socio.codigo_socio}</div>
                           {socio.es_delegado && (
@@ -939,10 +1080,12 @@ export const SociosPage = () => {
                             {menuAbiertoId === socio.id && (
                               <>
                                 <div
+                                  data-menu-socio
                                   className="fixed inset-0 z-10"
                                   onClick={() => setMenuAbiertoId(null)}
                                 />
                                 <div
+                                  data-menu-socio
                                   className="fixed z-20 w-60 rounded-lg border border-neutral-200 bg-white shadow-lg"
                                   style={posicionMenu}
                                 >
@@ -1002,6 +1145,21 @@ export const SociosPage = () => {
                                       <Download className="h-4 w-4 text-emerald-600" />
                                       <span>Imprimir ficha</span>
                                     </button>
+                                    {puedeReactivarRetirado && socio.estado === 'retirado' && (
+                                      <>
+                                        <div className="my-1 border-t border-neutral-200" />
+                                        <button
+                                          onClick={() => {
+                                            setMenuAbiertoId(null)
+                                            setReactivando({ socio, motivo: '', error: '', procesando: false })
+                                          }}
+                                          className="flex w-full items-center gap-3 px-4 py-2 text-sm text-emerald-700 transition hover:bg-emerald-50"
+                                        >
+                                          <CheckCircle2 className="h-4 w-4" />
+                                          <span>Reactivar socio</span>
+                                        </button>
+                                      </>
+                                    )}
                                     {puedeModificar && socio.estado !== 'retirado' && (
                                       <>
                                         <div className="my-1 border-t border-neutral-200" />
@@ -1318,24 +1476,51 @@ export const SociosPage = () => {
             <div className={seccionClass}>
                 <p className={tituloSeccionClass}>Control interno y autorizacion</p>
 
-                <label className={labelClass}>
-                  {/* La ubicación también sirve de sector: los trabajadores del Triunfo llevan el suyo */}
-                  <span>Feria o sector *</span>
-                  <select
-                    value={formData.ubicacion_id ?? ''}
-                    onChange={(e) =>
-                      actualizarCampo('ubicacion_id', e.target.value ? Number(e.target.value) : null)
-                    }
-                    className={selectClass}
-                  >
-                    <option value="" className="text-neutral-500">Seleccione una feria</option>
-                    {ubicaciones.map((ubicacion) => (
-                      <option key={ubicacion.id} value={ubicacion.id} className="py-2">
-                        {nombreFeria(ubicacion)}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className={labelClass}>
+                    <span>Tipo de socio *</span>
+                    <select
+                      value={tipoSocio}
+                      onChange={(e) => {
+                        const tipo = e.target.value as TipoUbicacion
+                        setTipoSocio(tipo)
+                        // La ubicación elegida deja de valer si es del otro tipo
+                        const actual = ubicaciones.find((u) => u.id === formData.ubicacion_id)
+                        if (actual && actual.tipo !== tipo) actualizarCampo('ubicacion_id', null)
+                      }}
+                      className={selectClass}
+                    >
+                      <option value="sector">Particular: con ahorro</option>
+                      <option value="feria">De feria: sólo salud</option>
+                    </select>
+                  </label>
+
+                  <label className={labelClass}>
+                    {/* Los trabajadores de El Triunfo son particulares: llevan su propio sector */}
+                    <span>{tipoSocio === 'feria' ? 'Feria *' : 'Sector *'}</span>
+                    <select
+                      value={formData.ubicacion_id ?? ''}
+                      onChange={(e) =>
+                        actualizarCampo('ubicacion_id', e.target.value ? Number(e.target.value) : null)
+                      }
+                      className={selectClass}
+                    >
+                      <option value="" className="text-neutral-500">
+                        {tipoSocio === 'feria' ? 'Seleccione una feria' : 'Seleccione un sector'}
                       </option>
-                    ))}
-                  </select>
-                </label>
+                      {ubicaciones
+                        .filter((u) => u.tipo === tipoSocio && (u.estado !== false || u.id === formData.ubicacion_id))
+                        .map((ubicacion) => (
+                          <option key={ubicacion.id} value={ubicacion.id} className="py-2">
+                            {nombreFeria(ubicacion)}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+                <p className="text-xs text-neutral-500">
+                  Una cédula puede estar en un sector y en una feria, pero no en dos sectores ni en dos ferias.
+                </p>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className={labelClass}>
@@ -1581,9 +1766,11 @@ export const SociosPage = () => {
                     <dd className="mt-1 text-sm text-neutral-700">{socioDetalle.email || 'Sin correo'}</dd>
                   </div>
                   <div className="sm:col-span-2">
-                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Feria / Ubicación</dt>
+                    <dt className="text-xs uppercase tracking-wider text-neutral-500">
+                      {socioDetalle.ubicacion?.tipo === 'feria' ? 'Feria (sólo salud)' : 'Sector (particular)'}
+                    </dt>
                     <dd className="mt-1 text-sm text-neutral-700">
-                      {socioDetalle.ubicacion ? `${socioDetalle.ubicacion.codigo} - ${socioDetalle.ubicacion.nombre}` : 'Sin feria'}
+                      {socioDetalle.ubicacion ? `${socioDetalle.ubicacion.codigo} - ${socioDetalle.ubicacion.nombre}` : 'Sin sector'}
                     </dd>
                   </div>
                   <div className="sm:col-span-2">
@@ -1626,7 +1813,17 @@ export const SociosPage = () => {
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Beneficiarios</dt>
-                    <dd className="mt-1 text-sm text-neutral-700">{socioDetalle._count?.beneficiarios ?? 0}</dd>
+                    <dd className="mt-1 text-sm text-neutral-700">
+                      {beneficiariosPorServicio?.socioId === socioDetalle.id ? (
+                        <>
+                          Funeraria: <span className="font-semibold">{beneficiariosPorServicio.funeraria.total}</span>
+                          <span className="mx-2 text-neutral-300">·</span>
+                          Salud: <span className="font-semibold">{beneficiariosPorServicio.salud.total}</span>
+                        </>
+                      ) : (
+                        socioDetalle._count?.beneficiarios ?? 0
+                      )}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Cuentas de ahorro</dt>
@@ -1644,9 +1841,103 @@ export const SociosPage = () => {
               </div>
             </div>
 
+            {/* Beneficiarios clasificados por servicio y estado (confirmado el 23/10) */}
+            {beneficiariosPorServicio?.socioId === socioDetalle.id && (
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                {([
+                  ['Funeraria', beneficiariosPorServicio.funeraria],
+                  ['Salud', beneficiariosPorServicio.salud],
+                ] as const).map(([titulo, grupo]) => (
+                  <div key={titulo} className={seccionClass}>
+                    <p className={tituloSeccionClass}>
+                      Beneficiarios de {titulo.toLowerCase()} ({grupo.total})
+                    </p>
+                    <p className="mb-2 text-xs text-neutral-500">
+                      <span className="font-semibold text-emerald-700">{grupo.activos} activos</span>
+                      <span className="mx-1.5 text-neutral-300">·</span>
+                      <span className="font-semibold text-amber-700">{grupo.suspendidos} suspendidos</span>
+                    </p>
+                    {grupo.lista.length === 0 ? (
+                      <p className="text-sm text-neutral-500">Sin beneficiarios en {titulo.toLowerCase()}</p>
+                    ) : (
+                      <ul className="divide-y divide-neutral-100">
+                        {[...grupo.lista]
+                          .sort((a, b) => (a.estado === b.estado ? 0 : a.estado === 'activo' ? -1 : 1))
+                          .map((b) => (
+                            <li key={b.id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+                              <span className="text-neutral-800 uppercase">
+                                {b.nombre}
+                                <span className="ml-2 text-xs normal-case text-neutral-500">
+                                  {b.parentesco} · C.I. {b.cedula}
+                                </span>
+                              </span>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  b.estado === 'activo' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                                }`}
+                              >
+                                {b.estado === 'activo' ? 'Activo' : 'Suspendido'}
+                              </span>
+                            </li>
+                          ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="mt-5 flex justify-end">
               <Button variant="outline" onClick={() => setModalDetalleAbierto(false)}>
                 Cerrar
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {reactivando && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <Card className="w-full max-w-lg p-6">
+            <h2 className="text-lg font-semibold text-neutral-900">Reactivar socio retirado</h2>
+            <p className="mt-1 text-sm text-neutral-600">
+              {reactivando.socio.apellido}, {reactivando.socio.nombre} · Exp. {reactivando.socio.codigo_socio}
+            </p>
+            <p className="mt-3 text-sm text-neutral-600">
+              Vuelve a estar activo con todos sus beneficios. Escriba los motivos que presentó el socio
+              y por qué se aceptan: quedan en su historial.
+            </p>
+            <textarea
+              value={reactivando.motivo}
+              onChange={(e) => setReactivando({ ...reactivando, motivo: e.target.value })}
+              rows={4}
+              autoFocus
+              placeholder="Ej.: no asistió en 2025 y 2026 por enfermedad, presentó informe médico"
+              className="mt-3 w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+            />
+            {reactivando.error && <p className="mt-2 text-sm text-red-600">{reactivando.error}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setReactivando(null)} disabled={reactivando.procesando}>
+                Cancelar
+              </Button>
+              <Button
+                disabled={reactivando.procesando || reactivando.motivo.trim().length < 10}
+                onClick={async () => {
+                  setReactivando({ ...reactivando, procesando: true, error: '' })
+                  try {
+                    await sociosService.reactivarSocioRetirado(reactivando.socio.id, reactivando.motivo.trim())
+                    setReactivando(null)
+                    await cargarSocios()
+                  } catch (err) {
+                    setReactivando({
+                      ...reactivando,
+                      procesando: false,
+                      error: getErrorMessage(err) || 'No se pudo reactivar el socio',
+                    })
+                  }
+                }}
+              >
+                {reactivando.procesando ? 'Reactivando...' : 'Reactivar'}
               </Button>
             </div>
           </Card>

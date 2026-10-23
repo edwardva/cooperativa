@@ -41,6 +41,51 @@ ls -la
 
 ## 📤 Paso 2: Extracción de Datos
 
+### **IMPORTANTE: Orden de Migración**
+
+```
+1. Ubicaciones/Ferias (PRIMERO)
+2. Socios
+3. Beneficiarios
+4. Ahorro
+5. Funeraria
+6. Salud
+7. Préstamos
+```
+
+### 2.1. Extracción de Ubicaciones/Ferias
+
+Las **ferias** son las sucursales/ubicaciones donde están registrados los socios. Cada socio debe tener una feria asignada.
+
+#### Opción A: Extracción automática desde sistema viejo
+
+```bash
+# 1. Editar credenciales en extract_ferias_from_old_system.php
+nano extract_ferias_from_old_system.php
+
+# 2. Ejecutar script
+php extract_ferias_from_old_system.php
+
+# 3. El CSV se genera en data/ubicaciones_export.csv
+```
+
+#### Opción B: Extracción manual
+
+1. **Ingresar al sistema viejo**
+2. **Ir a:** Asociados → Ferias (o Asociados → Modificar)
+3. **Ver el campo "Ubicación"** (debe ser un dropdown con las ferias)
+4. **Copiar todas las opciones**
+5. **Crear el archivo:** `data/ubicaciones_export.csv`
+
+**Formato del CSV:**
+```csv
+codigo,nombre,direccion,telefono,email,estado
+FERIA-CENTRO,Feria Central,Calle Principal,0212-1234567,centro@coop.com,1
+FERIA-ESTE,Feria Este,Av. Este,0212-2345678,este@coop.com,1
+```
+
+### 2.2. Extracción de Socios
+
 ### Opción A: Exportación SQL (RECOMENDADO)
 
 Si tienes acceso a la base de datos vieja:
@@ -56,7 +101,6 @@ psql -h <host_viejo> -U <usuario_viejo> -d <database_vieja>
 # Copiarlos a data/
 cp /tmp/socios_export.csv data/
 cp /tmp/beneficiarios_export.csv data/
-cp /tmp/ubicaciones_export.csv data/
 ```
 
 ### Opción B: Web Scraping (si no hay acceso a BD)
@@ -82,18 +126,64 @@ php extract_from_old_system.php
 Si prefieres exportar manualmente desde el sistema viejo:
 
 1. Ver archivos de ejemplo:
+   - `data/ubicaciones_export.example.csv`
    - `data/socios_export.example.csv`
    - `data/beneficiarios_export.example.csv`
-   - `data/ubicaciones_export.example.csv`
 
 2. Exportar datos con el mismo formato
 3. Colocar archivos en `data/`
 
 ---
 
-## 📥 Paso 3: Importación de Socios
+## 📥 Paso 3: Importación de Ubicaciones
 
-### 3.1. Verificar datos
+**⚠️ IMPORTANTE:** Las ubicaciones deben importarse ANTES que los socios.
+
+### 3.1. Importar ubicaciones
+
+```bash
+cd scripts/migracion
+npm run migrate:ubicaciones
+```
+
+### 3.2. Verificar importación
+
+El script mostrará:
+```
+📍 MIGRACIÓN DE UBICACIONES/FERIAS
+=====================================
+
+📄 Archivo leído: 6 ubicaciones encontradas
+
+🔍 Validando datos...
+✅ 6 ubicaciones válidas
+
+💾 Importando ubicaciones...
+
+  ✅ Insertada: FERIA-CENTRO - Feria Central
+  ✅ Insertada: FERIA-ESTE - Feria Este
+  ✅ Insertada: FERIA-OESTE - Feria Oeste
+  ...
+
+=====================================
+📊 RESUMEN DE MIGRACIÓN
+=====================================
+✅ Insertadas:    6
+🔄 Actualizadas:  0
+❌ Errores:       0
+=====================================
+
+📍 ESTADO FINAL:
+   Total ubicaciones: 6
+   Activas: 6
+   Inactivas: 0
+```
+
+---
+
+## 📥 Paso 4: Importación de Socios
+
+### 4.1. Verificar datos
 
 ```bash
 # Ver primeras 5 líneas del CSV

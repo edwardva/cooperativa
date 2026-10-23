@@ -19,8 +19,41 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { BadRequestError, ConflictError, NotFoundError } from '../middleware/errorHandler';
 import { leerParametroNumerico } from './tarifasService';
+import { semanaActual, semanasEnAno } from '../utils/calendarioSemanal';
 
 type Db = PrismaClient | Prisma.TransactionClient;
+
+/**
+ * Cuántas semanas puede pagar el socio desde el cajero digital.
+ *
+ * Dos topes, manda el menor:
+ *  - Las atrasadas más el adelanto máximo (MAX_SEMANAS_ADELANTO).
+ *  - Sólo hasta la última semana del año en curso. Pedido de la cooperativa
+ *    el 15/10: el adelanto del año siguiente se paga en la oficina, porque el
+ *    reglamento pide que el socio vaya personalmente y hay quienes sólo pagan
+ *    por el cajero digital.
+ *
+ * El pago cubre las mismas semanas en todos sus acuerdos, así que el que va
+ * más adelantado (el de menos semanas sin pagar) es el que llegaría primero a
+ * fin de año.
+ */
+export const topeSemanasDigital = async (db: Db, socioId: number) => {
+  const [maximo, atraso] = await Promise.all([
+    leerParametroNumerico('MAX_SEMANAS_ADELANTO'),
+    atrasoDeAcuerdos(db, socioId),
+  ]);
+  const actual = semanaActual();
+  const restantesDelAno = semanasEnAno(actual.ano) - actual.semana;
+  const porAdelanto = atraso.mayor + maximo;
+  const porFinDeAno = atraso.menor + restantesDelAno;
+  return {
+    tope: Math.max(0, Math.min(porAdelanto, porFinDeAno)),
+    atrasadas: atraso.mayor,
+    maximo_adelanto: maximo,
+    limita_fin_de_ano: porFinDeAno < porAdelanto,
+    ano: actual.ano,
+  };
+};
 
 export interface DeclaracionDePago {
   destino: 'semanas' | 'prestamo' | 'ahorro';
@@ -62,16 +95,18 @@ export const declararPago = async (
   }
 
   if (datos.destino === 'semanas') {
-    const maximo = await leerParametroNumerico('MAX_SEMANAS_ADELANTO');
     if (!datos.semanas || datos.semanas < 1) {
       throw new BadRequestError('Indique cuántas semanas desea pagar');
     }
     // Confirmado por la cooperativa: "pago de semanas atrasadas mas maximo 10
-    // semanas de adelanto". Las atrasadas no tienen tope; el adelanto si.
-    const atrasadas = await semanasAtrasadas(db, socioId);
-    if (datos.semanas > atrasadas + maximo) {
+    // semanas de adelanto", y nunca más allá del año en curso
+    const t = await topeSemanasDigital(db, socioId);
+    if (datos.semanas > t.tope) {
       throw new BadRequestError(
-        `Puede pagar sus ${atrasadas} semana(s) atrasada(s) y adelantar hasta ${maximo} más`
+        t.limita_fin_de_ano
+          ? `Por el cajero digital sólo puede pagar hasta la última semana de ${t.ano} ` +
+              `(${t.tope} semana(s)). Las semanas de ${t.ano + 1} se pagan en la oficina.`
+          : `Puede pagar sus ${t.atrasadas} semana(s) atrasada(s) y adelantar hasta ${t.maximo_adelanto} más`
       );
     }
   }
@@ -117,7 +152,7 @@ export const declararPago = async (
  * colecta: si aqui se contara de otra forma, el socio veria un numero en el
  * celular y otro distinto en la caja.
  */
-const semanasAtrasadas = async (db: Db, socioId: number): Promise<number> => {
+const atrasoDeAcuerdos = async (db: Db, socioId: number): Promise<{ mayor: number; menor: number }> => {
   const acuerdos = await db.acuerdoFuneraria.findMany({
     where: { estado: { in: ['activo', 'suspendido'] }, beneficiario: { socio_id: socioId } },
     select: { semanas_sin_pago: true },
@@ -127,7 +162,7 @@ const semanasAtrasadas = async (db: Db, socioId: number): Promise<number> => {
     select: { semanas_sin_pago: true },
   });
   const todas = [...acuerdos, ...saludes].map((a) => a.semanas_sin_pago ?? 0);
-  return todas.length > 0 ? Math.max(...todas) : 0;
+  return todas.length > 0 ? { mayor: Math.max(...todas), menor: Math.min(...todas) } : { mayor: 0, menor: 0 };
 };
 
 /** Marca el pago como conciliado o rechazado. No cobra: deja constancia. */

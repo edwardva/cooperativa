@@ -44,8 +44,9 @@ describe('adelantoDelRenglon', () => {
 
   it('adelanto que cruza de año', () => {
     const r = adelantoDelRenglon({ ano: 2026, semana: 52 }, { ano: 2026, semana: 52 }, { ano: 2027, semana: 2 });
-    expect(r?.adelantadas).toBe(3);
-    expect(r?.desde).toEqual({ ano: 2026, semana: 53 });
+    // 2026 tiene 52 semanas: después de la 52 viene la 1 de 2027
+    expect(r?.adelantadas).toBe(2);
+    expect(r?.desde).toEqual({ ano: 2027, semana: 1 });
   });
 });
 

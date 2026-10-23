@@ -29,7 +29,7 @@ import { PrintableListado } from '../components/print/PrintableListado'
 import { SortableHeader } from '../components/ui/SortableHeader'
 import * as semanasService from '../services/semanasColectaService'
 import type { SemanaColecta, SemanaColectaFormData } from '../services/semanasColectaService'
-import { numeroDeSemana, rangoDeSemana } from '../services/semanasColectaService'
+import { periodoDeFecha, rangoDeSemana } from '../services/semanasColectaService'
 import { getErrorMessage } from '../services/api'
 import { usePermissions } from '../store/authStore'
 
@@ -55,8 +55,8 @@ const formatearFecha = (fecha: string): string =>
 
 const formularioVacio = (): SemanaColectaFormData => {
   const hoy = new Date()
-  const semana = numeroDeSemana(hoy)
-  const ano = hoy.getFullYear()
+  // Semana y año juntos: a fin de diciembre la semana ya puede ser del año nuevo
+  const { semana, ano } = periodoDeFecha(hoy)
   const rango = rangoDeSemana(semana, ano)
   return {
     semana,

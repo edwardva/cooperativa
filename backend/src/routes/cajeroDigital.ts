@@ -15,7 +15,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { accederSocio, registrarSocio } from '../services/cajeroDigitalService';
-import { declararPago, revisarPago } from '../services/pagosWebService';
+import { declararPago, revisarPago, topeSemanasDigital } from '../services/pagosWebService';
 import { autenticarSocio } from '../middleware/autenticarSocio';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
@@ -73,7 +73,7 @@ router.post('/acceso', async (req: Request, res: Response, next: NextFunction) =
 router.get('/mi-situacion', autenticarSocio, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const socioId = req.socio!.socioId;
-    const [socio, prestamos, pagos] = await Promise.all([
+    const [socio, prestamos, pagos, semanas] = await Promise.all([
       prisma.socio.findUnique({
         where: { id: socioId },
         select: { codigo_socio: true, nombre: true, apellido: true, estado: true },
@@ -95,8 +95,10 @@ router.get('/mi-situacion', autenticarSocio, async (req: Request, res: Response,
         orderBy: { created_at: 'desc' },
         take: 20,
       }),
+      // Cuántas semanas le deja pagar el celular: hasta fin de año, como mucho
+      topeSemanasDigital(prisma, socioId),
     ]);
-    res.json({ success: true, data: { socio, prestamos, pagos } });
+    res.json({ success: true, data: { socio, prestamos, pagos, semanas } });
   } catch (error) {
     next(error);
   }

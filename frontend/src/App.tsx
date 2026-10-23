@@ -20,6 +20,7 @@ import { AhorroPage } from './pages/AhorroPage'
 import FunerariaPage from './pages/FunerariaPage'
 import SaludPage from './pages/SaludPage'
 import AsambleasPage from './pages/AsambleasPage'
+import MultasPage from './pages/MultasPage'
 import ColectaPage from './pages/ColectaPage'
 import PrestamosPage from './pages/PrestamosPage'
 import ColectaReportesPage from './pages/ColectaReportesPage'
@@ -224,6 +225,17 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <AsambleasPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/multas"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <MultasPage />
               </MainLayout>
             </ProtectedRoute>
           }

@@ -15,6 +15,7 @@ import {
   listarTodosTiposCuenta,
   aperturaCuenta,
   cambiarEstadoCuenta,
+  buscarSociosApertura,
   
   // Movimientos
   registrarMovimiento,
@@ -64,6 +65,13 @@ router.get('/cuentas/socio/:socioId', authenticate, authorize('ahorro', 'read'),
  * Obtener detalle de una cuenta
  */
 router.get('/cuentas/:id', authenticate, authorize('ahorro', 'read'), obtenerCuenta);
+
+/**
+ * GET /api/ahorro/socios-apertura?q=texto
+ * Buscar socios (todos sus expedientes) para abrir cuenta, por cédula,
+ * expediente o nombre
+ */
+router.get('/socios-apertura', authenticate, authorize('ahorro', 'create'), buscarSociosApertura);
 
 /**
  * POST /api/ahorro/cuentas/apertura
