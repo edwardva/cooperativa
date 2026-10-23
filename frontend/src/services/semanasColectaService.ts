@@ -72,27 +72,44 @@ export const eliminarSemana = async (id: number): Promise<Respuesta<{ id: number
 // AYUDAS DE CALENDARIO
 // ============================================
 
-/** Numero de semana ISO-8601 de una fecha (lunes como primer dia). */
-export const numeroDeSemana = (fecha: Date): number => {
-  const d = new Date(Date.UTC(fecha.getFullYear(), fecha.getMonth(), fecha.getDate()))
-  const dia = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - dia)
-  const inicioAno = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return Math.ceil(((d.getTime() - inicioAno.getTime()) / 86400000 + 1) / 7)
+// Misma regla que el backend (utils/calendarioSemanal.ts), confirmada por la
+// cooperativa el 23/10: semanas de lunes a domingo, y la semana 1 es la que
+// CONTIENE EL 1 DE ENERO ("la semana 53 es la semana 1 del próximo año").
+
+const MS_DIA = 86400000
+
+/** Lunes (UTC) de la semana 1 del año: el de la semana que contiene el 1 de enero */
+const lunesSemana1 = (ano: number): Date => {
+  const primeroEnero = new Date(Date.UTC(ano, 0, 1))
+  const dia = primeroEnero.getUTCDay() || 7
+  return new Date(primeroEnero.getTime() - (dia - 1) * MS_DIA)
 }
 
 /**
- * Lunes y domingo de una semana ISO. Evita que el operador tenga que calcular
+ * Semana y AÑO del calendario de colecta para una fecha. El año puede no ser el
+ * de la fecha: del 28 al 31/12/2026 ya es la semana 1 de 2027.
+ */
+export const periodoDeFecha = (fecha: Date): { semana: number; ano: number } => {
+  const utc = Date.UTC(fecha.getFullYear(), fecha.getMonth(), fecha.getDate())
+  const dia = new Date(utc).getUTCDay() || 7
+  const lunes = utc - (dia - 1) * MS_DIA
+  const ano = new Date(lunes + 6 * MS_DIA).getUTCFullYear()
+  const semana = Math.round((lunes - lunesSemana1(ano).getTime()) / (7 * MS_DIA)) + 1
+  return { semana, ano }
+}
+
+/** Número de semana de una fecha. Para el año, usar `periodoDeFecha`. */
+export const numeroDeSemana = (fecha: Date): number => periodoDeFecha(fecha).semana
+
+/**
+ * Lunes y domingo de una semana. Evita que el operador tenga que calcular
  * las fechas a mano, que es donde se cometen los errores.
  */
 export const rangoDeSemana = (semana: number, ano: number): { inicio: string; fin: string } => {
-  const cuatroEnero = new Date(Date.UTC(ano, 0, 4))
-  const diaSemana = cuatroEnero.getUTCDay() || 7
-  const lunesSemana1 = new Date(cuatroEnero)
-  lunesSemana1.setUTCDate(cuatroEnero.getUTCDate() - diaSemana + 1)
+  const primerLunes = lunesSemana1(ano)
 
-  const lunes = new Date(lunesSemana1)
-  lunes.setUTCDate(lunesSemana1.getUTCDate() + (semana - 1) * 7)
+  const lunes = new Date(primerLunes)
+  lunes.setUTCDate(primerLunes.getUTCDate() + (semana - 1) * 7)
 
   const domingo = new Date(lunes)
   domingo.setUTCDate(lunes.getUTCDate() + 6)

@@ -14,14 +14,23 @@
 //   semanas desde una fecha fija. Sobre el ordinal la aritmética es trivial y
 //   los cruces de año, los años de 53 semanas y los adelantos salen solos.
 //
-// Regla de calendario:
+// Regla de calendario (confirmada por la cooperativa el 23/10/2026):
 //
-//   Por defecto ISO-8601 — la semana empieza el LUNES y la semana 1 de un año
-//   es la que contiene el 4 de enero. Es lo que ya usa el frontend y coincide
-//   con "la tasa del BCV del lunes se mantiene hasta el domingo".
+//   La semana va de LUNES a domingo, y la semana 1 de un año es la que
+//   CONTIENE EL 1 DE ENERO. "La semana 53 es la semana 1 del próximo año": la
+//   semana que cruza el fin de año ya es del año nuevo.
 //
-//   El cliente todavía NO confirmó su calendario (ver PLAN-COLECTA-EJECUCION.md).
-//   Toda la regla vive en `lunesDeSemana` y `semanaDeFecha`: cambiarla ahí la
+//   No es ISO-8601 (allí la semana 1 es la que contiene el 4 de enero). Las dos
+//   reglas dan lo mismo en 2024, 2025 y 2026; difieren en los años cuyo 1 de
+//   enero cae viernes, sábado o domingo (2027, 2028...). Con esta regla 2026
+//   tiene 52 semanas: la del 28/12/2026 al 03/01/2027 es la semana 1 de 2027.
+//
+//   El sistema viejo no tenía una regla fija: en 2021-2022 numeró así, cerró
+//   2022 con una "semana 53" y desde 2023 usó ISO (revisado en sus
+//   movimientos de funeraria). Por eso cada diciembre había que llamar al
+//   proveedor.
+//
+//   Toda la regla vive en `lunesDeSemana` y `periodoDeUtc`: cambiarla ahí la
 //   cambia en todo el sistema, sin tocar quien la consume.
 
 /** Un período de colecta: el par (año, semana) que identifica una semana. */
@@ -60,10 +69,11 @@ const aUtc = (fecha: Date): number =>
  * corresponda: es lo que permite que `sumarSemanas` no tenga casos especiales.
  */
 export const lunesDeSemana = (ano: number, semana: number): Date => {
-  // El 4 de enero cae siempre en la semana 1 (definición ISO)
-  const cuatroEnero = new Date(Date.UTC(ano, 0, 4));
-  const diaSemana = cuatroEnero.getUTCDay() || 7; // domingo = 7, no 0
-  const lunesSemana1 = cuatroEnero.getTime() - (diaSemana - 1) * MS_POR_DIA;
+  // La semana 1 es la que contiene el 1 de enero: arranca el lunes anterior
+  // (o el mismo 1 de enero, si cae lunes)
+  const primeroEnero = new Date(Date.UTC(ano, 0, 1));
+  const diaSemana = primeroEnero.getUTCDay() || 7; // domingo = 7, no 0
+  const lunesSemana1 = primeroEnero.getTime() - (diaSemana - 1) * MS_POR_DIA;
 
   return new Date(lunesSemana1 + (semana - 1) * MS_POR_SEMANA);
 };
@@ -90,12 +100,14 @@ export const semanaDeFecha = (fecha: Date = new Date()): Periodo =>
 const periodoDeUtc = (utc: number): Periodo => {
   const diaSemana = new Date(utc).getUTCDay() || 7;
 
-  // El jueves de esa semana decide a qué año pertenece (definición ISO)
-  const jueves = utc + (4 - diaSemana) * MS_POR_DIA;
-  const ano = new Date(jueves).getUTCFullYear();
+  // El DOMINGO de esa semana decide el año: si la semana contiene un 1 de
+  // enero, su domingo ya es del año nuevo; si no, toda la semana es de un año
+  const lunes = utc - (diaSemana - 1) * MS_POR_DIA;
+  const domingo = lunes + 6 * MS_POR_DIA;
+  const ano = new Date(domingo).getUTCFullYear();
 
   const inicioAno = lunesDeSemana(ano, 1).getTime();
-  const semana = Math.round((jueves - inicioAno) / MS_POR_SEMANA) + 1;
+  const semana = Math.round((lunes - inicioAno) / MS_POR_SEMANA) + 1;
 
   return { ano, semana };
 };

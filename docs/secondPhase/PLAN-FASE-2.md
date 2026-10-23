@@ -666,6 +666,26 @@ lo que la cooperativa no decidió. Cada punto se marca ✅ cuando la cooperativa
    semana 41 y una vez cumplidos los días de suspensión.
 4. **"Préstamo con aval del retiro":** qué es.
 
+### Sector y feria · confirmado el 2026-09-30
+
+- **Una cédula, varios expedientes, pero como mucho uno en un sector y uno en una feria.**
+  Nunca dos sectores ni dos ferias. "Estar en una feria" es tener un expediente de socio
+  vigente (activo o suspendido) en una feria **o** un expediente de trabajador sin retirar.
+- **Particular → sector, con ahorro.** Los trabajadores de El Triunfo también son de sector.
+  **De feria → feria, sólo salud:** no se le abre cuenta de ahorro, y la colecta ya no le cobra
+  el ahorro obligatorio porque sólo lo cobra a quien tiene cuenta.
+- ✅ Migración `20260930000000_tipo_ubicacion`: `ubicaciones.tipo` (`sector` | `feria`). Son
+  feria las que se llaman así, las 5x-xx del sistema anterior y las que ya tienen trabajadores
+  o pagos de salud por feria; el resto, sector. **Al desplegar, revisar la clasificación**
+  (`SELECT codigo, nombre, tipo FROM ubicaciones ORDER BY codigo`).
+- ✅ Alta y edición de socio: se elige *Particular* (lista de sectores) o *De feria* (lista de
+  ferias) y se valida el cupo por cédula (`sectorFeriaService.verificarCupoPorCedula`, con
+  bloqueo por cédula para dos altas simultáneas). Pasar a feria a un socio con cuenta de ahorro
+  abierta se rechaza. El trabajador sólo va a ferias. Una ubicación con socios o trabajadores no
+  cambia de tipo.
+- Quedan como estaban los socios de feria del sistema anterior que ya tienen cuenta (unas 37
+  en la extracción): no se les cierra nada, sólo no pueden abrir otra.
+
 ### Fase 3 (fuera de este plan)
 
 Mensajería (WhatsApp/SMS/correo) y alertas de mora. Conviene dejar creadas en Sprint F las

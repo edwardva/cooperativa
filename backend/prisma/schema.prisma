@@ -37,6 +37,8 @@ model Usuario {
   movimientos_boveda MovimientoBoveda[]
   audit_logs         AuditLog[]
 
+  pagos_web_revisados PagoWeb[]
+
   @@map("usuarios")
 }
 
@@ -105,6 +107,7 @@ model Socio {
   prestamos_como_fiador Fiador[]
   usuario_digital       UsuarioDigital?
   asistencias_asamblea  AsistenciaAsamblea[]
+  multas_asamblea       MultaAsamblea[]
   colectas              Colecta[]
   historial_estados     HistorialEstadoSocio[]
 
@@ -396,14 +399,23 @@ enum EstadoPagoSalud {
 // UBICACIONES/SUCURSALES
 // ============================================
 
+/// Sector: donde vive el socio particular, que tiene ahorro. Feria: donde
+/// trabaja el socio de feria, que sólo tiene salud. Una cédula está como mucho
+/// en un sector y en una feria (confirmado por la cooperativa el 2026-09-30).
+enum TipoUbicacion {
+  sector
+  feria
+}
+
 model Ubicacion {
-  id         Int      @id @default(autoincrement())
-  codigo     String   @unique @db.VarChar(10)
-  nombre     String   @db.VarChar(100)
-  direccion  String?  @db.Text
-  telefono   String?  @db.VarChar(20)
-  estado     Boolean  @default(true)
-  created_at DateTime @default(now())
+  id         Int           @id @default(autoincrement())
+  codigo     String        @unique @db.VarChar(10)
+  nombre     String        @db.VarChar(100)
+  tipo       TipoUbicacion @default(sector)
+  direccion  String?       @db.Text
+  telefono   String?       @db.VarChar(20)
+  estado     Boolean       @default(true)
+  created_at DateTime      @default(now())
 
   // Ficha de la feria (RF-FER-01)
   ubicacion     String? @db.VarChar(150)
@@ -419,6 +431,7 @@ model Ubicacion {
   asambleas         Asamblea[]
   colectas          Colecta[]
 
+  @@index([tipo])
   @@map("ubicaciones")
 }
 
@@ -781,6 +794,8 @@ model Prestamo {
   plan_pagos    PlanPago[]
   abonos        AbonoPrestamo[]
 
+  pagos_web PagoWeb[]
+
   @@index([socio_id])
   @@index([numero_prestamo])
   @@index([estado])
@@ -940,6 +955,8 @@ model Colecta {
   ubicacion      Ubicacion?       @relation(fields: [ubicacion_id], references: [id])
   detalles       DetalleColecta[]
 
+  pagos_web PagoWeb[]
+
   @@index([ubicacion_id])
   @@index([socio_id])
   @@index([fecha_colecta])
@@ -1052,11 +1069,22 @@ enum Moneda {
 // CAJERO DIGITAL
 // ============================================
 
+/// El acceso del SOCIO al cajero digital, aparte del de los empleados.
+///
+/// Confirmado por la cooperativa: "el socio accede con usuario y clave creada
+/// aparte solo del socio, es decir como un usuario externo que al ingresar solo
+/// accede a un formulario que llena con datos del pago". Y: "el cajero digital
+/// la gente lo paga desde el celular".
+///
+/// Son credenciales SEPARADAS de las del personal a proposito: un socio nunca
+/// debe poder entrar al administrativo, ni al reves.
 model UsuarioDigital {
   id            Int       @id @default(autoincrement())
   socio_id      Int       @unique
   username      String    @unique @db.VarChar(50)
   password_hash String    @db.VarChar(255)
+  /// Celular con el que se registro; por ahi va la recuperacion de clave
+  telefono      String?   @db.VarChar(100)
   estado        Boolean   @default(true)
   ultimo_acceso DateTime?
   created_at    DateTime  @default(now())
@@ -1069,6 +1097,12 @@ model UsuarioDigital {
   @@map("usuarios_digitales")
 }
 
+/// Lo que el socio DECLARA haber pagado desde el celular.
+///
+/// No es un cobro: es un aviso. El socio dice "transferi tanto, con esta
+/// referencia, para tantas semanas", y la cooperativa lo verifica contra el
+/// banco antes de convertirlo en un cobro real. Por eso vive aparte de
+/// `colecta` y no toca ningun saldo mientras esta pendiente.
 model PagoWeb {
   id                  Int           @id @default(autoincrement())
   usuario_digital_id  Int
@@ -1080,13 +1114,31 @@ model PagoWeb {
   estado              EstadoPagoWeb @default(pendiente)
   fecha_conciliacion  DateTime?     @db.Date
   observaciones       String?       @db.Text
-  created_at          DateTime      @default(now())
-  updated_at          DateTime      @updatedAt
+
+  /// Para que dice el socio que es el pago
+  destino        DestinoPagoWeb @default(semanas)
+  /// Semanas que quiere cubrir. Atrasadas mas hasta 10 de adelanto.
+  semanas        Int            @default(0)
+  /// Si abona a un prestamo concreto, cual
+  prestamo_id    Int?
+  /// Quien lo concilio o lo rechazo, y por que
+  revisado_por   Int?
+  motivo_rechazo String?        @db.Text
+  /// La colecta que se genero al conciliarlo, si ya se cobro
+  colecta_id     Int?
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
 
   // Relaciones
   usuario_digital UsuarioDigital @relation(fields: [usuario_digital_id], references: [id])
+  prestamo        Prestamo?      @relation(fields: [prestamo_id], references: [id])
+  colecta         Colecta?       @relation(fields: [colecta_id], references: [id])
+  revisor         Usuario?       @relation(fields: [revisado_por], references: [id])
 
+  @@unique([referencia_bancaria])
   @@index([usuario_digital_id])
+  @@index([prestamo_id])
+  @@index([colecta_id])
   @@index([estado])
   @@index([fecha_pago])
   @@map("pagos_web")
@@ -1096,6 +1148,16 @@ enum EstadoPagoWeb {
   pendiente
   conciliado
   rechazado
+}
+
+/// Para que dice el socio que es lo que pago
+enum DestinoPagoWeb {
+  /// Semanas de funeraria y salud, que van juntas
+  semanas
+  /// Abono a uno de sus prestamos
+  prestamo
+  /// Deposito a su cuenta de ahorro
+  ahorro
 }
 
 // ============================================
@@ -1185,6 +1247,8 @@ model AsistenciaAsamblea {
   id             Int      @id @default(autoincrement())
   asamblea_id    Int
   socio_id       Int
+  /// false: la caja marcó "No" (inasistencia registrada). Sólo true cuenta como asistencia.
+  asistio        Boolean  @default(true)
   observacion    String?  @db.Text
   registrado_por Int?
   created_at     DateTime @default(now())
@@ -1229,4 +1293,48 @@ model AuditLog {
   @@index([modulo])
   @@index([created_at])
   @@map("audit_log")
+}
+
+// ============================================
+// MULTAS POR INASISTENCIA A ASAMBLEA
+// ============================================
+
+/// Confirmado por la cooperativa el 23/10: el socio que no va a ninguna asamblea
+/// del año paga una multa al monto vigente, entera (no en partes), apenas
+/// termina la última asamblea del año. Se cobra aparte de la colecta, en el
+/// módulo Multas. Sólo se guarda lo PAGADO: quién la debe se calcula de la
+/// asistencia, así una asistencia cargada tarde la anula sola.
+enum EstadoMulta {
+  pagada
+  reversada
+}
+
+model MultaAsamblea {
+  id                   Int         @id @default(autoincrement())
+  socio_id             Int
+  /// Año de las asambleas a las que faltó
+  ano                  Int
+  monto_usd            Decimal     @db.Decimal(10, 2)
+  monto_bs             Decimal     @db.Decimal(14, 2)
+  tasa_cambio          Decimal     @db.Decimal(12, 4)
+  /// efectivo, transferencia, pago_movil, punto o ahorro (descontada de su cuenta)
+  forma_pago           String      @db.VarChar(20)
+  referencia           String?     @db.VarChar(50)
+  /// Cuando se descontó del ahorro: la cuenta y el retiro que la pagó
+  cuenta_ahorro_id     Int?
+  movimiento_ahorro_id Int?
+  estado               EstadoMulta @default(pagada)
+  fecha_pago           DateTime    @default(now())
+  usuario_id           Int
+  observacion          String?     @db.Text
+  fecha_reverso        DateTime?
+  motivo_reverso       String?     @db.Text
+  reversada_por        Int?
+  created_at           DateTime    @default(now())
+
+  socio Socio @relation(fields: [socio_id], references: [id])
+
+  @@index([socio_id, ano])
+  @@index([fecha_pago])
+  @@map("multas_asamblea")
 }

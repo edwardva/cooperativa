@@ -1,9 +1,13 @@
 import apiClient from './api'
 
+/** Sector: socio particular, con ahorro. Feria: socio de feria, sólo salud */
+export type TipoUbicacion = 'sector' | 'feria'
+
 export interface Ubicacion {
   id: number
   codigo: string
   nombre: string
+  tipo: TipoUbicacion
   direccion: string | null
   descripcion?: string | null
 }
@@ -61,7 +65,9 @@ export interface SocioFormData {
 
 export interface RetiroSocioData {
   fecha_retiro: string
-  motivo_retiro: 'Fallecimiento' | 'Renuncia' | 'Pasividad'
+  motivo_retiro: 'Fallecimiento' | 'Renuncia' | 'Pasividad' | 'Inasistencia a asambleas'
+  /** Sólo por inasistencia: descontar del ahorro la multa que deba */
+  descontar_multa?: boolean
 }
 
 // Parentescos aceptados para traspasar la titularidad de un socio: solo familiar directo
@@ -211,8 +217,23 @@ export const obtenerSocios = async (params?: {
   search?: string
   estado?: string
   ubicacion_id?: number
+  /** Sólo los delegados */
+  es_delegado?: boolean
 }): Promise<PaginatedResponse<Socio>> => {
   const response = await apiClient.get('/socios', { params })
+  return response.data
+}
+
+/**
+ * Todos los socios del filtro, sin paginar y sin foto, para el listado impreso.
+ */
+export const obtenerSociosParaImprimir = async (params: {
+  search?: string
+  estado?: string
+  ubicacion_id?: number
+  es_delegado?: boolean
+}): Promise<PaginatedResponse<Socio>> => {
+  const response = await apiClient.get('/socios', { params: { ...params, impresion: 1 } })
   return response.data
 }
 
@@ -253,6 +274,12 @@ export const actualizarSocio = async (id: number, data: Partial<SocioFormData>):
  */
 export const retirarSocio = async (id: number, data: RetiroSocioData): Promise<SingleResponse<Socio>> => {
   const response = await apiClient.post(`/socios/${id}/retiro`, data)
+  return response.data
+}
+
+/** Devolver a activo a un retirado, con el motivo que evaluó la oficina. Sólo admin. */
+export const reactivarSocioRetirado = async (id: number, motivo: string): Promise<SingleResponse<Socio>> => {
+  const response = await apiClient.post(`/socios/${id}/reactivar-retirado`, { motivo })
   return response.data
 }
 

@@ -57,7 +57,9 @@ interface Props {
   onReferencia: (v: string) => void
   asambleas: AsambleaOpcion[]
   asambleaId: number | ''
-  onAsamblea: (id: number | '') => void
+  /** Asamblea marcada y si fue (Sí) o no (No) */
+  onAsamblea: (id: number | '', asistio?: boolean) => void
+  asistioAsamblea: boolean
 
   adicionalAhorro: string
   onAdicionalAhorro: (v: string) => void
@@ -134,7 +136,7 @@ const soloLectura =
 export const ColectaClasica = ({
   termino, onTermino, onBuscar, buscando, socio,
   semanas, onSemanas, semanaCobro, anoCobro, ultimaSemanaTexto,
-  referencia, onReferencia, asambleas, asambleaId, onAsamblea,
+  referencia, onReferencia, asambleas, asambleaId, onAsamblea, asistioAsamblea,
   adicionalAhorro, onAdicionalAhorro,
   paquete, tasa, totalUsd,
   onReverso, onCobrar, cobrando, puedeCobrar,
@@ -158,42 +160,71 @@ export const ColectaClasica = ({
 
   const adicional = Number(adicionalAhorro) || 0
 
+  // Sí/No sobre la última asamblea ya hecha. Confirmado el 23/10: son en
+  // marzo, así que antes de marzo el servidor manda las del año anterior y
+  // desde marzo las del año en curso. Ir a cualquier fecha del año cuenta; el
+  // "No" se guarda como inasistencia en su historial.
+  const asamblea = asambleas[0] ?? null
+  const asistida = asambleas.find((a) => socio?.asambleas_asistidas.includes(a.id)) ?? null
+  const yaAsistio = asistida !== null
+  const yaMarcadoNo = !!asamblea && !!socio?.asambleas_no_asistidas?.includes(asamblea.id)
+  const valorAsamblea = yaAsistio ? 'si' : asambleaId === '' ? '' : asistioAsamblea ? 'si' : 'no'
+
   return (
     <div className="space-y-3">
-      {/* ---- Barra de busqueda y acciones ---- */}
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-white p-3">
-        <span className="text-sm font-semibold text-neutral-800">Socio:</span>
-        <Input
-          value={termino}
-          onChange={(e) => onTermino(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              onBuscar()
-            }
-          }}
-          placeholder="Expediente, cédula o nombre"
-          className="min-w-[18rem] flex-1"
-        />
-        <Button onClick={onBuscar} disabled={buscando}>
-          <Search className="h-4 w-4" />
-          Buscar
-        </Button>
-        {/* Arriba y siempre visible: en la pantalla nueva estaba dentro de otra
-            pestaña, y por eso la cooperativa lo daba por escondido */}
-        <Button variant="outline" onClick={onReverso}>
-          <RotateCcw className="h-4 w-4" />
-          Reverso
-        </Button>
-        <Button variant="outline" onClick={() => window.print()}>
-          <Printer className="h-4 w-4" />
-          Libreta
-        </Button>
+      {/* ---- Barra de busqueda y acciones ----
+          El nombre del socio a la izquierda y grande; los botones a la derecha,
+          como en Funeraria y Salud (pedido del 15/10) */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border border-neutral-200 bg-white p-3">
+        <div className="flex min-w-[18rem] flex-1 items-center gap-2">
+          <span className="text-sm font-semibold text-neutral-800">Socio:</span>
+          <Input
+            value={termino}
+            onChange={(e) => onTermino(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                onBuscar()
+              }
+            }}
+            placeholder="Expediente, cédula o nombre"
+            className="w-full max-w-sm"
+          />
+        </div>
+
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button onClick={onBuscar} disabled={buscando}>
+            <Search className="h-4 w-4" />
+            Buscar
+          </Button>
+          {/* Siempre visible: en la pantalla nueva estaba dentro de otra
+              pestaña, y por eso la cooperativa lo daba por escondido */}
+          <Button variant="outline" onClick={onReverso}>
+            <RotateCcw className="h-4 w-4" />
+            Reverso
+          </Button>
+          <Button variant="outline" onClick={() => window.print()}>
+            <Printer className="h-4 w-4" />
+            Libreta
+          </Button>
+        </div>
 
         {socio && (
-          <span className="ml-auto text-sm font-semibold text-neutral-900">
-            {socio.codigo_socio} · {socio.apellido}, {socio.nombre}
-          </span>
+          <p className="w-full text-2xl font-bold leading-tight text-neutral-900">
+            {socio.apellido}, {socio.nombre}
+            <span className="ml-3 align-middle text-base font-semibold text-neutral-500">
+              Exp. {socio.codigo_socio} · C.I. {socio.cedula}
+            </span>
+          </p>
+        )}
+        {/* Confirmado el 23/10: al retirado por inasistencia se le dice por qué
+            cuando viene a hacer cualquier movimiento */}
+        {socio?.alertas.socio_retirado && (
+          <p className="w-full rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+            {/inasistencia/i.test(socio.alertas.motivo_retiro ?? '')
+              ? 'Este socio fue retirado por inasistencia a la asamblea. Para volver debe pagar la multa y lo reactiva la administración.'
+              : `Este socio está retirado${socio.alertas.motivo_retiro ? ` (${socio.alertas.motivo_retiro})` : ''}.`}
+          </p>
         )}
       </div>
 
@@ -201,17 +232,27 @@ export const ColectaClasica = ({
       <div className="flex flex-wrap items-center gap-4 px-1">
         <Campo rotulo="Asistió a la Asamblea:">
           <select
-            value={asambleaId}
-            onChange={(e) => onAsamblea(e.target.value === '' ? '' : Number(e.target.value))}
-            className="rounded border border-neutral-300 px-2 py-1 text-sm"
+            value={valorAsamblea}
+            onChange={(e) => {
+              const v = e.target.value
+              if (!asamblea || v === '') onAsamblea('')
+              else onAsamblea(asamblea.id, v === 'si')
+            }}
+            disabled={!asamblea || yaAsistio}
+            className="rounded border border-neutral-300 px-2 py-1 text-sm disabled:bg-neutral-100"
           >
+            {/* Sin elegir no se guarda nada: así un cobro de rutina no deja un "No" por error */}
             <option value="">—</option>
-            {asambleas.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.titulo}
-              </option>
-            ))}
+            <option value="si">Sí</option>
+            <option value="no">No</option>
           </select>
+          <span className="text-xs text-neutral-500">
+            {!asamblea
+              ? 'No hay asamblea registrada este año'
+              : asistida
+                ? `Ya asistió este año: ${asistida.titulo} · ${new Date(asistida.fecha).toLocaleDateString('es-VE')}`
+                : `${asamblea.titulo} · ${new Date(asamblea.fecha).toLocaleDateString('es-VE')}${yaMarcadoNo ? ' (ya consta que no asistió)' : ''}`}
+          </span>
         </Campo>
         <Campo rotulo="Referencia:">
           <Input
@@ -445,13 +486,23 @@ export const ColectaClasica = ({
 
       {/* ---- Total y envio ---- */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-neutral-200 bg-white px-4 py-3">
-        <div>
-          <span className="text-lg font-bold text-neutral-900">Total a Cobrar: </span>
-          <span className="text-2xl font-bold text-primary-700 tabular-nums">
-            ${money(totalUsd)}
-          </span>
-          {tasa && (
-            <span className="ml-3 text-sm text-neutral-500">{money(totalUsd * tasa)} Bs</span>
+        {/* Bolívares primero, grandes y en negrita; los dólares al lado, más
+            chicos y en verde (pedido del 15/10) */}
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <span className="text-lg font-bold text-neutral-900">Total a Cobrar:</span>
+          {tasa ? (
+            <>
+              <span className="text-3xl font-extrabold text-neutral-900 tabular-nums">
+                Bs {money(totalUsd * tasa)}
+              </span>
+              <span className="text-base font-semibold text-emerald-600 tabular-nums">
+                ${money(totalUsd)}
+              </span>
+            </>
+          ) : (
+            <span className="text-3xl font-extrabold text-emerald-600 tabular-nums">
+              ${money(totalUsd)}
+            </span>
           )}
         </div>
         <Button onClick={onCobrar} disabled={!puedeCobrar || totalUsd <= 0 || cobrando}>

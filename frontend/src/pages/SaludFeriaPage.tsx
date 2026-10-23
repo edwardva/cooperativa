@@ -137,7 +137,7 @@ export default function SaludFeriaPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const [c, f] = await Promise.all([saludFeriaService.obtenerConfiguracion(), feriasService.obtenerUbicaciones()])
+        const [c, f] = await Promise.all([saludFeriaService.obtenerConfiguracion(), feriasService.obtenerUbicaciones('feria')])
         setConfig(c.data)
         setAnio(c.data.periodo_actual.anio)
         setNumero(c.data.periodo_actual.numero)

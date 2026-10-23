@@ -20,6 +20,8 @@ export type ClaveReporte =
   | 'conversion-prestamos'
   | 'retiros-semana-41'
   | 'socios-suspendidos'
+  | 'saldos-ahorro'
+  | 'inasistencia-asambleas'
 
 export type Celda = string | number | null
 

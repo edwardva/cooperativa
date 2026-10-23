@@ -29,7 +29,9 @@ describe('rangoPeriodo', () => {
   it('rechaza períodos imposibles', () => {
     expect(validarPeriodo({ tipo: 'mensual', anio: 2026, numero: 13 })).toMatch(/mes/);
     expect(validarPeriodo({ tipo: 'semanal', anio: 2025, numero: 53 })).toMatch(/52 semanas/);
-    expect(validarPeriodo({ tipo: 'semanal', anio: 2026, numero: 53 })).toBeNull();
+    // La semana 53 de 2026 es la 1 de 2027 (confirmado el 23/10); 2028 sí tiene 53
+    expect(validarPeriodo({ tipo: 'semanal', anio: 2026, numero: 53 })).toMatch(/52 semanas/);
+    expect(validarPeriodo({ tipo: 'semanal', anio: 2028, numero: 53 })).toBeNull();
     expect(() => rangoPeriodo({ tipo: 'mensual', anio: 1990, numero: 1 })).toThrow();
   });
 
@@ -41,8 +43,8 @@ describe('rangoPeriodo', () => {
 describe('varios períodos en un pago', () => {
   const semana = (anio: number, numero: number) => ({ tipo: 'semanal' as const, anio, numero });
 
-  it('semanas seguidas que cruzan el año (2026 tiene 53)', () => {
-    expect(periodosDesde(semana(2026, 52), 3)).toEqual([semana(2026, 52), semana(2026, 53), semana(2027, 1)]);
+  it('semanas seguidas que cruzan el año (2026 tiene 52)', () => {
+    expect(periodosDesde(semana(2026, 52), 3)).toEqual([semana(2026, 52), semana(2027, 1), semana(2027, 2)]);
     expect(periodosDesde(semana(2025, 52), 2)).toEqual([semana(2025, 52), semana(2026, 1)]);
   });
 
@@ -56,7 +58,7 @@ describe('varios períodos en un pago', () => {
 
   it('cuenta y nombra el rango', () => {
     expect(contarPeriodos(semana(2026, 30), semana(2026, 38))).toBe(9);
-    expect(contarPeriodos(semana(2026, 53), semana(2027, 2))).toBe(3);
+    expect(contarPeriodos(semana(2026, 52), semana(2027, 2))).toBe(3);
     expect(etiquetaRango(semana(2026, 30), semana(2026, 38))).toBe('S30/2026 a S38/2026 (9 semanas)');
     expect(etiquetaRango(semana(2026, 30), semana(2026, 30))).toBe('S30/2026');
   });

@@ -25,8 +25,10 @@ import sociosRouter from './routes/socios';
 import morosidadRouter from './routes/morosidad';
 import usuariosRouter from './routes/usuarios';
 import asambleasRouter from './routes/asambleas';
+import multasRouter from './routes/multas';
 import colectaRouter from './routes/colecta';
 import prestamosRouter from './routes/prestamos';
+import cajeroDigitalRouter from './routes/cajeroDigital';
 import { iniciarSincronizacionAutomatica } from './services/tasaCambioService';
 import ahorroRouter from './routes/ahorro';
 import funerariaRouter from './routes/funeraria';
@@ -171,8 +173,12 @@ app.use('/api/ahorro', ahorroRouter);
 app.use('/api/funeraria', funerariaRouter);
 app.use('/api/salud', saludRouter);
 app.use('/api/asambleas', asambleasRouter);
+app.use('/api/multas', multasRouter);
 app.use('/api/colecta', colectaRouter);
 app.use('/api/prestamos', prestamosRouter);
+// El cajero digital: lo del socio va sin autenticar y lo de la caja con su
+// permiso, cada grupo resuelve el suyo dentro del router
+app.use('/api/cajero-digital', cajeroDigitalRouter);
 
 // ============================================
 // 404 HANDLER

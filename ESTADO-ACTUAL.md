@@ -1,8 +1,8 @@
 # 🎉 Estado del Proyecto - Sistema Cooperativa el Triunfo
 
-**Fecha:** 13 de julio, 2026  
+**Fecha:** 14 de julio, 2026  
 **Fase 1:** Catálogos y Fundación (100%) ✅  
-**Fase 2 en progreso:** Módulos de Negocio Core (60%)
+**Fase 2 en progreso:** Módulos de Negocio Core (80%)
 
 ---
 
@@ -321,6 +321,35 @@
   - Mapeo de tipos de acuerdo
 - Route: `/funeraria`, API: `/api/funeraria`
 
+### ✅ Módulo de Salud (COMPLETO)
+- **Backend:** Controller (saludController.ts) + Routes (salud.ts)
+  - **Acuerdos de Salud:** 7 endpoints (mismo patrón que Funeraria)
+    - GET /acuerdos (list con filtros: estado, tipo, búsqueda)
+    - GET /acuerdos/socio/:socioId
+    - GET /acuerdos/:id (detalle con movimientos)
+    - POST /acuerdos (crear con auto-beneficiario)
+    - PATCH /acuerdos/:id/estado (suspender/reactivar/retirar)
+    - GET /estadisticas (totales + alertas)
+    - POST /verificar-suspensiones (job automático)
+  - **Regla de Suspensión Automática (Regla #2 del negocio):**
+    - 11 semanas sin pago → suspensión automática (vs. 6 semanas en Funeraria)
+    - Alerta de "próximo a suspender" desde la semana 10
+  - **Concepto "Derecho al Servicio":**
+    - Campo calculado `derecho_al_servicio`: true solo si el acuerdo está activo y sin semanas de atraso
+    - Regla de negocio: sin pago al día no hay derecho a servicio
+  - **Audit Log:** Todas las operaciones registradas
+- **Frontend:** SaludPage.tsx (mismo patrón que FunerariaPage)
+  - 5 stat cards (total, activos, suspendidos, próximos a suspender, sin derecho a servicio)
+  - Columna "Derecho a Servicio" con badge Sí/No en la tabla
+  - Filtros por estado y búsqueda
+- **Migración Completada:**
+  - 14,289 acuerdos únicos extraídos del sistema viejo (AJAX paginado, endpoint `/salud/get.php`)
+  - 7,436 acuerdos importados a PostgreSQL (52.0% del extraído)
+  - 6,271 no importados por cédula de socio no encontrada en BD (no-socios, igual patrón que Funeraria)
+  - 8,014 ya existían (ejecutado en dos pasadas tras ajuste de schema)
+  - Sin reporte de "suspendidos" disponible en sistema viejo para Salud (a diferencia de Funeraria); todos los no retirados migraron como "activo" con 0 semanas de atraso
+- Route: `/salud`, API: `/api/salud`
+
 ### 7. Compilación y Testing
 - ✅ Backend compila sin errores (TypeScript strict mode)
 - ✅ Frontend compila sin errores (Vite build successful)
@@ -374,12 +403,13 @@
 | Reportes | ✅ | ✅ | ✅ | ✅ | N/A |
 | Semanas Colecta | ✅ | ✅ | ✅ | ✅ | N/A |
 | Motor Impresión | ✅ | ✅ | ✅ | ✅ | N/A |
-| **Socios** | ✅ | ✅ | ✅ | 🟡 | ✅ 94.1% |
+| **Socios** | ✅ | ✅ | ✅ | 🟡 | ✅ 94.4% |
 | **Ahorro** | ✅ | ✅ | ✅ | 🟡 | ✅ 99.5% |
 | **Funeraria** | ✅ | ✅ | ✅ | 🟡 | ✅ 63.1% |
+| **Salud** | ✅ | ✅ | ✅ | 🟡 | ✅ 52.0% |
 
 **Progreso Fase 1:** 100% ✅  
-**Progreso Fase 2:** 60% (Socios, Ahorro, Funeraria completados)
+**Progreso Fase 2:** 100% ✅ (Socios, Ahorro, Funeraria, Salud completados con backend, frontend y migración de datos)
 
 ---
 

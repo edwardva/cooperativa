@@ -19,6 +19,7 @@ import { BadRequestError, ConflictError, NotFoundError } from '../middleware/err
 import { registrarAuditoria } from '../services/auditoriaService';
 import { normalizarIdentificacion } from '../services/personasService';
 import { etiquetaFeria, formatearTrabajador, includeTrabajador } from '../services/trabajadoresService';
+import { verificarCupoPorCedula } from '../services/sectorFeriaService';
 import { datosPersona, personaSchema } from './personasController';
 import { bloquearTrabajador } from '../utils/bloqueos';
 import { fechaDia, hoyDia, textoDia } from '../utils/fechaDia';
@@ -83,6 +84,8 @@ const noFutura = (fecha: Date, campo: string): void => {
 const feriaActiva = async (tx: Prisma.TransactionClient, feriaId: number) => {
   const feria = await tx.ubicacion.findUnique({ where: { id: feriaId } });
   if (!feria) throw new NotFoundError('Feria no encontrada');
+  // Un sector es de socios particulares: el trabajador va siempre a una feria
+  if (feria.tipo !== 'feria') throw new BadRequestError(`${etiquetaFeria(feria)} es un sector, no una feria`);
   if (!feria.estado) throw new BadRequestError(`La feria ${etiquetaFeria(feria)} está inactiva`);
   return feria;
 };
@@ -265,6 +268,13 @@ export const crearTrabajador = async (req: Request, res: Response): Promise<void
           { trabajador_id: vigente.id }
         );
       }
+
+      // Si ya es socio de otra feria, quedaría en dos ferias
+      await verificarCupoPorCedula(tx, {
+        cedula: persona.numero_identificacion,
+        tipo: 'feria',
+        personaId: persona.id,
+      });
 
       const codigo = d.codigo_trabajador || (await siguienteCodigo(tx));
       const existeCodigo = await tx.socioTrabajador.findUnique({ where: { codigo_trabajador: codigo } });

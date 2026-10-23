@@ -2,12 +2,16 @@ import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
-import { validarCedula } from '../utils/cedula';
+import { revisarCedula } from '../utils/personas';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
 import { etiquetaFeria } from '../services/trabajadoresService';
 import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
+import { tipoEfectivo, verificarCupoPorCedula } from '../services/sectorFeriaService';
+import type { TipoUbicacion } from '@prisma/client';
+import { responderError } from '../utils/responderError';
+import { anosAdeudados, cobrarMulta, montoMultaVigente } from '../services/multasService';
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -33,7 +37,8 @@ const crearSocioSchema = z.object({
   telefono: vacioANulo(z.string().max(100).optional().nullable()),
   email: vacioANulo(z.string().email('Email inválido').max(100).optional().nullable()),
   fecha_inscripcion: z.string(),
-  ubicacion_id: z.number().int().positive().optional().nullable(),
+  // Sector si es particular, feria si viene de una feria
+  ubicacion_id: z.number({ required_error: 'Seleccione el sector o la feria' }).int().positive(),
   autorizado_nombre: vacioANulo(z.string().max(100).optional().nullable()),
   autorizado_cedula: vacioANulo(z.string().max(11).regex(/^\d*$/, 'Cédula solo debe contener números').optional().nullable()),
   notas: vacioANulo(z.string().optional().nullable()),
@@ -116,40 +121,15 @@ const actualizarBeneficiarioSchema = agregarBeneficiarioSchema.extend({
 
 const retiroSocioSchema = z.object({
   fecha_retiro: z.string().min(1, 'Fecha de retiro requerida'),
-  motivo_retiro: z.enum(['Fallecimiento', 'Renuncia', 'Pasividad']),
+  // 'Inasistencia a asambleas': motivo propio, separado de Pasividad (confirmado el 23/10)
+  motivo_retiro: z.enum(['Fallecimiento', 'Renuncia', 'Pasividad', 'Inasistencia a asambleas']),
+  /** Sólo por inasistencia: descontar del ahorro la multa que deba (por defecto sí) */
+  descontar_multa: z.boolean().optional().default(true),
 });
 
 // ============================================
 // HELPERS
 // ============================================
-
-/**
- * Valida y normaliza la cédula. Devuelve el mensaje de error si no es válida.
- * La validación es de formato/rango: confirma que el número sea plausible,
- * no que exista en el registro del CNE.
- */
-const revisarCedula = (entrada: string): { cedula: string; error: string | null } => {
-  const resultado = validarCedula(entrada);
-  return { cedula: resultado.cedula, error: resultado.valida ? null : resultado.error ?? 'Cédula inválida' };
-};
-
-/**
- * Busca expedientes ACTIVOS con la misma cédula.
- *
- * No se bloquean los retirados a propósito: reingresar a un socio retirado con
- * un expediente nuevo es una operación legítima. Dos expedientes ACTIVOS para
- * la misma persona, en cambio, son casi siempre un alta duplicada por error.
- */
-const buscarExpedientesActivosConCedula = async (cedula: string, excluirSocioId?: number) => {
-  return prisma.socio.findMany({
-    where: {
-      cedula,
-      estado: 'activo',
-      ...(excluirSocioId ? { id: { not: excluirSocioId } } : {}),
-    },
-    select: { id: true, codigo_socio: true, nombre: true, apellido: true, fecha_inscripcion: true },
-  });
-};
 
 /**
  * Convertir base64 a Buffer para almacenar en DB
@@ -246,11 +226,14 @@ const calcularEdadDesde = (fechaNacimiento: Date): number => {
  */
 export const obtenerSocios = async (req: Request, res: Response): Promise<void> => {
   try {
-    const page = parseInt(req.query.page as string, 10) || 1;
-    const limit = parseInt(req.query.limit as string, 10) || 20;
+    // Para imprimir se traen todos los del filtro, no sólo la página en pantalla
+    const paraImprimir = req.query.impresion === '1' || req.query.impresion === 'true';
+    const page = paraImprimir ? 1 : parseInt(req.query.page as string, 10) || 1;
+    const limit = paraImprimir ? 20000 : Math.min(parseInt(req.query.limit as string, 10) || 20, 500);
     const search = (req.query.search as string) || '';
     const estado = req.query.estado as string | undefined;
     const ubicacionId = req.query.ubicacion_id ? parseInt(req.query.ubicacion_id as string, 10) : undefined;
+    const soloDelegados = req.query.es_delegado === '1' || req.query.es_delegado === 'true';
 
     const skip = (page - 1) * limit;
 
@@ -272,6 +255,38 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
     // Filtro por ubicación
     if (ubicacionId) {
       where.ubicacion_id = ubicacionId;
+    }
+
+    if (soloDelegados) {
+      where.es_delegado = true;
+    }
+
+    // El listado impreso sólo lleva datos de texto: sin la foto, miles de
+    // socios caben en una respuesta liviana
+    if (paraImprimir) {
+      const socios = await prisma.socio.findMany({
+        where,
+        select: {
+          id: true,
+          codigo_socio: true,
+          cedula: true,
+          nombre: true,
+          apellido: true,
+          telefono: true,
+          fecha_inscripcion: true,
+          estado: true,
+          es_delegado: true,
+          ubicacion_id: true,
+          ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true } },
+        },
+        orderBy: [{ apellido: 'asc' }, { nombre: 'asc' }],
+      });
+      res.json({
+        success: true,
+        data: socios,
+        meta: { page: 1, limit: socios.length, total: socios.length, totalPages: 1 },
+      });
+      return;
     }
 
     // Obtener socios y conteo total
@@ -408,9 +423,47 @@ export const obtenerSocioPorId = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    // Pedido del 15/10: los beneficiarios de funeraria y los de salud no son
+    // los mismos. Confirmado el 23/10: mostrarlos clasificados por servicio y
+    // por estado del acuerdo (activo / suspendido); los retirados no van aquí.
+    const conAcuerdos = await prisma.beneficiario.findMany({
+      where: { socio_id: socioId, estado: { not: 'retirado' } },
+      orderBy: [{ apellido: 'asc' }, { nombre: 'asc' }],
+      select: {
+        id: true,
+        cedula: true,
+        nombre: true,
+        apellido: true,
+        parentesco: true,
+        acuerdos_funeraria: { where: { estado: { not: 'retirado' } }, select: { estado: true } },
+        acuerdos_salud: { where: { estado: { not: 'retirado' } }, select: { estado: true } },
+      },
+    });
+    const agrupar = (servicio: 'acuerdos_funeraria' | 'acuerdos_salud') => {
+      const lista = conAcuerdos
+        .filter((b) => b[servicio].length > 0)
+        .map((b) => ({
+          id: b.id,
+          cedula: b.cedula,
+          nombre: `${b.apellido}, ${b.nombre}`,
+          parentesco: b.parentesco,
+          // Con un acuerdo activo ya tiene el servicio
+          estado: b[servicio].some((a) => a.estado === 'activo') ? 'activo' : 'suspendido',
+        }));
+      return {
+        total: lista.length,
+        activos: lista.filter((b) => b.estado === 'activo').length,
+        suspendidos: lista.filter((b) => b.estado === 'suspendido').length,
+        lista,
+      };
+    };
+
     res.json({
       success: true,
-      data: prepararSocioParaRespuesta(socio),
+      data: {
+        ...prepararSocioParaRespuesta(socio),
+        beneficiarios_por_servicio: { funeraria: agrupar('acuerdos_funeraria'), salud: agrupar('acuerdos_salud') },
+      },
     });
   } catch (error) {
     logger.error('Error al obtener socio:', error);
@@ -537,21 +590,6 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
     }
     datos.cedula = cedula;
 
-    // Un socio activo no puede tener dos expedientes abiertos con la misma cédula
-    const expedientesActivos = await buscarExpedientesActivosConCedula(cedula);
-    if (expedientesActivos.length > 0) {
-      const listado = expedientesActivos.map((s) => s.codigo_socio).join(', ');
-      res.status(409).json({
-        success: false,
-        error: {
-          code: 'CEDULA_DUPLICADA',
-          message: `La cédula ${cedula} ya tiene expediente activo: ${listado}`,
-          details: expedientesActivos,
-        },
-      });
-      return;
-    }
-
     // Validar código de socio único
     const codigoExistente = await prisma.socio.findUnique({
       where: { codigo_socio: datos.codigo_socio },
@@ -568,22 +606,20 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    // Validar ubicación si se proporciona
-    if (datos.ubicacion_id) {
-      const ubicacion = await prisma.ubicacion.findUnique({
-        where: { id: datos.ubicacion_id },
-      });
+    // El sector del particular o la feria del socio de feria
+    const ubicacion = await prisma.ubicacion.findUnique({
+      where: { id: datos.ubicacion_id },
+    });
 
-      if (!ubicacion) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: 'UBICACION_NOT_FOUND',
-            message: 'Ubicación no encontrada',
-          },
-        });
-        return;
-      }
+    if (!ubicacion) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'UBICACION_NOT_FOUND',
+          message: 'Ubicación no encontrada',
+        },
+      });
+      return;
     }
 
     // Convertir foto de base64 a Buffer si se proporciona
@@ -593,6 +629,9 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
     // cédula y se reutiliza; si esa cédula es de alguien con otro nombre no se
     // vincula y se avisa en la respuesta
     const { socio, vinculo } = await prisma.$transaction(async (tx) => {
+      // Varios expedientes por cédula, pero uno solo en un sector y uno solo en una feria
+      await verificarCupoPorCedula(tx, { cedula, tipo: ubicacion.tipo });
+
       const creado = await tx.socio.create({
         data: {
           codigo_socio: datos.codigo_socio,
@@ -643,14 +682,7 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
       ...(advertencias.length > 0 ? { advertencias } : {}),
     });
   } catch (error) {
-    logger.error('Error al crear socio:', error);
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Error al crear socio',
-      },
-    });
+    responderError(res, error, 'Error al crear socio');
   }
 };
 
@@ -726,20 +758,6 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
           return;
         }
 
-        const expedientesActivos = await buscarExpedientesActivosConCedula(cedula, socioId);
-        if (expedientesActivos.length > 0) {
-          const listado = expedientesActivos.map((s) => s.codigo_socio).join(', ');
-          res.status(409).json({
-            success: false,
-            error: {
-              code: 'CEDULA_DUPLICADA',
-              message: `La cédula ${cedula} ya tiene expediente activo: ${listado}`,
-              details: expedientesActivos,
-            },
-          });
-          return;
-        }
-
         datos.cedula = cedula;
       } else {
         // Sin cambio real: se conserva el valor existente tal cual está guardado
@@ -780,17 +798,39 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
     }
 
     // Validar ubicación si se proporciona
+    let nuevaUbicacion: { tipo: TipoUbicacion } | null = null;
     if (datos.ubicacion_id) {
-      const ubicacion = await prisma.ubicacion.findUnique({
+      nuevaUbicacion = await prisma.ubicacion.findUnique({
         where: { id: datos.ubicacion_id },
       });
 
-      if (!ubicacion) {
+      if (!nuevaUbicacion) {
         res.status(400).json({
           success: false,
           error: {
             code: 'UBICACION_NOT_FOUND',
             message: 'Ubicación no encontrada',
+          },
+        });
+        return;
+      }
+    }
+
+    // Pasar a una feria le quita el ahorro: si tiene una cuenta abierta, primero se cierra
+    const ubicacionAnterior = socioExistente.ubicacion_id
+      ? await prisma.ubicacion.findUnique({ where: { id: socioExistente.ubicacion_id }, select: { tipo: true } })
+      : null;
+    const cambiaUbicacion = nuevaUbicacion !== null && datos.ubicacion_id !== socioExistente.ubicacion_id;
+    if (cambiaUbicacion && nuevaUbicacion!.tipo === 'feria' && tipoEfectivo(ubicacionAnterior) !== 'feria') {
+      const cuentas = await prisma.cuentaAhorro.count({ where: { socio_id: socioId, estado: true } });
+      if (cuentas > 0) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'TIENE_AHORRO',
+            message:
+              'El socio tiene cuenta de ahorro abierta y el de feria sólo tiene salud. ' +
+              'Cierre la cuenta antes de pasarlo a una feria, o déjelo en un sector.',
           },
         });
         return;
@@ -819,6 +859,18 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
     // Socio y persona en la misma transacción: los datos personales editados
     // pasan a la persona y a sus otros expedientes ahorristas
     const { socio, conflicto } = await prisma.$transaction(async (tx) => {
+      // Con otra cédula u otra ubicación puede quedar dos veces en un sector o en una feria
+      const cambiaCedula = datos.cedula !== undefined && datos.cedula !== socioExistente.cedula;
+      if (cambiaUbicacion || cambiaCedula) {
+        await verificarCupoPorCedula(tx, {
+          cedula: cambiaCedula ? datos.cedula! : socioExistente.cedula,
+          tipo: nuevaUbicacion ? nuevaUbicacion.tipo : tipoEfectivo(ubicacionAnterior),
+          // Con cédula nueva la persona vinculada deja de ser la que era
+          personaId: cambiaCedula ? null : socioExistente.persona_id,
+          excluirSocioId: socioId,
+        });
+      }
+
       const actualizado = await tx.socio.update({
         where: { id: socioId },
         data: datosActualizacion,
@@ -859,14 +911,7 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
       ...(conflicto ? { advertencias: [conflicto] } : {}),
     });
   } catch (error) {
-    logger.error('Error al actualizar socio:', error);
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Error al actualizar socio',
-      },
-    });
+    responderError(res, error, 'Error al actualizar socio');
   }
 };
 
@@ -1020,6 +1065,8 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    const porInasistencia = datos.motivo_retiro === 'Inasistencia a asambleas';
+
     const cuentasConSaldo = await prisma.cuentaAhorro.count({
       where: {
         socio_id: socioId,
@@ -1027,7 +1074,9 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
       },
     });
 
-    if (cuentasConSaldo > 0) {
+    // Por inasistencia se retira igual: se le descuenta la multa y el resto del
+    // ahorro se le devuelve después (confirmado el 23/10)
+    if (cuentasConSaldo > 0 && !porInasistencia) {
       res.status(400).json({
         success: false,
         error: {
@@ -1041,12 +1090,53 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
     const notaRetiro = `[RETIRO] Fecha: ${datos.fecha_retiro} | Motivo: ${datos.motivo_retiro} | Usuario: ${req.user!.userId}`;
     const notasActualizadas = [socio.notas?.trim(), notaRetiro].filter(Boolean).join('\n');
 
+    const multasDescontadas: { ano: number; cuenta: string }[] = [];
+    const multasPendientes: number[] = [];
+
     const socioActualizado = await prisma.$transaction(async (tx) => {
+      // La multa que deba se paga con su ahorro antes de retirarlo, si alcanza
+      if (porInasistencia && datos.descontar_multa) {
+        for (const ano of await anosAdeudados(tx, socioId)) {
+          const monto = await montoMultaVigente();
+          const cuentas = await tx.cuentaAhorro.findMany({
+            where: { socio_id: socioId, estado: true },
+            orderBy: { saldo_usd: 'desc' },
+            select: { id: true, numero_cuenta: true, saldo_usd: true, monto_bloqueado_usd: true },
+          });
+          const cuenta = cuentas.find((c) => Number(c.saldo_usd) - Number(c.monto_bloqueado_usd) >= monto);
+          if (monto > 0 && cuenta) {
+            await cobrarMulta(tx, {
+              socioId,
+              ano,
+              formaPago: 'ahorro',
+              cuentaAhorroId: cuenta.id,
+              usuarioId: req.user!.userId,
+              observacion: 'Descontada del ahorro al retirarlo por inasistencia',
+            });
+            multasDescontadas.push({ ano, cuenta: cuenta.numero_cuenta });
+          } else {
+            multasPendientes.push(ano);
+          }
+        }
+      }
+
       const socioActualizado = await tx.socio.update({
         where: { id: socioId },
         data: {
           estado: 'retirado',
           notas: notasActualizadas,
+        },
+      });
+
+      // En el historial queda el motivo: reactivarlo después depende de él
+      await tx.historialEstadoSocio.create({
+        data: {
+          socio_id: socio.id,
+          estado_anterior: socio.estado,
+          estado_nuevo: 'retirado',
+          motivo: `Retiro: ${datos.motivo_retiro} (fecha ${datos.fecha_retiro})`,
+          origen: 'manual',
+          usuario_id: req.user!.userId,
         },
       });
 
@@ -1064,19 +1154,155 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
 
     logger.info(`Socio retirado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
 
+    const advertencias = [
+      ...multasDescontadas.map((m) => `Se descontó la multa de ${m.ano} de la cuenta ${m.cuenta}.`),
+      ...(multasPendientes.length > 0
+        ? [`Queda pendiente la multa de ${multasPendientes.join(', ')}: el ahorro no alcanzó o el monto no está configurado.`]
+        : []),
+      ...(porInasistencia && cuentasConSaldo > 0 ? ['Tiene ahorro por devolver.'] : []),
+    ];
+
     res.json({
       success: true,
       data: prepararSocioParaRespuesta(socioActualizado),
+      ...(advertencias.length > 0 ? { advertencias } : {}),
     });
   } catch (error) {
-    logger.error('Error al retirar socio:', error);
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Error al retirar socio',
-      },
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: error.errors[0]?.message ?? 'Datos inválidos' },
+      });
+      return;
+    }
+    responderError(res, error, 'Error al retirar socio');
+  }
+};
+
+const reactivarRetiradoSchema = z.object({
+  motivo: z.string().trim().min(10, 'Explique por qué se reactiva (al menos 10 caracteres)').max(1000),
+});
+
+/**
+ * POST /api/socios/:id/reactivar-retirado
+ *
+ * Pedido de la cooperativa el 15/10: el socio que falta dos años seguidos a la
+ * asamblea se puede retirar, pero a veces llega con motivos y quiere seguir.
+ * Quien esté en la oficina evalúa y, si lo convence, lo reactiva. Por la
+ * seguridad de los datos lo hace sólo el administrador (`reactivar_retirado`).
+ *
+ * No se reactiva a un fallecido, y el socio vuelve a ocupar su sector o feria:
+ * si mientras tanto la cédula quedó en otro expediente del mismo tipo, se avisa.
+ */
+export const reactivarSocioRetirado = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const socioId = parseInt(String(req.params.id), 10);
+    if (isNaN(socioId)) {
+      res.status(400).json({ success: false, error: { code: 'INVALID_ID', message: 'ID inválido' } });
+      return;
+    }
+    const { motivo } = reactivarRetiradoSchema.parse(req.body);
+
+    const socio = await prisma.socio.findUnique({
+      where: { id: socioId },
+      include: { ubicacion: { select: { tipo: true } } },
     });
+    if (!socio) {
+      res.status(404).json({ success: false, error: { code: 'SOCIO_NOT_FOUND', message: 'Socio no encontrado' } });
+      return;
+    }
+    if (socio.estado !== 'retirado') {
+      res.status(400).json({
+        success: false,
+        error: { code: 'NO_RETIRADO', message: `El socio ${socio.codigo_socio} está ${socio.estado}, no retirado` },
+      });
+      return;
+    }
+
+    const ultimoRetiro = await prisma.historialEstadoSocio.findFirst({
+      where: { socio_id: socioId, estado_nuevo: 'retirado' },
+      orderBy: { fecha: 'desc' },
+      select: { motivo: true },
+    });
+    const textoRetiro = `${ultimoRetiro?.motivo ?? ''} ${socio.notas ?? ''}`;
+    if (/fallecimiento/i.test(textoRetiro)) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'FALLECIDO', message: 'El socio fue retirado por fallecimiento y no se reactiva' },
+      });
+      return;
+    }
+
+    // Confirmado el 23/10: antes de volver paga la multa del año que no asistió.
+    // Las semanas atrasadas no se exigen: se le da holgura para ponerse al día.
+    const multasPendientes = await anosAdeudados(prisma, socioId);
+    if (multasPendientes.length > 0) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'MULTA_PENDIENTE',
+          message:
+            `Antes de reactivarlo debe pagar la multa por inasistencia de ${multasPendientes.join(', ')}. ` +
+            'Se cobra en Multas.',
+        },
+      });
+      return;
+    }
+
+    const actualizado = await prisma.$transaction(async (tx) => {
+      // Vuelve a su sector o feria: no puede quedar dos veces en el mismo tipo
+      await verificarCupoPorCedula(tx, {
+        cedula: socio.cedula,
+        tipo: tipoEfectivo(socio.ubicacion),
+        personaId: socio.persona_id,
+        excluirSocioId: socio.id,
+      });
+
+      const nota = `[REACTIVADO] Fecha: ${new Date().toISOString().slice(0, 10)} | Motivo: ${motivo} | Usuario: ${req.user!.userId}`;
+      const guardado = await tx.socio.update({
+        where: { id: socioId },
+        data: {
+          estado: 'activo',
+          suspendido_desde: null,
+          suspendido_hasta: null,
+          notas: [socio.notas?.trim(), nota].filter(Boolean).join('\n'),
+        },
+      });
+
+      await tx.historialEstadoSocio.create({
+        data: {
+          socio_id: socioId,
+          estado_anterior: 'retirado',
+          estado_nuevo: 'activo',
+          motivo: `Reactivado por la oficina: ${motivo}`,
+          origen: 'manual',
+          usuario_id: req.user!.userId,
+        },
+      });
+
+      await registrarAuditoria(tx, {
+        req,
+        accion: 'reactivar_retirado',
+        modulo: 'socios',
+        registro_id: socioId,
+        antes: { estado: 'retirado', retiro: ultimoRetiro?.motivo ?? null },
+        despues: { estado: 'activo', motivo },
+      });
+
+      return guardado;
+    });
+
+    logger.info(`Socio reactivado desde retirado: ${socio.codigo_socio}`);
+    res.json({ success: true, data: prepararSocioParaRespuesta(actualizado) });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: error.errors[0]?.message ?? 'Datos inválidos' },
+      });
+      return;
+    }
+    responderError(res, error, 'Error al reactivar el socio');
   }
 };
 

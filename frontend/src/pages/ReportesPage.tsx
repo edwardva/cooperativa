@@ -22,7 +22,8 @@ import type { Ubicacion } from '../services/feriasService'
 interface Campo {
   nombre: string
   etiqueta: string
-  tipo: 'texto' | 'fecha' | 'numero' | 'select' | 'feria'
+  /** 'feria': sólo ferias (salud y trabajadores). 'ubicacion': sectores y ferias (socios) */
+  tipo: 'texto' | 'fecha' | 'numero' | 'select' | 'feria' | 'ubicacion'
   opciones?: { valor: string; texto: string }[]
   ayuda?: string
 }
@@ -126,7 +127,7 @@ const REPORTES: Definicion[] = [
           { valor: 'todos', texto: 'Todos con 6 semanas o mas' },
         ],
       },
-      { nombre: 'feria_id', etiqueta: 'Feria', tipo: 'feria' },
+      { nombre: 'feria_id', etiqueta: 'Sector o feria', tipo: 'ubicacion' },
     ],
     inicial: { nivel: '41' },
   },
@@ -152,10 +153,60 @@ const REPORTES: Definicion[] = [
   {
     clave: 'socios-suspendidos',
     titulo: 'Socios suspendidos',
-    descripcion: 'Quienes estan suspendidos hoy, desde cuando, hasta cuando y por que. Se puede filtrar por feria.',
+    descripcion: 'Quienes estan suspendidos hoy, desde cuando, hasta cuando y por que. Se puede filtrar por sector o feria.',
     icono: ListChecks,
-    campos: [{ nombre: 'feria_id', etiqueta: 'Feria', tipo: 'feria' }],
+    campos: [{ nombre: 'feria_id', etiqueta: 'Sector o feria', tipo: 'ubicacion' }],
     inicial: {},
+  },
+  {
+    clave: 'saldos-ahorro',
+    titulo: 'Saldos de ahorro',
+    descripcion: 'Cada cuenta no retirada con su saldo en Bs y en USD, por tipo de cuenta. Es el "Saldos Ahorros" del sistema anterior.',
+    icono: Wallet,
+    campos: [
+      {
+        // Mismos códigos que el sistema anterior
+        nombre: 'tipo_cuenta', etiqueta: 'Tipo de cuenta', tipo: 'select',
+        opciones: [
+          { valor: '', texto: 'Todos los tipos' },
+          { valor: '01', texto: '01 Cuenta a la vista' },
+          { valor: '02', texto: '02 Infantil' },
+          { valor: '03', texto: '03 Navideña' },
+          { valor: '04', texto: '04 Plazo fijo 60 días' },
+          { valor: '05', texto: '05 Plazo fijo 90 días' },
+          { valor: '06', texto: '06 Fideicomiso' },
+          { valor: '07', texto: '07 Multas' },
+          { valor: '08', texto: '08 Inscripción - Carnet' },
+          { valor: '09', texto: '09 Reintegro funeraria' },
+          { valor: '10', texto: '10 Reintegro salud' },
+          { valor: '11', texto: '11 Aporte CICS' },
+          { valor: '12', texto: '12 Ahorro divisas' },
+          { valor: '13', texto: '13 Fondo integrado' },
+        ],
+      },
+      { nombre: 'feria_id', etiqueta: 'Sector o feria', tipo: 'ubicacion' },
+      { nombre: 'sin_ceros', etiqueta: 'Cuentas en cero', tipo: 'select', opciones: [{ valor: '', texto: 'Incluirlas' }, { valor: 'si', texto: 'Ocultarlas' }] },
+      { nombre: 'fecha_corte', etiqueta: 'Saldos al', tipo: 'fecha', ayuda: 'Vacio: saldos de hoy' },
+    ],
+    inicial: { tipo_cuenta: '01' },
+  },
+  {
+    clave: 'inasistencia-asambleas',
+    titulo: 'Inasistencia a asambleas',
+    descripcion: 'Quienes no fueron a ninguna asamblea del año (pagan multa) o faltaron dos años seguidos (la oficina puede retirarlos). Solo informa.',
+    icono: AlertTriangle,
+    campos: [
+      { nombre: 'anio', etiqueta: 'Año', tipo: 'numero' },
+      {
+        nombre: 'modo', etiqueta: 'Ver', tipo: 'select',
+        opciones: [
+          { valor: 'multa', texto: 'Un año sin asistir: multa' },
+          { valor: 'dos_anos', texto: 'Dos años seguidos: candidatos a retiro' },
+        ],
+      },
+      { nombre: 'feria_id', etiqueta: 'Sector o feria', tipo: 'ubicacion' },
+    ],
+    inicial: { anio: String(hoy.getFullYear()), modo: 'multa' },
   },
   {
     clave: 'colectas',
@@ -294,10 +345,12 @@ export const ReportesPage = () => {
                   <select value={params[c.nombre] ?? ''} onChange={(e) => cambiar(c.nombre, e.target.value)} className={selectClass}>
                     {c.opciones!.map((o) => <option key={o.valor} value={o.valor}>{o.texto}</option>)}
                   </select>
-                ) : c.tipo === 'feria' ? (
+                ) : c.tipo === 'feria' || c.tipo === 'ubicacion' ? (
                   <select value={params[c.nombre] ?? ''} onChange={(e) => cambiar(c.nombre, e.target.value)} className={selectClass}>
                     <option value="">Todas</option>
-                    {ferias.map((f) => <option key={f.id} value={f.id}>{f.direccion?.trim() || f.nombre || f.codigo}</option>)}
+                    {ferias
+                      .filter((f) => c.tipo === 'ubicacion' || f.tipo === 'feria')
+                      .map((f) => <option key={f.id} value={f.id}>{f.direccion?.trim() || f.nombre || f.codigo}</option>)}
                   </select>
                 ) : (
                   <input

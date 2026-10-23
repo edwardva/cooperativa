@@ -8,6 +8,7 @@ import {
   actualizarSocio,
   actualizarCodigoSocial,
   retirarSocio,
+  reactivarSocioRetirado,
   traspasarSocio,
   obtenerBeneficiarios,
   agregarBeneficiario,
@@ -124,6 +125,16 @@ router.post(
   '/:id/retiro',
   authorize('socios', 'update'),
   retirarSocio
+);
+
+/**
+ * POST /api/socios/:id/reactivar-retirado
+ * Devolver a activo a un socio retirado, con motivo. Sólo el administrador.
+ */
+router.post(
+  '/:id/reactivar-retirado',
+  authorize('socios', 'reactivar_retirado'),
+  reactivarSocioRetirado
 );
 
 /**

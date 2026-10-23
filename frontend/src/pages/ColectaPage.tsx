@@ -39,7 +39,7 @@ import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import * as colectaService from '../services/colectaService'
-import { numeroDeSemana } from '../services/semanasColectaService'
+import { periodoDeFecha } from '../services/semanasColectaService'
 import type {
   AsambleaOpcion,
   Cobrable,
@@ -162,12 +162,15 @@ export default function ColectaPage() {
 
   // --- Driver del cobro: las semanas multiplican los tres servicios ---
   const [semanas, setSemanas] = useState(1)
-  const [semanaCobro, setSemanaCobro] = useState(() => numeroDeSemana(new Date()))
-  const [anoCobro, setAnoCobro] = useState(() => new Date().getFullYear())
+  // Semana y año del calendario de colecta: del 28 al 31/12/2026 ya es la 1 de 2027
+  const [semanaCobro, setSemanaCobro] = useState(() => periodoDeFecha(new Date()).semana)
+  const [anoCobro, setAnoCobro] = useState(() => periodoDeFecha(new Date()).ano)
   const [referencia, setReferencia] = useState('')
   const [adicionalAhorro, setAdicionalAhorro] = useState('0')
   const [asambleas, setAsambleas] = useState<AsambleaOpcion[]>([])
   const [asambleaId, setAsambleaId] = useState<number | ''>('')
+  // Sí o No sobre esa asamblea: el No queda como inasistencia en su historial
+  const [asistioAsamblea, setAsistioAsamblea] = useState(true)
 
   // --- Reintegros: cargo por reactivar un acuerdo suspendido ---
   const [reintegros, setReintegros] = useState<Record<string, string>>({})
@@ -186,6 +189,10 @@ export default function ColectaPage() {
 
   // --- Jornada ---
   const [resumenDia, setResumenDia] = useState<ResumenDia | null>(null)
+  // Supervisora y administración ven además lo de todas las cajas (confirmado
+  // el 23/10). Los cajeros no tienen `update` en colecta; ellos dos sí.
+  const veTodasLasCajas = hasPermission('colecta', 'update')
+  const [resumenTodas, setResumenTodas] = useState<ResumenDia | null>(null)
   const [previoCierre, setPrevioCierre] = useState<PrevioCierre | null>(null)
   const [modalCierre, setModalCierre] = useState(false)
   const [obsCierre, setObsCierre] = useState('')
@@ -193,16 +200,18 @@ export default function ColectaPage() {
 
   const cargarResumen = useCallback(async () => {
     try {
-      const [resp, previo] = await Promise.all([
+      const [resp, previo, todas] = await Promise.all([
         colectaService.listarColectas({ solo_mias: true }),
         colectaService.obtenerPrevioCierre(),
+        veTodasLasCajas ? colectaService.listarColectas({ solo_mias: false }) : Promise.resolve(null),
       ])
       if (resp.success) setResumenDia(resp.data.resumen)
       if (previo.success) setPrevioCierre(previo.data)
+      if (todas?.success) setResumenTodas(todas.data.resumen)
     } catch {
       // El resumen es informativo; su fallo no debe bloquear el cobro
     }
-  }, [])
+  }, [veTodasLasCajas])
 
   useEffect(() => {
     void cargarResumen()
@@ -260,6 +269,7 @@ export default function ColectaPage() {
     setSocio(elegido)
     setCandidatos([])
     setAsambleaId('')
+    setAsistioAsamblea(true)
     setAdicionalAhorro('0')
     setReintegros({})
     // El carrito manual queda solo para lo voluntario: abonos a prestamo
@@ -444,6 +454,7 @@ export default function ColectaPage() {
         ano_cobro: anoCobro,
         referencia: referencia || null,
         asamblea_id: asambleaId === '' ? null : Number(asambleaId),
+        asistio_asamblea: asistioAsamblea,
         // Oficina del socio y canal presencial: alimentan el cuadre por
         // oficina y el consolidado (req. 9)
         ubicacion_id: socio.ubicacion?.id ?? null,
@@ -460,6 +471,7 @@ export default function ColectaPage() {
       setReferencia('')
       setAdicionalAhorro('0')
       setAsambleaId('')
+      setAsistioAsamblea(true)
       setReintegros({})
       setObservaciones('')
       setTermino('')
@@ -570,13 +582,29 @@ export default function ColectaPage() {
             </div>
           )}
           <div className="rounded-xl border border-neutral-200 bg-white px-4 py-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-              Cobrado hoy
+            {/* Lo de este cajero, sin lo reversado: es lo mismo que cuadra en su cierre */}
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-500" title="Lo cobrado hoy por usted, sin contar lo reversado">
+              Cobrado hoy en su caja
             </p>
+            {/* Bolívares primero, como lo prefiere la cooperativa; el $ de referencia */}
             <p className="text-sm font-semibold text-neutral-900">
-              ${money(resumenDia?.total_usd ?? 0)} · {resumenDia?.cantidad ?? 0} operaciones
+              Bs {money(resumenDia?.total_bs ?? 0)}
+              <span className="ml-1.5 font-medium text-emerald-600">${money(resumenDia?.total_usd ?? 0)}</span>
+              <span className="font-normal text-neutral-500"> · {resumenDia?.cantidad ?? 0} operaciones</span>
             </p>
           </div>
+          {veTodasLasCajas && resumenTodas && (
+            <div className="rounded-xl border border-neutral-200 bg-white px-4 py-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-500" title="Lo cobrado hoy por todos los cajeros, sin contar lo reversado">
+                Hoy, todas las cajas
+              </p>
+              <p className="text-sm font-semibold text-neutral-900">
+                Bs {money(resumenTodas.total_bs)}
+                <span className="ml-1.5 font-medium text-emerald-600">${money(resumenTodas.total_usd)}</span>
+                <span className="font-normal text-neutral-500"> · {resumenTodas.cantidad} operaciones</span>
+              </p>
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => setModalCierre(true)}
@@ -665,7 +693,11 @@ export default function ColectaPage() {
           onReferencia={setReferencia}
           asambleas={asambleas}
           asambleaId={asambleaId}
-          onAsamblea={setAsambleaId}
+          onAsamblea={(id, asistio = true) => {
+            setAsambleaId(id)
+            setAsistioAsamblea(asistio)
+          }}
+          asistioAsamblea={asistioAsamblea}
           adicionalAhorro={adicionalAhorro}
           onAdicionalAhorro={setAdicionalAhorro}
           paquete={paquete}
@@ -807,9 +839,14 @@ export default function ColectaPage() {
                     </p>
                     <p className="mt-2 text-sm text-emerald-700">
                       {recibo.detalles.length} concepto(s) ·{' '}
-                      <strong>${money(Number(recibo.monto_total_usd))}</strong> ·{' '}
-                      {money(Number(recibo.monto_total_bs))} Bs
+                      <strong>Bs {money(Number(recibo.monto_total_bs))}</strong> ·{' '}
+                      ${money(Number(recibo.monto_total_usd))}
                     </p>
+                    {recibo.correo_enviado_a && (
+                      <p className="mt-1 text-xs text-emerald-700 print:hidden">
+                        Se envió el detalle al correo {recibo.correo_enviado_a}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <Button variant="outline" onClick={() => window.print()}>
@@ -848,7 +885,11 @@ export default function ColectaPage() {
                         </span>
                       )}
                       {socio.alertas.socio_retirado && (
-                        <Badge variant="error">Socio retirado</Badge>
+                        <Badge variant="error">
+                          {/inasistencia/i.test(socio.alertas.motivo_retiro ?? '')
+                            ? 'Retirado por inasistencia a la asamblea'
+                            : 'Socio retirado'}
+                        </Badge>
                       )}
                       {socio.alertas.acuerdos_suspendidos > 0 && (
                         <Badge variant="warning">

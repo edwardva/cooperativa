@@ -22,8 +22,10 @@ const TODO = ['create', 'read', 'update', 'delete'];
 export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
   admin: {
     dashboard: ['read'],
-    // 'reactivar' levanta a mano la suspensión de un socio moroso
-    socios: [...TODO, 'reactivar'],
+    // 'reactivar' levanta a mano la suspensión de un socio moroso.
+    // 'reactivar_retirado' devuelve a activo a un retirado (p. ej. por faltar
+    // dos años a la asamblea) cuando la oficina acepta sus motivos: sólo admin.
+    socios: [...TODO, 'reactivar', 'reactivar_retirado'],
     ahorro: TODO,
     funeraria: TODO,
     salud: TODO,
@@ -31,6 +33,9 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     prestamos: [...TODO, 'approve', 'reversar_anterior'],
     colecta: [...TODO, 'reversar_anterior'],
     asambleas: TODO,
+    // Multas por inasistencia: cobrar, reversar y fijar el monto. La caja 99
+    // reversa las de días anteriores
+    multas: [...TODO, 'reversar_anterior'],
     semanas_colecta: TODO,
     tipos_cuenta: TODO,
     tipos_prestamo: TODO,
@@ -54,6 +59,8 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     salud: ['create', 'read', 'update'],
     colecta: ['create', 'read', 'delete'],
     asambleas: ['create', 'read'],
+    // Cobran la multa y reversan la del día, como en la colecta
+    multas: ['create', 'read', 'delete'],
     semanas_colecta: ['read'],
     tipos_cuenta: ['read'],
     ubicaciones: ['read'],
@@ -73,6 +80,7 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     prestamos: ['read'],
     colecta: ['read'],
     asambleas: ['read'],
+    multas: ['read'],
     semanas_colecta: ['read'],
     tipos_cuenta: ['read'],
     tipos_prestamo: ['read'],
@@ -92,6 +100,7 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     prestamos: ['create', 'read', 'update'],
     colecta: ['read'],
     asambleas: ['read'],
+    multas: ['read'],
     semanas_colecta: ['read'],
     tipos_cuenta: ['read'],
     tipos_prestamo: ['read'],
@@ -109,6 +118,7 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     salud: ['create', 'read', 'update'],
     colecta: TODO,
     asambleas: ['create', 'read', 'update'],
+    multas: TODO,
     semanas_colecta: ['create', 'read', 'update'],
     tipos_cuenta: ['read'],
     ubicaciones: ['read'],
