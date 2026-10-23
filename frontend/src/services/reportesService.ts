@@ -22,6 +22,8 @@ export type ClaveReporte =
   | 'socios-suspendidos'
   | 'saldos-ahorro'
   | 'inasistencia-asambleas'
+  | 'corte-ano'
+  | 'beneficiarios-retirados'
 
 export type Celda = string | number | null
 

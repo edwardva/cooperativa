@@ -209,6 +209,30 @@ const REPORTES: Definicion[] = [
     inicial: { anio: String(hoy.getFullYear()), modo: 'multa' },
   },
   {
+    clave: 'corte-ano',
+    titulo: 'Corte de año',
+    descripcion: 'Lo cobrado en el año por servicio (con las multas) y cómo quedan los socios: cubiertos hasta fin de año, adelantados al siguiente, al día y atrasados.',
+    icono: CalendarRange,
+    campos: [{ nombre: 'anio', etiqueta: 'Año', tipo: 'numero' }],
+    inicial: { anio: String(hoy.getFullYear()) },
+  },
+  {
+    clave: 'beneficiarios-retirados',
+    titulo: 'Beneficiarios retirados',
+    descripcion: 'Beneficiarios dados de baja de funeraria o salud, con su socio, fecha y motivo del retiro.',
+    icono: ListChecks,
+    campos: [
+      {
+        nombre: 'servicio', etiqueta: 'Servicio', tipo: 'select',
+        opciones: [{ valor: '', texto: 'Funeraria y salud' }, { valor: 'funeraria', texto: 'Funeraria' }, { valor: 'salud', texto: 'Salud' }],
+      },
+      { nombre: 'desde', etiqueta: 'Retirados desde', tipo: 'fecha' },
+      { nombre: 'hasta', etiqueta: 'Retirados hasta', tipo: 'fecha' },
+      { nombre: 'feria_id', etiqueta: 'Sector o feria', tipo: 'ubicacion' },
+    ],
+    inicial: {},
+  },
+  {
     clave: 'colectas',
     titulo: 'Colectas',
     descripcion: 'Colectas por fecha, socio o semana cobrada, con totales y reversos.',
