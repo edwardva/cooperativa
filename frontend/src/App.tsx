@@ -21,6 +21,7 @@ import FunerariaPage from './pages/FunerariaPage'
 import SaludPage from './pages/SaludPage'
 import AsambleasPage from './pages/AsambleasPage'
 import MultasPage from './pages/MultasPage'
+import FondoPage from './pages/FondoPage'
 import ColectaPage from './pages/ColectaPage'
 import PrestamosPage from './pages/PrestamosPage'
 import ColectaReportesPage from './pages/ColectaReportesPage'
@@ -236,6 +237,17 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <MultasPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/fondo"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <FondoPage />
               </MainLayout>
             </ProtectedRoute>
           }

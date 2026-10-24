@@ -136,3 +136,26 @@ Datos: la tabla nueva `multas_asamblea`, en la migración `20261023010000_multas
 2. Correr `prisma/sincronizar-permisos.ts`, por los permisos nuevos `multas` y `socios:reactivar_retirado`.
 3. Cargar el monto de la multa en **Multas** (empieza en 0, "sin configurar").
 4. Cuando la tengan, cargar la cuenta de correo (duda 8).
+
+---
+
+## Respuestas del 24/10
+
+| Tema | Respuesta | Estado |
+|---|---|---|
+| Trabajadores de El Triunfo: qué no se les cobra (11) | Mañana se pregunta | ❓ |
+| Cómo se reconoce a un trabajador (12) | Por un **código** diferente, no por sector; se confirma mañana | ❓ Hace falta un ejemplo real del código. |
+| Campo Referencia (4) | Mañana se pregunta | ❓ |
+| Mensajes de texto (10) | Mañana se resuelve | ❓ |
+| Cuentas institucionales (16) | Mañana se pregunta | ❓ |
+| Coberturas viejas de 2023 (N4) | Aceptable | ✅ No se toca. |
+| Fondo de los trabajadores | Respondidas casi todas | ✅ Módulo construido; ver [FONDO-TRABAJADORES.md](FONDO-TRABAJADORES.md). Falta la tabla de porcentajes. |
+| Años de 53 semanas (N1) | "Se toma como la primera semana del próximo año, por regla 52 semanas al año" | ❓ Ver el detalle debajo de la tabla. |
+
+**N1, años de 53 semanas: por qué sigue abierta.**
+
+- Un año tiene 52 semanas y uno o dos días más. Por eso no se puede tener **siempre** 52 semanas sin que el inicio del año se vaya corriendo.
+- Hoy el sistema usa "la semana 1 es la que contiene el 1 de enero". Con eso, 2026 y 2027 tienen 52 semanas y la semana que cruza el año ya es la 1 del año nuevo, que es lo que pidieron.
+- Cada 5 o 6 años sale una semana 53 entera dentro de diciembre: la próxima es del 25 al 31/12/2028.
+- Si esa semana también se cuenta como la 1 de 2029, entonces 2029 empezaría el 25 de diciembre de 2028 y tendría 53 semanas. El problema sólo se correría un año, y así cada vez: el año del calendario de colecta se iría adelantando respecto del año real.
+- **Propuesta:** dejarlo como está. No afecta nada hasta diciembre de 2028. Si para entonces prefieren otra cosa, el cambio es de una sola función.

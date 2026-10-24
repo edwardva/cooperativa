@@ -27,7 +27,8 @@ import {
   Shield,
   HardHat,
   ScrollText,
-  Gavel
+  Gavel,
+  HandCoins
 } from 'lucide-react'
 import logo from '@/logoR.png'
 
@@ -58,6 +59,8 @@ const navigationItems: NavItem[] = [
   { name: 'Asambleas', path: '/asambleas', icon: CalendarCheck, modulo: 'asambleas' },
   // Multas por inasistencia a asamblea: se cobran aparte de la colecta
   { name: 'Multas', path: '/multas', icon: Gavel, modulo: 'multas' },
+  // Fondo común de los trabajadores de El Triunfo: ingresos y ayudas
+  { name: 'Fondo trabajadores', path: '/fondo', icon: HandCoins, modulo: 'fondo' },
   { name: 'Morosidad', path: '/morosidad', icon: AlertTriangle, modulo: 'socios' },
   { name: 'Reportes', path: '/reportes', icon: FileDown, modulo: 'reportes' },
   { name: 'Impresión', path: '/impresion', icon: Printer, modulo: 'impresion' },

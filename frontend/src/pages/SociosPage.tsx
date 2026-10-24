@@ -24,6 +24,8 @@ import { Button } from '../components/ui/Button'
 import { PrintableListado } from '../components/print/PrintableListado'
 import { SortableHeader } from '../components/ui/SortableHeader'
 import * as sociosService from '../services/sociosService'
+import * as fondoService from '../services/fondoService'
+import type { BeneficiarioFondo } from '../services/fondoService'
 import { formatearFecha, normalizarFechaParaInput } from '../utils/formatters'
 import { validarCedula } from '../utils/cedula'
 import { getErrorMessage } from '../services/api'
@@ -221,6 +223,8 @@ export const SociosPage = () => {
   const [modalRetiroAbierto, setModalRetiroAbierto] = useState(false)
   const [socioSeleccionado, setSocioSeleccionado] = useState<Socio | null>(null)
   const [socioDetalle, setSocioDetalle] = useState<Socio | null>(null)
+  // Familiares en el fondo de los trabajadores, sólo para consulta (se editan en Fondo)
+  const [familiaresFondo, setFamiliaresFondo] = useState<{ socioId: number; lista: BeneficiarioFondo[] } | null>(null)
   const [beneficiariosPorServicio, setBeneficiariosPorServicio] = useState<{
     socioId: number
     funeraria: BeneficiariosDeServicio
@@ -556,7 +560,16 @@ export const SociosPage = () => {
     setMenuAbiertoId(null)
     setSocioDetalle(socio)
     setBeneficiariosPorServicio(null)
+    setFamiliaresFondo(null)
     setModalDetalleAbierto(true)
+    if (hasPermission('fondo', 'read')) {
+      fondoService
+        .obtenerBeneficiarios(socio.id)
+        .then((lista) => setFamiliaresFondo({ socioId: socio.id, lista }))
+        .catch(() => {
+          // Sin fondo visible no se muestra la sección
+        })
+    }
     // Los beneficiarios de funeraria y de salud se cuentan aparte: el listado
     // sólo trae el total
     sociosService
@@ -1840,6 +1853,24 @@ export const SociosPage = () => {
                 </dl>
               </div>
             </div>
+
+            {familiaresFondo?.socioId === socioDetalle.id && familiaresFondo.lista.length > 0 && (
+              <div className={`mt-4 ${seccionClass}`}>
+                <p className={tituloSeccionClass}>Familiares en el fondo de trabajadores ({familiaresFondo.lista.length})</p>
+                <ul className="divide-y divide-neutral-100">
+                  {familiaresFondo.lista.map((f) => (
+                    <li key={f.id} className="flex justify-between gap-2 py-1.5 text-sm">
+                      <span className="uppercase text-neutral-800">{f.apellido}, {f.nombre}</span>
+                      <span className="text-xs text-neutral-500">
+                        {fondoService.PARENTESCOS.find((p) => p.valor === f.parentesco)?.texto}
+                        {f.cedula ? ` · C.I. ${f.cedula}` : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-neutral-500">Se agregan y modifican en Fondo trabajadores → Familiares.</p>
+              </div>
+            )}
 
             {/* Beneficiarios clasificados por servicio y estado (confirmado el 23/10) */}
             {beneficiariosPorServicio?.socioId === socioDetalle.id && (
