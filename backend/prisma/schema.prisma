@@ -108,6 +108,8 @@ model Socio {
   usuario_digital       UsuarioDigital?
   asistencias_asamblea  AsistenciaAsamblea[]
   multas_asamblea       MultaAsamblea[]
+  fondo_beneficiarios   FondoBeneficiario[]
+  fondo_movimientos     FondoMovimiento[]
   colectas              Colecta[]
   historial_estados     HistorialEstadoSocio[]
 
@@ -1337,4 +1339,100 @@ model MultaAsamblea {
   @@index([socio_id, ano])
   @@index([fecha_pago])
   @@map("multas_asamblea")
+}
+
+// ============================================
+// FONDO DE LOS TRABAJADORES DE EL TRIUNFO
+// ============================================
+
+/// Confirmado por la cooperativa el 24/10: un fondo común de todos los
+/// trabajadores. Entra lo que se consigue (ventas de pollo, queso,
+/// chucherías...) y sale como AYUDA, que no se devuelve, según el porcentaje
+/// del concepto. Se lleva en bolívares; el dólar es sólo informativo.
+enum TipoMovimientoFondo {
+  ingreso
+  egreso
+}
+
+enum ParentescoFondo {
+  padre
+  madre
+  conyuge
+  hijo
+}
+
+/// Orígenes de ingreso y tipos de gasto. En los gastos, `porcentaje` es lo que
+/// cubre el fondo (p. ej. lentes 70 %); la cooperativa lo edita.
+model FondoConcepto {
+  id         Int                 @id @default(autoincrement())
+  tipo       TipoMovimientoFondo
+  nombre     String              @db.VarChar(100)
+  porcentaje Decimal?            @db.Decimal(5, 2)
+  activo     Boolean             @default(true)
+  created_at DateTime            @default(now())
+  updated_at DateTime            @updatedAt
+
+  movimientos FondoMovimiento[]
+
+  @@unique([tipo, nombre])
+  @@map("fondo_conceptos")
+}
+
+/// Familiares del trabajador que pueden recibir ayuda: padres, cónyuge e hijos.
+/// Un mismo familiar puede estar en el fondo de dos trabajadores.
+model FondoBeneficiario {
+  id               Int             @id @default(autoincrement())
+  socio_id         Int
+  cedula           String?         @db.VarChar(11)
+  nombre           String          @db.VarChar(100)
+  apellido         String          @db.VarChar(100)
+  parentesco       ParentescoFondo
+  fecha_nacimiento DateTime?       @db.Date
+  telefono         String?         @db.VarChar(100)
+  activo           Boolean         @default(true)
+  created_at       DateTime        @default(now())
+  updated_at       DateTime        @updatedAt
+
+  socio       Socio             @relation(fields: [socio_id], references: [id])
+  movimientos FondoMovimiento[]
+
+  @@index([socio_id])
+  @@map("fondo_beneficiarios")
+}
+
+model FondoMovimiento {
+  id               Int                 @id @default(autoincrement())
+  tipo             TipoMovimientoFondo
+  fecha            DateTime            @default(now())
+  concepto_id      Int
+  descripcion      String?             @db.Text
+  /// Lo que entra al fondo o sale de él, en bolívares
+  monto_bs         Decimal             @db.Decimal(14, 2)
+  /// Referencia a la tasa del día, sólo informativo
+  monto_usd        Decimal             @db.Decimal(12, 2)
+  tasa_cambio      Decimal             @db.Decimal(12, 4)
+  // Ingresos
+  entregado_por    String?             @db.VarChar(100)
+  referencia       String?             @db.VarChar(50)
+  // Egresos: quién se lo llevó, para quién y cómo se repartió el gasto
+  socio_id         Int?
+  beneficiario_id  Int?
+  gasto_total_bs   Decimal?            @db.Decimal(14, 2)
+  porcentaje       Decimal?            @db.Decimal(5, 2)
+  a_cargo_socio_bs Decimal?            @db.Decimal(14, 2)
+  usuario_id       Int
+  reversado        Boolean             @default(false)
+  fecha_reverso    DateTime?
+  motivo_reverso   String?             @db.Text
+  reversado_por    Int?
+  created_at       DateTime            @default(now())
+
+  concepto     FondoConcepto      @relation(fields: [concepto_id], references: [id])
+  socio        Socio?             @relation(fields: [socio_id], references: [id])
+  beneficiario FondoBeneficiario? @relation(fields: [beneficiario_id], references: [id])
+
+  @@index([fecha])
+  @@index([socio_id])
+  @@index([tipo, reversado])
+  @@map("fondo_movimientos")
 }

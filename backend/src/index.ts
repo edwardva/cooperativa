@@ -26,6 +26,7 @@ import morosidadRouter from './routes/morosidad';
 import usuariosRouter from './routes/usuarios';
 import asambleasRouter from './routes/asambleas';
 import multasRouter from './routes/multas';
+import fondoRouter from './routes/fondo';
 import colectaRouter from './routes/colecta';
 import prestamosRouter from './routes/prestamos';
 import cajeroDigitalRouter from './routes/cajeroDigital';
@@ -35,6 +36,7 @@ import funerariaRouter from './routes/funeraria';
 import saludRouter from './routes/salud';
 import { iniciarJobSemanalSalud } from './jobs/saludSuspension';
 import { sembrarParametrosColecta } from './services/tarifasService';
+import { sembrarParametroFondo } from './services/fondoService';
 import { mantenerCalendario } from './services/semanasColectaService';
 import { iniciarJobCalendarioColecta } from './jobs/calendarioColecta';
 
@@ -174,6 +176,7 @@ app.use('/api/funeraria', funerariaRouter);
 app.use('/api/salud', saludRouter);
 app.use('/api/asambleas', asambleasRouter);
 app.use('/api/multas', multasRouter);
+app.use('/api/fondo', fondoRouter);
 app.use('/api/colecta', colectaRouter);
 app.use('/api/prestamos', prestamosRouter);
 // El cajero digital: lo del socio va sin autenticar y lo de la caja con su
@@ -219,6 +222,7 @@ app.listen(PORT, () => {
   // se crean con meses de antelación, así que en diciembre ya están y nadie
   // tiene que llamar al proveedor para poder seguir cobrando.
   void sembrarParametrosColecta();
+  void sembrarParametroFondo();
   void mantenerCalendario();
   iniciarJobCalendarioColecta();
 });

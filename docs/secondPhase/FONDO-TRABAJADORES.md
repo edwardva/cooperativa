@@ -1,9 +1,7 @@
 # Fondo de los trabajadores de El Triunfo: requisitos y dudas
 
 **Origen:** nota de voz de la funcional del 15/10/2026, a las 7:04 p. m.
-**Estado:** no hay nada hecho, ni en el sistema viejo ni en el nuevo.
-
-La funcional va a mandar una hoja con los lineamientos del fondo: cómo entra el dinero, cómo sale y con qué porcentajes. **No conviene empezar a construir hasta tenerla**, porque las reglas de los retiros salen de ahí.
+**Estado:** ✅ construido el 24/10, con las respuestas de la cooperativa (sección "Respuestas del 24/10"). Falta la tabla de porcentajes que mencionaron: se carga en Fondo → Conceptos y porcentajes.
 
 ---
 
@@ -109,3 +107,30 @@ Tamaño estimado: unos 2 a 3 días, una vez cerradas las dudas.
 | F10 | **Saldo inicial.** ¿Con cuánto dinero arranca el fondo en el sistema? ¿Hay que cargar el historial de las hojas? |
 | F11 | **Sistema viejo.** El sistema viejo tiene el tipo de cuenta 13, "Fondo Integrado". ¿Es este fondo o es otra cosa? |
 | F12 | **¿Quién lo opera?** ¿Lo manejan las mismas cajeras o una persona aparte? ¿Entra en el cierre de caja? |
+
+---
+
+## Respuestas del 24/10 y cómo quedó
+
+| # | Respuesta | Cómo quedó en el sistema |
+|---|---|---|
+| F2 | Fondo **común**: cualquier trabajador puede pedir | Un solo saldo: ingresos menos ayudas. |
+| F5 | Es una **ayuda**, no se devuelve | No hay cuotas ni deuda. |
+| F3/F4 | Sin topes; los porcentajes son los de su tabla | Catálogo de conceptos con su porcentaje, editable. Se arrancó con Lentes 70 %, Emergencia 100 % y Otro gasto 100 %. **Falta cargar su tabla.** |
+| F7 | Sin cuota fija: entra lo que se consigue | Conceptos de ingreso: venta de pollo, queso, chucherías, insumos médicos y otro ingreso. |
+| F8 | Lo autoriza el cajero que atiende, y queda el registro | Cada ayuda guarda trabajador, familiar, concepto, gasto total, porcentaje, lo que pone el fondo, lo que pone el trabajador, motivo y quién la registró. Historial por trabajador. |
+| F9 | Hijos sin límite de edad; un familiar puede estar con dos trabajadores | Así quedó. |
+| F6 | En bolívares, con el $ al lado sólo como referencia | Así quedó. |
+| F10 | Sin saldo de arranque | Arranca en 0. |
+| F12 | Lo debería operar el admin, pero por ahora cualquier cajero | Los cajeros pueden todo menos reversar movimientos de otro día (eso, la caja 99). |
+| F11 | Quizás la cuenta 13 "Fondo Integrado" no funcione | No se usa. Se confirma mañana. |
+| F1 | El trabajador tiene "un código diferente" | ❓ Se confirma mañana. Mientras tanto el parámetro `FONDO_SECTORES_TRABAJADORES` (01-06) sólo **avisa** si el socio no figura como trabajador; no bloquea. |
+
+**Lo que hace la pantalla (menú → Fondo trabajadores):**
+
+- **Saldo** del fondo arriba, en Bs con el $ de referencia.
+- **Movimientos:** listado por fechas y tipo, con totales, comprobante, reverso e impresión del listado.
+- **Registrar ingreso:** concepto, monto en Bs, quién lo entrega, referencia y descripción.
+- **Ayuda a un trabajador:** se busca al trabajador, se elige el concepto y para quién es (él o un familiar), se escribe el gasto total y el sistema calcula cuánto pone el fondo y cuánto el trabajador. No deja dar más de lo que hay. Muestra las ayudas que ya recibió.
+- **Familiares:** alta, edición y baja de padres, cónyuge e hijos de cada trabajador. También se ven, sólo para consulta, en la ficha del socio.
+- **Conceptos y porcentajes:** alta de conceptos, cambio de porcentaje y desactivación.

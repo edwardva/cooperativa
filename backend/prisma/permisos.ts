@@ -36,6 +36,8 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     // Multas por inasistencia: cobrar, reversar y fijar el monto. La caja 99
     // reversa las de días anteriores
     multas: [...TODO, 'reversar_anterior'],
+    // Fondo de los trabajadores: la caja 99 reversa los de días anteriores
+    fondo: [...TODO, 'reversar_anterior'],
     semanas_colecta: TODO,
     tipos_cuenta: TODO,
     tipos_prestamo: TODO,
@@ -61,6 +63,9 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     asambleas: ['create', 'read'],
     // Cobran la multa y reversan la del día, como en la colecta
     multas: ['create', 'read', 'delete'],
+    // Por ahora el fondo lo opera cualquier cajero (confirmado el 24/10):
+    // ingresos, ayudas, familiares y conceptos
+    fondo: ['create', 'read', 'update', 'delete'],
     semanas_colecta: ['read'],
     tipos_cuenta: ['read'],
     ubicaciones: ['read'],
@@ -81,6 +86,7 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     colecta: ['read'],
     asambleas: ['read'],
     multas: ['read'],
+    fondo: ['read'],
     semanas_colecta: ['read'],
     tipos_cuenta: ['read'],
     tipos_prestamo: ['read'],
@@ -101,6 +107,7 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     colecta: ['read'],
     asambleas: ['read'],
     multas: ['read'],
+    fondo: ['read'],
     semanas_colecta: ['read'],
     tipos_cuenta: ['read'],
     tipos_prestamo: ['read'],
@@ -119,6 +126,7 @@ export const PERMISOS_POR_ROL: Record<string, Record<string, string[]>> = {
     colecta: TODO,
     asambleas: ['create', 'read', 'update'],
     multas: TODO,
+    fondo: TODO,
     semanas_colecta: ['create', 'read', 'update'],
     tipos_cuenta: ['read'],
     ubicaciones: ['read'],
