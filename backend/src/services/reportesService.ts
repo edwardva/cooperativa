@@ -19,6 +19,7 @@ import { prisma } from '../lib/prisma';
 import pdfMake = require('pdfmake');
 import type { TDocumentDefinitions, TableCell, Content } from 'pdfmake/interfaces';
 import { nombreEnMayusculas } from '../utils/reportes';
+import { listarAcuerdosFunerariaParaListado } from '../utils/listadoFuneraria';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -232,53 +233,124 @@ export const generarExcelTabla = async (
  */
 
 /**
- * Reporte de Acuerdos de Funeraria Suspendidos
- * (consulta real a la base de datos, no mock)
+ * Excel con el mismo encabezado que las hojas de impresión del sistema: logo
+ * a la izquierda, nombre de la cooperativa, título del documento y la línea
+ * de datos (total y fecha de generación). Debajo, la tabla con cabecera de
+ * color y filas alternadas.
  */
-export const generarReporteFunerariaSuspendidos = async (formato: 'pdf' | 'excel') => {
-  const acuerdos = await prisma.acuerdoFuneraria.findMany({
-    where: { estado: 'suspendido' },
-    include: {
-      beneficiario: {
-        include: { socio: true },
-      },
-    },
-    orderBy: { semanas_sin_pago: 'desc' },
+export const generarExcelConLogo = async (
+  titulo: string,
+  lineaDatos: string,
+  columnas: { titulo: string; ancho: number; centrada?: boolean }[],
+  datos: (string | number)[][]
+): Promise<Buffer> => {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Cooperativa el Triunfo, R.L.';
+  workbook.created = new Date();
+
+  const sheet = workbook.addWorksheet(titulo.substring(0, 31));
+  // La columna A va ancha: ahí está el logo (horizontal) y el N°
+  sheet.columns = [{ width: 27 }, ...columnas.map((c) => ({ width: c.ancho }))];
+  const ultimaColumna = String.fromCharCode(65 + columnas.length);
+
+  const linea = (fila: number, valor: string, fuente: Partial<ExcelJS.Font>, alto: number) => {
+    sheet.mergeCells(`B${fila}`, `${ultimaColumna}${fila}`);
+    const cell = sheet.getCell(`B${fila}`);
+    cell.value = valor;
+    cell.font = fuente;
+    cell.alignment = { vertical: 'middle' };
+    sheet.getRow(fila).height = alto;
+  };
+  linea(1, 'COOPERATIVA EL TRIUNFO, R.L.', { size: 15, bold: true, color: { argb: 'FF111827' } }, 28);
+  linea(2, titulo.toUpperCase(), { size: 11, bold: true, color: { argb: 'FF047857' } }, 22);
+  linea(3, lineaDatos, { size: 9, color: { argb: 'FF6B7280' } }, 20);
+
+  if (fs.existsSync(LOGO_PATH)) {
+    // Mismas proporciones que en el listado de Salud (logo ~1193x366 px)
+    const anchoLogo = 180;
+    const altoLogo = Math.round(anchoLogo / (1193 / 366));
+    const imageId = workbook.addImage({ filename: LOGO_PATH, extension: 'png' });
+    sheet.addImage(imageId, { tl: { col: 0, row: 0 }, ext: { width: anchoLogo, height: altoLogo } });
+  }
+
+  // Línea divisoria bajo el encabezado, como en la hoja impresa
+  for (let c = 1; c <= columnas.length + 1; c++) {
+    sheet.getRow(3).getCell(c).border = { bottom: { style: 'medium', color: { argb: 'FFD1D5DB' } } };
+  }
+
+  const borde = { style: 'thin' as const, color: { argb: 'FFD1D5DB' } };
+  const filaCabecera = sheet.getRow(5);
+  ['N°', ...columnas.map((c) => c.titulo)].forEach((texto, idx) => {
+    const cell = filaCabecera.getCell(idx + 1);
+    cell.value = texto;
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF047857' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = { top: borde, left: borde, bottom: borde, right: borde };
+  });
+  filaCabecera.height = 22;
+
+  datos.forEach((fila, filaIdx) => {
+    const row = sheet.getRow(6 + filaIdx);
+    [filaIdx + 1, ...fila].forEach((valor, idx) => {
+      const cell = row.getCell(idx + 1);
+      cell.value = valor;
+      cell.border = { top: borde, left: borde, bottom: borde, right: borde };
+      cell.alignment = { vertical: 'middle', horizontal: idx === 0 || columnas[idx - 1]?.centrada ? 'center' : 'left' };
+      if (filaIdx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+    });
   });
 
-  const columnas = [
-    'Expediente',
-    'N° Acuerdo',
-    'N° Contrato',
-    'Apellidos y Nombres',
-    'Cédula',
-    'Teléfono',
-    'Semanas de Atraso',
-    'Estado',
-  ];
+  if (datos.length === 0) {
+    sheet.mergeCells(`A6`, `${ultimaColumna}6`);
+    const vacio = sheet.getCell('A6');
+    vacio.value = 'No hay registros.';
+    vacio.alignment = { horizontal: 'center' };
+    vacio.font = { italic: true, color: { argb: 'FF6B7280' } };
+  }
 
-  const datos = acuerdos.map((acuerdo) => [
-    acuerdo.beneficiario.socio?.codigo_socio || 'N/D',
-    acuerdo.numero_acuerdo || 'N/D',
-    acuerdo.numero_contrato || 'N/D',
-    nombreEnMayusculas(`${acuerdo.beneficiario.apellido} ${acuerdo.beneficiario.nombre}`),
-    acuerdo.beneficiario.cedula,
-    acuerdo.beneficiario.socio?.telefono || acuerdo.beneficiario.telefono || 'N/D',
-    acuerdo.semanas_sin_pago,
-    acuerdo.estado.toUpperCase(),
+  // Que al imprimir el Excel la cabecera se repita y quepa a lo ancho
+  sheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '5:5' };
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+};
+
+/** Columnas del reporte de suspendidos de Funeraria (igual que la vista previa) */
+export const COLUMNAS_FUNERARIA_SUSPENDIDOS = [
+  { titulo: 'N° Expediente', ancho: 14, centrada: true },
+  { titulo: 'N° Acuerdo', ancho: 14, centrada: true },
+  { titulo: 'Apellidos y Nombres', ancho: 38 },
+  { titulo: 'Cédula', ancho: 15, centrada: true },
+  { titulo: 'Teléfono', ancho: 16, centrada: true },
+  { titulo: 'Semanas de Atraso', ancho: 12, centrada: true },
+];
+
+/**
+ * Reporte de Acuerdos de Funeraria Suspendidos. Usa la misma consulta que la
+ * vista previa en pantalla (listarAcuerdosFunerariaParaListado).
+ */
+export const generarReporteFunerariaSuspendidos = async (formato: 'pdf' | 'excel') => {
+  const filas = await listarAcuerdosFunerariaParaListado('suspendido');
+  const datos = filas.map((f) => [
+    f.expediente,
+    f.numero_acuerdo,
+    nombreEnMayusculas(`${f.apellidos} ${f.nombres}`),
+    f.cedula,
+    f.telefono,
+    f.semanas_atraso,
   ]);
-
-  const opciones: ReporteOpciones = {
-    titulo: 'Reporte de Acuerdos de Funeraria Suspendidos',
-    subtitulo: `Total suspendidos: ${acuerdos.length}`,
-    fecha: new Date(),
-  };
+  const titulo = 'Reporte de Acuerdos de Funeraria Suspendidos';
+  const lineaDatos = `Total suspendidos: ${filas.length}   |   Generado: ${new Date().toLocaleString('es-VE')}   |   Documento generado por el sistema`;
 
   if (formato === 'pdf') {
-    return await generarPDFTabla(opciones, columnas, datos);
-  } else {
-    return await generarExcelTabla(opciones, columnas, datos);
+    return await generarPDFTabla(
+      { titulo, subtitulo: `Total suspendidos: ${filas.length}`, fecha: new Date() },
+      COLUMNAS_FUNERARIA_SUSPENDIDOS.map((c) => c.titulo),
+      datos
+    );
   }
+  return await generarExcelConLogo(titulo, lineaDatos, COLUMNAS_FUNERARIA_SUSPENDIDOS, datos);
 };
 
 /**

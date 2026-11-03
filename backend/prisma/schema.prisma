@@ -125,7 +125,10 @@ model Socio {
 model Beneficiario {
   id                  Int                @id @default(autoincrement())
   socio_id            Int
-  cedula              String             @unique @db.VarChar(11)
+  // Números, letras y guión (menores: "12345678-1"); 20 como personas.numero_identificacion.
+  // Única por expediente, no global: una misma persona puede tener varios
+  // expedientes (socios con la misma cédula) y cada uno lleva su fila "titular".
+  cedula              String             @db.VarChar(20)
   nombre              String             @db.VarChar(100)
   apellido            String             @db.VarChar(100)
   fecha_nacimiento    DateTime?          @db.Date
@@ -134,16 +137,28 @@ model Beneficiario {
   telefono            String?            @db.VarChar(100)
   estado              EstadoBeneficiario @default(activo)
   fecha_fallecimiento DateTime?          @db.Date
+  // Acuerdo de funeraria en el que figura (máx. 8 activos por acuerdo). Un socio
+  // puede tener varios acuerdos de funeraria, cada uno con sus beneficiarios.
+  // Nulo = no está en funeraria (p. ej. solo en Salud).
+  acuerdo_funeraria_id Int?
+  // Retiro del acuerdo de funeraria. Es propio de funeraria: no cambia `estado`
+  // (que Salud muestra como estado de la persona) y Salud lleva su propio retiro
+  // en AcuerdoSalud. Cada módulo retira solo a los suyos.
+  fecha_retiro_funeraria DateTime?       @db.Date
   created_at          DateTime           @default(now())
   updated_at          DateTime           @updatedAt
 
   // Relaciones
   socio              Socio              @relation(fields: [socio_id], references: [id], onDelete: Cascade)
-  acuerdos_funeraria AcuerdoFuneraria[]
+  // Acuerdos de funeraria a nombre de esta persona (en la práctica, la fila "titular")
+  acuerdos_funeraria AcuerdoFuneraria[] @relation("TitularAcuerdoFuneraria")
+  acuerdo_funeraria  AcuerdoFuneraria?  @relation("BeneficiariosAcuerdoFuneraria", fields: [acuerdo_funeraria_id], references: [id], onDelete: SetNull)
   acuerdos_salud     AcuerdoSalud[]
 
+  @@unique([socio_id, cedula])
   @@index([socio_id])
   @@index([cedula])
+  @@index([acuerdo_funeraria_id])
   @@map("beneficiarios")
 }
 
@@ -571,9 +586,12 @@ model AcuerdoFuneraria {
   updated_at       DateTime  @updatedAt
 
   // Relaciones
-  beneficiario Beneficiario          @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
-  tipo_acuerdo TipoAcuerdoFuneraria  @relation(fields: [tipo_acuerdo_id], references: [id])
-  movimientos  MovimientoFuneraria[]
+  beneficiario  Beneficiario          @relation("TitularAcuerdoFuneraria", fields: [beneficiario_id], references: [id], onDelete: Cascade)
+  // Ya no se elige en pantalla (funeraria no tiene tipos): se asigna solo y
+  // se conserva porque de él sale el monto que se cobra en las colectas
+  tipo_acuerdo  TipoAcuerdoFuneraria  @relation(fields: [tipo_acuerdo_id], references: [id])
+  movimientos   MovimientoFuneraria[]
+  beneficiarios Beneficiario[]        @relation("BeneficiariosAcuerdoFuneraria")
 
   @@index([beneficiario_id])
   @@index([estado])
@@ -636,6 +654,11 @@ model AcuerdoSalud {
   numero_acuerdo  String?        @db.VarChar(20) // Compartido por hasta 9 personas (titular + 8 beneficiarios)
   numero_contrato String?        @db.VarChar(20)
   estado          EstadoServicio @default(activo)
+  // Parentesco con el titular EN ESTE acuerdo, solo cuando la persona es de
+  // otro expediente (p. ej. un socio que es beneficiario de otro socio): su
+  // fila de Beneficiario dice "titular" porque es titular de lo suyo. Null =
+  // vale el parentesco de la persona. La fila titular del acuerdo siempre es null.
+  parentesco      String?        @db.VarChar(30)
 
   // Cobertura pagada: ver la nota en AcuerdoFuneraria
   ano_pagado_hasta    Int?
