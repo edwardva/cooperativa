@@ -72,7 +72,14 @@ const detalleColectaSchema = z.object({
   servicio: z.enum(['ahorro', 'funeraria', 'salud', 'prestamo']),
   /** Id de la cuenta de ahorro o del acuerdo, según el servicio */
   referencia_id: z.number().int().positive(),
-  monto_usd: z.number().positive('El monto debe ser mayor a cero'),
+  monto_usd: z.number().min(0),
+  /**
+   * Monto en bolívares, sólo para el ahorro. El ahorro adicional se escribe en
+   * Bs (`Adic:`, como en el sistema actual) y se cobra tal cual: el monto en
+   * dólares sale de aquí, y no al revés, para no mover los bolívares al
+   * redondear. En los demás servicios se ignora.
+   */
+  monto_bs: z.number().min(0).optional(),
   /**
    * Cuántas semanas cubre ESTE renglón. Normalmente es el mismo valor global
    * de `semanas`, pero se admite por renglón para casos excepcionales.
@@ -88,7 +95,18 @@ const detalleColectaSchema = z.object({
   es_reintegro: z.boolean().optional().default(false),
 
   concepto: z.string().max(300).optional().nullable(),
-});
+}).refine(
+  (d) =>
+    d.monto_usd > 0 ||
+    (d.servicio === 'ahorro' && (d.monto_bs ?? 0) > 0) ||
+    // Salud se cobra una vez por grupo familiar: el resto de las personas
+    // viaja en 0 para que su cobertura avance con el mismo pago
+    (d.servicio === 'salud' && !d.es_reintegro),
+  {
+    message: 'El monto debe ser mayor a cero',
+    path: ['monto_usd'],
+  }
+);
 
 const registrarColectaSchema = z.object({
   socio_id: z.number().int().positive(),
@@ -747,10 +765,12 @@ const calcularPaqueteSchema = z.object({
   socio_id: z.coerce.number().int().positive(),
   semanas: z.coerce.number().int().min(1).max(104).default(1),
   ahorro_adicional_usd: z.coerce.number().min(0).default(0),
+  /** Lo que escribe el cajero en `Adic:`: bolívares. Si viene, manda sobre el de USD */
+  ahorro_adicional_bs: z.coerce.number().min(0).default(0),
 });
 
 /**
- * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_usd=
+ * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_bs=
  *
  * El cajero escribe cuántas semanas paga el socio y esto devuelve el importe:
  * ahorro obligatorio más cada servicio contratado, con su desglose y el total
@@ -765,7 +785,7 @@ export const calcularPaquete = async (req: Request, res: Response): Promise<void
     if (!validacion.success) {
       throw new BadRequestError('Indique el socio y la cantidad de semanas');
     }
-    const { socio_id, semanas, ahorro_adicional_usd } = validacion.data;
+    const { socio_id, semanas, ahorro_adicional_usd, ahorro_adicional_bs } = validacion.data;
 
     const [{ tasa }, tarifas, codigoCuenta] = await Promise.all([
       obtenerTasaActual(),
@@ -798,6 +818,7 @@ export const calcularPaquete = async (req: Request, res: Response): Promise<void
       tasa,
       cuentaAhorroId: cuentaAhorro?.id ?? null,
       ahorroAdicionalUsd: ahorro_adicional_usd,
+      ahorroAdicionalBs: ahorro_adicional_bs,
     });
 
     const pendientes = semanasParaPonerseAlDia(acuerdos);
@@ -889,12 +910,16 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
       await bloquearSocio(tx, datos.socio_id);
 
       let totalUsd = 0;
+      let totalBs = 0;
 
       // Se valida TODO antes de escribir nada
       const preparados = [];
       for (const detalle of datos.detalles) {
-        const montoUsd = redondear(detalle.monto_usd);
-        const montoBs = redondear(montoUsd * tasa);
+        // El ahorro puede venir en bolívares exactos (el adicional se escribe
+        // en Bs): entonces los Bs mandan y los dólares salen de ellos
+        const enBs = detalle.servicio === 'ahorro' && (detalle.monto_bs ?? 0) > 0;
+        const montoBs = enBs ? redondear(detalle.monto_bs!) : redondear(detalle.monto_usd * tasa);
+        const montoUsd = enBs ? redondear(montoBs / tasa) : redondear(detalle.monto_usd);
 
         if (detalle.servicio === 'ahorro') {
           const cuenta = await tx.cuentaAhorro.findUnique({ where: { id: detalle.referencia_id } });
@@ -933,10 +958,13 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
         }
 
         totalUsd += montoUsd;
+        totalBs += montoBs;
       }
 
       totalUsd = redondear(totalUsd);
-      const totalBs = redondear(totalUsd * tasa);
+      // Suma de los renglones: con el ahorro en Bs exactos, totalUsd * tasa
+      // ya no daría lo que se cobró
+      totalBs = redondear(totalBs);
 
       const colecta = await tx.colecta.create({
         data: {

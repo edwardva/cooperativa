@@ -28,6 +28,7 @@ import * as fondoService from '../services/fondoService'
 import type { BeneficiarioFondo } from '../services/fondoService'
 import { formatearFecha, normalizarFechaParaInput } from '../utils/formatters'
 import { validarCedula } from '../utils/cedula'
+import { valorEnMayusculas } from '../utils/mayusculas'
 import { getErrorMessage } from '../services/api'
 import * as personasService from '../services/personasService'
 import type { ResultadoIdentificacion } from '../services/personasService'
@@ -1325,7 +1326,7 @@ export const SociosPage = () => {
                     <input
                       autoFocus
                       value={formData.codigo_socio}
-                      onChange={(e) => actualizarCampo('codigo_socio', e.target.value)}
+                      onChange={(e) => actualizarCampo('codigo_socio', valorEnMayusculas(e))}
                       className={controlClass}
                     />
                   </label>
@@ -1347,7 +1348,7 @@ export const SociosPage = () => {
                     <span>Nombres *</span>
                     <input
                       value={formData.nombre}
-                      onChange={(e) => actualizarCampo('nombre', e.target.value)}
+                      onChange={(e) => actualizarCampo('nombre', valorEnMayusculas(e))}
                       className={controlClass}
                     />
                   </label>
@@ -1356,7 +1357,7 @@ export const SociosPage = () => {
                     <span>Apellidos *</span>
                     <input
                       value={formData.apellido}
-                      onChange={(e) => actualizarCampo('apellido', e.target.value)}
+                      onChange={(e) => actualizarCampo('apellido', valorEnMayusculas(e))}
                       className={controlClass}
                     />
                   </label>
@@ -1417,7 +1418,7 @@ export const SociosPage = () => {
                     <span>Direccion</span>
                     <input
                       value={formData.direccion}
-                      onChange={(e) => actualizarCampo('direccion', e.target.value)}
+                      onChange={(e) => actualizarCampo('direccion', valorEnMayusculas(e))}
                       className={controlClass}
                     />
                   </label>
@@ -1540,7 +1541,7 @@ export const SociosPage = () => {
                     <span>Persona autorizada</span>
                     <input
                       value={formData.autorizado_nombre}
-                      onChange={(e) => actualizarCampo('autorizado_nombre', e.target.value)}
+                      onChange={(e) => actualizarCampo('autorizado_nombre', valorEnMayusculas(e))}
                       className={controlClass}
                     />
                   </label>
@@ -1574,7 +1575,7 @@ export const SociosPage = () => {
                   <span>Historial / notas</span>
                   <textarea
                     value={formData.notas}
-                    onChange={(e) => actualizarCampo('notas', e.target.value)}
+                    onChange={(e) => actualizarCampo('notas', valorEnMayusculas(e))}
                     rows={4}
                     className={`${controlClass} resize-y`}
                     placeholder="Suspensiones, observaciones, acuerdos internos..."
@@ -1940,7 +1941,7 @@ export const SociosPage = () => {
             </p>
             <textarea
               value={reactivando.motivo}
-              onChange={(e) => setReactivando({ ...reactivando, motivo: e.target.value })}
+              onChange={(e) => setReactivando({ ...reactivando, motivo: valorEnMayusculas(e) })}
               rows={4}
               autoFocus
               placeholder="Ej.: no asistió en 2025 y 2026 por enfermedad, presentó informe médico"

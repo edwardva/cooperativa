@@ -17,8 +17,11 @@ import {
   actualizarAcuerdo,
   eliminarAcuerdo,
   cambiarEstado,
+  retirarBeneficiarioAcuerdo,
+  revertirFallecidoConNuevoAcuerdo,
   verificarSuspensionesAutomaticas,
 } from '../controllers/funerariaController';
+import { vistaPreviaTraspasoFuneraria, confirmarTraspasoFuneraria } from '../controllers/funerariaTraspasoController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -66,6 +69,12 @@ router.get(
 );
 
 /**
+ * GET /api/funeraria/acuerdos/listado?estado=activo|suspendido|retirado|todos
+ * Listado completo (sin paginar) para el botón "Imprimir listado"
+ */
+router.get('/acuerdos/listado', authorize('funeraria', 'read'), listarSuspendidosParaImpresion);
+
+/**
  * GET /api/funeraria/acuerdos/:id
  * Obtener detalle de un acuerdo
  */
@@ -96,6 +105,22 @@ router.delete('/acuerdos/:id', authorize('funeraria', 'delete'), eliminarAcuerdo
 router.patch('/acuerdos/:id/estado', authorize('funeraria', 'update'), cambiarEstado);
 
 /**
+ * PATCH /api/funeraria/acuerdos/:id/beneficiarios/:beneficiarioId/retirar
+ * Retirar a un beneficiario de este acuerdo de funeraria (no lo toca en Salud)
+ */
+router.patch('/acuerdos/:id/beneficiarios/:beneficiarioId/retirar', authorize('funeraria', 'update'), retirarBeneficiarioAcuerdo);
+
+/**
+ * POST /api/funeraria/beneficiarios/:beneficiarioId/revertir-con-nuevo-acuerdo
+ * Revertir un fallecido cuyo acuerdo está lleno: abre otro acuerdo del titular para él
+ */
+router.post(
+  '/beneficiarios/:beneficiarioId/revertir-con-nuevo-acuerdo',
+  authorize('funeraria', 'create'),
+  revertirFallecidoConNuevoAcuerdo
+);
+
+/**
  * POST /api/funeraria/verificar-suspensiones
  * Job para verificar y suspender automáticamente acuerdos con 6+ semanas
  * Uso: Ejecutar nocturnamente via cron/scheduler
@@ -105,5 +130,13 @@ router.post(
   authorize('funeraria', 'update'),
   verificarSuspensionesAutomaticas
 );
+
+/**
+ * GET  /api/funeraria/acuerdos/:id/traspaso?expediente=XXX  (vista previa)
+ * POST /api/funeraria/acuerdos/:id/traspaso                  (confirmar)
+ * Traspasa el acuerdo a otro socio registrado (fallecimiento, migración...)
+ */
+router.get('/acuerdos/:id/traspaso', authorize('funeraria', 'read'), vistaPreviaTraspasoFuneraria);
+router.post('/acuerdos/:id/traspaso', authorize('funeraria', 'update'), confirmarTraspasoFuneraria);
 
 export default router;

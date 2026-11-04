@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import logo from '@/logoR.png';
 import { nombreEnMayusculas } from '../../utils/formatters';
+import { EncabezadoImpresion } from './EncabezadoImpresion';
 
 export interface BeneficiarioFichaImpresion {
   numero: number;
@@ -125,23 +125,7 @@ export const PrintableFichaAcuerdo = ({
       `}</style>
 
       <div className="ficha-print-root">
-        <div className="ficha-print-no-break flex items-start justify-between gap-4 border-b-2 border-neutral-300 pb-3">
-          <div className="flex items-center gap-3">
-            <img src={logo} alt="Cooperativa el Triunfo" className="h-12 w-auto object-contain" />
-            <div>
-              <div className="text-sm font-bold uppercase tracking-wide text-neutral-900">
-                Cooperativa el Triunfo, R.L.
-              </div>
-              <div className="mt-1 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
-                Ficha de Acuerdo de {servicio === 'SALUD' ? 'Salud' : 'Funeraria'}
-              </div>
-            </div>
-          </div>
-          <div className="text-right text-[10px] text-neutral-500">
-            <div>Generado: {new Date().toLocaleString('es-VE')}</div>
-            <div>Documento generado por el sistema</div>
-          </div>
-        </div>
+        <EncabezadoImpresion titulo={`Ficha de Acuerdo de ${servicio === 'SALUD' ? 'Salud' : 'Funeraria'}`} />
 
         <div className="ficha-print-no-break mt-4">
           <div className="mb-1 text-xs font-bold uppercase tracking-wider text-neutral-500">

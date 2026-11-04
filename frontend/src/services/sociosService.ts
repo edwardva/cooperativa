@@ -70,34 +70,6 @@ export interface RetiroSocioData {
   descontar_multa?: boolean
 }
 
-// Parentescos aceptados para traspasar la titularidad de un socio: solo familiar directo
-export const PARENTESCOS_TRASPASO_DIRECTO = [
-  'Esposo',
-  'Esposa',
-  'Hijo',
-  'Hija',
-  'Padre',
-  'Madre',
-  'Hermano',
-  'Hermana',
-] as const
-
-export const EDAD_MINIMA_TRASPASO = 60
-
-export interface TraspasoSocioData {
-  nueva_cedula: string
-  nuevo_nombre: string
-  nuevo_apellido: string
-  nueva_fecha_nacimiento: string
-  parentesco: (typeof PARENTESCOS_TRASPASO_DIRECTO)[number]
-  nuevo_telefono?: string
-  nuevo_email?: string
-  nueva_direccion?: string
-  motivo: string
-  confirma_acuerdo_titular: boolean
-  confirma_problemas_medicos: boolean
-}
-
 export const PARENTESCOS_BENEFICIARIO = [
   'No tiene',
   'Esposo',
@@ -167,6 +139,10 @@ export interface Beneficiario {
   telefono: string | null
   estado: 'activo' | 'inactivo' | 'retirado' | 'fallecido'
   fecha_fallecimiento: string | null
+  /** Acuerdo de funeraria en el que figura; nulo si no está en funeraria */
+  acuerdo_funeraria_id: number | null
+  /** Retiro propio de funeraria (no cambia `estado`, que es el de la persona) */
+  fecha_retiro_funeraria: string | null
   created_at: string
   updated_at: string
 }
@@ -303,14 +279,6 @@ export const buscarSocioPorExpediente = async (codigo: string): Promise<SingleRe
 }
 
 /**
- * Traspasar la titularidad de un socio a un familiar directo
- */
-export const traspasarSocio = async (id: number, data: TraspasoSocioData): Promise<SingleResponse<Socio>> => {
-  const response = await apiClient.post(`/socios/${id}/traspaso`, data)
-  return response.data
-}
-
-/**
  * Obtener estadísticas generales de socios
  */
 export const obtenerEstadisticasSocios = async (): Promise<SingleResponse<EstadisticasSocios>> => {
@@ -345,7 +313,7 @@ export const obtenerBeneficiarios = async (
  */
 export const crearBeneficiario = async (
   socioId: number,
-  data: BeneficiarioFormData
+  data: BeneficiarioFormData & { acuerdo_funeraria_id?: number }
 ): Promise<SingleResponse<Beneficiario>> => {
   const response = await apiClient.post(`/socios/${socioId}/beneficiarios`, data)
   return response.data
