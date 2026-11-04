@@ -131,10 +131,42 @@ export interface Prestamo {
   _count?: { abonos: number; fiadores: number }
 }
 
+/**
+ * Lo que se esta cobrando de mas por los cambios de la tasa. Sale de los abonos
+ * YA cobrados, cada uno a la tasa a la que se cobro: no es una estimacion con
+ * la tasa de hoy, asi que el numero no se mueve al volver a mirarlo.
+ */
+export interface DiferencialCambiario {
+  prestamo_id: number
+  numero_prestamo: string
+  tasa_inicial: number
+  prestado_usd: number
+  prestado_bs: number
+  abonado_usd: number
+  abonado_bs: number
+  /** Lo que se habria cobrado si la tasa no hubiera cambiado */
+  abonado_a_tasa_inicial_bs: number
+  /** El monto que va sumando. Negativo si la tasa bajo */
+  diferencial_bs: number
+  diferencial_usd: number
+  variacion_tasa_pct: number
+  abonos: {
+    abono_id: number
+    fecha: string
+    monto_usd: number
+    monto_bs: number
+    tasa_cambio: number
+    equivalente_inicial_bs: number
+    diferencial_bs: number
+  }[]
+}
+
 export interface PrestamoDetalle extends Prestamo {
   fiadores: Fiador[]
   plan_pagos: CuotaPlan[]
   abonos: AbonoPrestamo[]
+  /** Null si el prestamo no se encontro al calcularlo */
+  diferencial_cambiario: DiferencialCambiario | null
   resumen: {
     cuotas_totales: number
     cuotas_pagadas: number
