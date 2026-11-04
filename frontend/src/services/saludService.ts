@@ -3,13 +3,14 @@
  * SERVICE: SALUD
  * ============================================
  * Servicio para gestión de acuerdos de salud. A diferencia de Funeraria (un
- * acuerdo por beneficiario), en Salud hasta 9 personas (titular + 8
- * beneficiarios) comparten un mismo "número de acuerdo" con una sola cuota
+ * acuerdo por beneficiario), en Salud el titular y todos sus
+ * beneficiarios (sin límite de cantidad) comparten un mismo "número de acuerdo" con una sola cuota
  * familiar; la suspensión y reactivación por falta de pago aplica a todo el
  * grupo a la vez.
  */
 
 import apiClient from './api';
+import type { ConfirmarTraspasoData, ResultadoTraspaso, VistaPreviaTraspaso } from './traspasoAcuerdo';
 
 // ============================================
 // TIPOS
@@ -67,6 +68,8 @@ export interface MiembroGrupoSalud {
   nombre: string;
   apellido: string;
   parentesco: string;
+  /** Expediente de la persona si es de otro (p. ej. es socio): en este acuerdo solo se edita su parentesco */
+  expediente_propio: string | null;
   fecha_nacimiento: string | null;
   fecha_ingreso: string | null;
   telefono: string | null;
@@ -159,9 +162,8 @@ export interface BeneficiarioGrupoInput {
 
 export interface CrearGrupoData {
   socio_id: number;
-  tipo_acuerdo_id: number;
+  // Salud tiene un solo tipo de acuerdo: el backend usa el vigente
   numero_acuerdo: string;
-  numero_contrato?: string;
   fecha_inicio?: string;
   beneficiarios: BeneficiarioGrupoInput[];
 }
@@ -195,9 +197,47 @@ export interface RegistrarPagoData {
 
 export interface ImportarFunerariaData {
   beneficiario_ids: number[];
-  tipo_acuerdo_funeraria_id: number;
-  numero_acuerdo_funeraria: string;
-  numero_contrato_funeraria?: string;
+  /** Acuerdo de funeraria del mismo titular al que se copian... */
+  acuerdo_funeraria_id?: number;
+  /** ...o el que se le crea porque no tiene ninguno vigente (beneficiario_ids puede ir vacío) */
+  acuerdo_nuevo?: { numero_acuerdo: string; fecha_inicio?: string };
+  /** Si no caben todos (máx. 8), los que sobran van a un acuerdo nuevo del titular con este número */
+  acuerdo_adicional?: { numero_acuerdo: string };
+}
+
+export interface ImportarFunerariaResultado {
+  numero_acuerdo_funeraria: string | null;
+  /** Se creó el acuerdo de funeraria (el titular no tenía uno vigente) */
+  acuerdo_creado: boolean;
+  copiados: string[];
+  ya_estaban: string[];
+  /** El titular y quien no está activo no se copian */
+  omitidos: string[];
+  /** Acuerdo creado con los que no cupieron en el elegido */
+  acuerdo_adicional: { id: number; numero_acuerdo: string; copiados: string[] } | null;
+}
+
+/** Detalle del error LIMITE_BENEFICIARIOS al importar a funeraria */
+export interface LimiteFunerariaDetalles {
+  cupos: number;
+  al_elegido: string[];
+  sobrantes: string[];
+  numero_sugerido: string;
+}
+
+export interface ImportarDesdeFunerariaData {
+  beneficiario_ids: number[];
+  /** Acuerdo de funeraria de donde vienen */
+  acuerdo_funeraria_id: number;
+}
+
+export interface ImportarDesdeFunerariaResultado {
+  numero_acuerdo_salud: string;
+  /** true si el titular no tenía acuerdo de salud y se le creó uno */
+  acuerdo_creado: boolean;
+  copiados: string[];
+  ya_estaban: string[];
+  omitidos: string[];
 }
 
 export interface SuspendidoSalud {
@@ -210,13 +250,6 @@ export interface SuspendidoSalud {
   telefono: string;
   semanas_atraso: number;
   estado: string;
-}
-
-export interface CrearAcuerdoData {
-  socio_id: number;
-  tipo_acuerdo_id: number;
-  beneficiario_id?: number;
-  fecha_inicio?: string;
 }
 
 interface ApiResponse<T> {
@@ -331,11 +364,6 @@ export const eliminarAcuerdo = async (id: number): Promise<ApiResponse<{ id: num
  * acuerdo. Se conserva exclusivamente para el flujo "Importar a Salud" de
  * FunerariaPage.tsx — no usar para nada más.
  */
-export const crearAcuerdo = async (data: CrearAcuerdoData): Promise<ApiResponse<unknown>> => {
-  const response = await apiClient.post<ApiResponse<unknown>>('/salud/acuerdos', data);
-  return response.data;
-};
-
 // ============================================
 // SUSPENSIÓN / REACTIVACIÓN / RETIRO
 // ============================================
@@ -353,6 +381,15 @@ export const retirarBeneficiario = async (
   data: RetirarBeneficiarioData
 ): Promise<ApiResponse<{ id: number; estado: string; fecha_retiro: string; motivo_retiro: string }>> => {
   const response = await apiClient.patch(`/salud/acuerdos/${id}/retirar`, data);
+  return response.data;
+};
+
+/** Parentesco con el titular de una persona de otro expediente, solo en este acuerdo */
+export const actualizarParentescoEnAcuerdo = async (
+  id: number,
+  parentesco: string
+): Promise<ApiResponse<{ id: number; parentesco: string }>> => {
+  const response = await apiClient.patch(`/salud/acuerdos/${id}/parentesco`, { parentesco });
   return response.data;
 };
 
@@ -375,8 +412,44 @@ export const registrarPago = async (
 export const importarGrupoAFuneraria = async (
   numeroAcuerdo: string,
   data: ImportarFunerariaData
-): Promise<ApiResponse<{ transferidos: number; numeros_acuerdo_funeraria: string[] }>> => {
+): Promise<ApiResponse<ImportarFunerariaResultado>> => {
   const response = await apiClient.post(`/salud/grupos/${encodeURIComponent(numeroAcuerdo)}/importar-funeraria`, data);
+  return response.data;
+};
+
+/** Número que se propone para el acuerdo de funeraria que se crea al importar (editable) */
+export const obtenerNumeroSugeridoFuneraria = async (socioId: number): Promise<ApiResponse<{ numero_sugerido: string }>> => {
+  const response = await apiClient.get(`/salud/socios/${socioId}/numero-sugerido-funeraria`);
+  return response.data;
+};
+
+/** "Importar a Salud" desde Funeraria: copia beneficiarios al acuerdo de salud del titular */
+export const importarDesdeFuneraria = async (
+  numeroAcuerdoSalud: string,
+  data: ImportarDesdeFunerariaData
+): Promise<ApiResponse<ImportarDesdeFunerariaResultado>> => {
+  const response = await apiClient.post(
+    `/salud/grupos/${encodeURIComponent(numeroAcuerdoSalud)}/importar-desde-funeraria`,
+    data
+  );
+  return response.data;
+};
+
+/**
+ * Igual, creando un acuerdo de salud nuevo con ese número y copiando ahí.
+ * beneficiario_ids vacío = se abre solo con el titular; abrir_otro = el titular
+ * ya tiene acuerdo de salud y se confirmó abrirle otro.
+ */
+export const importarDesdeFunerariaNuevoAcuerdo = async (
+  data: ImportarDesdeFunerariaData & { numero_acuerdo: string; fecha_inicio?: string; abrir_otro?: boolean }
+): Promise<ApiResponse<ImportarDesdeFunerariaResultado>> => {
+  const response = await apiClient.post('/salud/importar-desde-funeraria/nuevo-acuerdo', data);
+  return response.data;
+};
+
+/** Número que se propone para un acuerdo de salud nuevo del socio (editable) */
+export const obtenerNumeroSugeridoSalud = async (socioId: number): Promise<ApiResponse<{ numero_sugerido: string }>> => {
+  const response = await apiClient.get(`/salud/socios/${socioId}/numero-sugerido`);
   return response.data;
 };
 
@@ -489,5 +562,29 @@ export const imprimirFichaAcuerdo = async (
   data: FichaAcuerdoSaludData
 ): Promise<ApiResponse<{ tipo: string; formato: string; contenido: string; longitud: number }>> => {
   const response = await apiClient.post('/impresion/ficha-acuerdo-salud', data);
+  return response.data;
+};
+
+// ============================================
+// TRASPASO DEL ACUERDO A OTRO SOCIO
+// ============================================
+
+/** Vista previa: qué pasaría al traspasar el acuerdo de salud al socio de ese expediente */
+export const vistaPreviaTraspaso = async (
+  numeroAcuerdo: string,
+  expediente: string
+): Promise<ApiResponse<VistaPreviaTraspaso>> => {
+  const response = await apiClient.get(`/salud/grupos/${encodeURIComponent(numeroAcuerdo)}/traspaso`, {
+    params: { expediente },
+  });
+  return response.data;
+};
+
+/** Traspasa el acuerdo de salud (todo o nada) */
+export const confirmarTraspaso = async (
+  numeroAcuerdo: string,
+  data: ConfirmarTraspasoData
+): Promise<ApiResponse<ResultadoTraspaso>> => {
+  const response = await apiClient.post(`/salud/grupos/${encodeURIComponent(numeroAcuerdo)}/traspaso`, data);
   return response.data;
 };

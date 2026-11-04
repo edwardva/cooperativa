@@ -6,6 +6,7 @@
  */
 
 import apiClient from './api';
+import type { ConfirmarTraspasoData, ResultadoTraspaso, VistaPreviaTraspaso } from './traspasoAcuerdo';
 
 // ============================================
 // TIPOS
@@ -52,6 +53,8 @@ export interface AcuerdoDetalle {
     direccion?: string | null;
     telefono?: string | null;
     email?: string | null;
+    /** Código de programas sociales (se edita con "Sociales" o desde Socios) */
+    codigo_social?: string | null;
     estado: string;
   } | null;
   tipo_acuerdo: {
@@ -157,13 +160,11 @@ export interface MovimientoFuneraria {
   fecha_movimiento: string;
 }
 
+/** El acuerdo es siempre del socio titular; funeraria no tiene tipos ni contrato */
 export interface CrearAcuerdoData {
   socio_id: number;
-  tipo_acuerdo_id: number;
-  beneficiario_id?: number;
-  /** Se asigna después de registrarlo: puede ir vacío */
+  /** Se propone como "expediente-N"; puede ir vacío */
   numero_acuerdo?: string;
-  numero_contrato?: string;
   fecha_inicio?: string;
 }
 
@@ -222,6 +223,7 @@ export const obtenerAcuerdos = async (params?: {
 
 export interface AcuerdoFunerariaPorSocio {
   id: number;
+  numero_acuerdo: string | null;
   beneficiario: {
     id: number;
     cedula: string;
@@ -262,7 +264,22 @@ export interface AcuerdoSuspendidoListado {
   cedula: string;
   telefono: string;
   semanas_atraso: number;
+  estado: string;
+  fecha_inicio: string;
+  fecha_retiro: string | null;
 }
+
+export type EstadoListadoFuneraria = 'activo' | 'suspendido' | 'retirado' | 'todos';
+
+/**
+ * Listado completo (sin paginar) de acuerdos en ese estado, para "Imprimir listado"
+ */
+export const obtenerListadoParaImprimir = async (
+  estado: EstadoListadoFuneraria
+): Promise<ApiResponse<AcuerdoSuspendidoListado[]>> => {
+  const response = await apiClient.get('/funeraria/acuerdos/listado', { params: { estado } });
+  return response.data;
+};
 
 /**
  * Obtener el listado completo (sin paginar) de acuerdos suspendidos, para imprimir
@@ -327,6 +344,29 @@ export const eliminarAcuerdo = async (id: number): Promise<ApiResponse<{ id: num
 /**
  * Cambiar estado de un acuerdo (suspender, reactivar, retirar)
  */
+/** Retira a un beneficiario de este acuerdo de funeraria; en Salud no cambia nada */
+export const retirarBeneficiarioAcuerdo = async (
+  acuerdoId: number,
+  beneficiarioId: number
+): Promise<ApiResponse<unknown>> => {
+  const response = await apiClient.patch<ApiResponse<unknown>>(
+    `/funeraria/acuerdos/${acuerdoId}/beneficiarios/${beneficiarioId}/retirar`
+  );
+  return response.data;
+};
+
+/**
+ * Revierte un fallecido cuyo acuerdo ya tiene 8 activos: abre otro acuerdo del
+ * mismo titular para él (sin período de espera) y lo vuelve a activo
+ */
+export const revertirFallecidoConNuevoAcuerdo = async (
+  beneficiarioId: number,
+  data: { numero_acuerdo?: string }
+): Promise<ApiResponse<{ id: number; numero_acuerdo: string | null; fecha_inicio: string }>> => {
+  const response = await apiClient.post(`/funeraria/beneficiarios/${beneficiarioId}/revertir-con-nuevo-acuerdo`, data);
+  return response.data;
+};
+
 export const cambiarEstado = async (
   id: number,
   data: CambiarEstadoData
@@ -423,5 +463,27 @@ export const imprimirFichaAcuerdo = async (
   data: FichaAcuerdoFunerariaData
 ): Promise<ApiResponse<{ tipo: string; formato: string; contenido: string; longitud: number }>> => {
   const response = await apiClient.post('/impresion/ficha-acuerdo-funeraria', data);
+  return response.data;
+};
+
+// ============================================
+// TRASPASO DEL ACUERDO A OTRO SOCIO
+// ============================================
+
+/** Vista previa: qué pasaría al traspasar el acuerdo al socio de ese expediente */
+export const vistaPreviaTraspaso = async (
+  acuerdoId: number,
+  expediente: string
+): Promise<ApiResponse<VistaPreviaTraspaso>> => {
+  const response = await apiClient.get(`/funeraria/acuerdos/${acuerdoId}/traspaso`, { params: { expediente } });
+  return response.data;
+};
+
+/** Traspasa el acuerdo (todo o nada) */
+export const confirmarTraspaso = async (
+  acuerdoId: number,
+  data: ConfirmarTraspasoData
+): Promise<ApiResponse<ResultadoTraspaso>> => {
+  const response = await apiClient.post(`/funeraria/acuerdos/${acuerdoId}/traspaso`, data);
   return response.data;
 };

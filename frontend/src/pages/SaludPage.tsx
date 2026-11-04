@@ -2,8 +2,8 @@
  * ============================================
  * PAGE: SALUD
  * ============================================
- * Gestión de acuerdos de salud: hasta 9 personas (titular + 8 beneficiarios)
- * comparten un mismo número de acuerdo y una sola cuota familiar. Suspender
+ * Gestión de acuerdos de salud: el titular y todos sus beneficiarios (sin
+ * límite de cantidad) comparten un mismo número de acuerdo y una sola cuota familiar. Suspender
  * o reactivar por falta de pago aplica a todo el grupo a la vez; retirar
  * aplica a una sola persona.
  */
@@ -11,8 +11,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { PrintableFichaAcuerdo } from '../components/print/PrintableFichaAcuerdo';
+import { imprimirCuandoEsteListo } from '../components/print/EncabezadoImpresion';
 import type { PrintableFichaAcuerdoProps } from '../components/print/PrintableFichaAcuerdo';
 import { PrintableListadoGrupos } from '../components/print/PrintableListadoGrupos';
+import { ModalRevertirConNuevoAcuerdo } from '../components/funeraria/ModalRevertirConNuevoAcuerdo';
+import { ModalTraspasoAcuerdo, type AcuerdoATraspasar } from '../components/traspaso/ModalTraspasoAcuerdo';
 import { SortableHeader } from '../components/ui/SortableHeader';
 
 
@@ -38,7 +41,7 @@ import {
   UserMinus,
   Edit2,
   Trash2,
-  Skull,
+  RotateCcw,
   ArrowRight,
   ArrowLeft,
   ArrowRightLeft,
@@ -49,6 +52,7 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
 import { Badge } from '../components/ui/Badge'
+import { CruzFallecido } from '../components/ui/CruzFallecido'
 import { Modal } from '../components/ui/Modal'
 import { Alert } from '../components/ui/Alert'
 import { ActionMenu } from '../components/ui/ActionMenu'
@@ -59,15 +63,15 @@ import * as funerariaService from '../services/funerariaService'
 import * as ahorroService from '../services/ahorroService'
 import type {
   AcuerdoSalud,
-  TipoAcuerdo,
   GrupoSalud,
   MiembroGrupoSalud,
   BeneficiarioGrupoInput,
   SuspendidoSalud,
 } from '../services/saludService'
 import type { Socio } from '../services/sociosService'
-import { getErrorMessage } from '../services/api'
+import { getErrorCode, getErrorDetalles, getErrorMessage, getErrorMessageDetallado } from '../services/api'
 import { formatearFecha, calcularEdad } from '../utils/formatters'
+import { valorEnMayusculas } from '../utils/mayusculas'
 import { usePermissions } from '../store/authStore'
 
 type Tab = 'activo' | 'suspendido' | 'retirado' | 'todos'
@@ -86,8 +90,6 @@ type CambiarEstadoCandidato = {
   numero_acuerdo: string | null
   socio: { nombre_completo: string } | null
 }
-
-const MAX_BENEFICIARIOS_POR_GRUPO = 8
 
 const hoyISO = (): string => new Date().toISOString().split('T')[0] ?? ''
 
@@ -123,7 +125,7 @@ function BuscarPorNumeroInline({
       <Input
         label={label}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(valorEnMayusculas(e))}
         data-enter-propio onKeyDown={(e) => e.key === 'Enter' && onBuscar()}
         className="flex-1"
         autoFocus={autoFocus}
@@ -154,7 +156,6 @@ export default function SaludPage() {
   // DATOS Y FILTROS
   // ============================================
   const [acuerdos, setAcuerdos] = useState<AcuerdoSalud[]>([])
-  const [tiposAcuerdo, setTiposAcuerdo] = useState<TipoAcuerdo[]>([])
   const [estadisticas, setEstadisticas] = useState({
     total_acuerdos: 0,
     activos: 0,
@@ -246,10 +247,6 @@ const handleSort = (field: string) => {
 
   useEffect(() => {
     void cargarEstadisticas()
-    void (async () => {
-      const respuesta = await saludService.obtenerTiposAcuerdo()
-      if (respuesta.success) setTiposAcuerdo(respuesta.data)
-    })()
   }, [])
 
   useEffect(() => {
@@ -266,14 +263,72 @@ const handleSort = (field: string) => {
   const [wizardBuscando, setWizardBuscando] = useState(false)
   const [wizardError, setWizardError] = useState<string | null>(null)
   const [wizardSocio, setWizardSocio] = useState<Socio | null>(null)
-  const [wizardTipoAcuerdoId, setWizardTipoAcuerdoId] = useState<number | ''>('')
   const [wizardNumeroAcuerdo, setWizardNumeroAcuerdo] = useState('')
-  const [wizardNumeroContrato, setWizardNumeroContrato] = useState('')
   const [wizardFechaInicio, setWizardFechaInicio] = useState(hoyISO())
   const [wizardBeneficiarios, setWizardBeneficiarios] = useState<BeneficiarioGrupoInput[]>([])
   const [wizardBenefForm, setWizardBenefForm] = useState<BeneficiarioGrupoInput>(emptyBeneficiarioGrupoForm())
   const [wizardBenefError, setWizardBenefError] = useState<string | null>(null)
   const [wizardEnviando, setWizardEnviando] = useState(false)
+
+  // Acuerdos de salud vigentes del socio buscado: si el titular ya no estará
+  // (fallecimiento, migración...), desde aquí se traspasa a otro socio
+  const [wizardAcuerdosTitular, setWizardAcuerdosTitular] = useState<AcuerdoATraspasar[]>([])
+  const [wizardSocioEncontrado, setWizardSocioEncontrado] = useState<Socio | null>(null)
+
+  // ============================================
+  // TRASPASO DEL ACUERDO A OTRO SOCIO
+  // ============================================
+  const [traspasoAcuerdoAbierto, setTraspasoAcuerdoAbierto] = useState(false)
+  const [traspasoAcuerdoInicial, setTraspasoAcuerdoInicial] = useState<AcuerdoATraspasar | null>(null)
+  const [traspasoTitularInicial, setTraspasoTitularInicial] = useState<Socio | null>(null)
+
+  const abrirTraspasoAcuerdo = (acuerdo?: AcuerdoATraspasar, titular?: Socio | null) => {
+    setTraspasoAcuerdoInicial(acuerdo ?? null)
+    setTraspasoTitularInicial(titular ?? null)
+    setTraspasoAcuerdoAbierto(true)
+  }
+
+  const cerrarTraspasoAcuerdo = () => {
+    setTraspasoAcuerdoAbierto(false)
+    setTraspasoAcuerdoInicial(null)
+    setTraspasoTitularInicial(null)
+  }
+
+  /** En "Nuevo acuerdo", los acuerdos vigentes del socio buscado con su botón Traspaso */
+  const listaTraspasoWizard = () =>
+    puedeEscribir && wizardSocioEncontrado && wizardAcuerdosTitular.length > 0 ? (
+      <div className="space-y-2">
+        <p className="text-xs text-neutral-500">
+          {wizardSocioEncontrado.apellido}, {wizardSocioEncontrado.nombre} ya tiene acuerdo(s) de salud. ¿El titular ya
+          no estará? Traspasa su acuerdo a otro socio registrado:
+        </p>
+        {wizardAcuerdosTitular.map((a) => (
+          <div
+            key={String(a.clave)}
+            className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2"
+          >
+            <div className="text-sm">
+              <p className="font-mono font-medium text-neutral-900">{a.numero_acuerdo}</p>
+              <p className="text-xs text-neutral-500">
+                {a.estado} • desde {formatearFecha(a.fecha_inicio)}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const titular = wizardSocioEncontrado
+                cerrarWizard()
+                abrirTraspasoAcuerdo(a, titular)
+              }}
+            >
+              <ArrowRightLeft className="w-4 h-4" />
+              Traspaso
+            </Button>
+          </div>
+        ))}
+      </div>
+    ) : null
 
   const cerrarWizard = () => {
     setWizardAbierto(false)
@@ -281,23 +336,35 @@ const handleSort = (field: string) => {
     setWizardExpediente('')
     setWizardError(null)
     setWizardSocio(null)
-    setWizardTipoAcuerdoId('')
     setWizardNumeroAcuerdo('')
-    setWizardNumeroContrato('')
     setWizardFechaInicio(hoyISO())
     setWizardBeneficiarios([])
     setWizardBenefForm(emptyBeneficiarioGrupoForm())
     setWizardBenefError(null)
+    setWizardAcuerdosTitular([])
+    setWizardSocioEncontrado(null)
   }
 
   const buscarSocioWizard = async () => {
     if (!wizardExpediente.trim()) return
     setWizardBuscando(true)
     setWizardError(null)
+    setWizardAcuerdosTitular([])
+    setWizardSocioEncontrado(null)
     try {
       const respuesta = await sociosService.buscarSocioPorExpediente(wizardExpediente.trim())
       if (!respuesta.success || !respuesta.data) throw new Error('Socio no encontrado')
       const socio = respuesta.data
+
+      // Sus acuerdos vigentes (filas titulares), para ofrecer el traspaso aunque
+      // ya no tenga cuenta de ahorro (p. ej. falleció)
+      const filas = (await saludService.obtenerAcuerdosPorSocio(socio.id).catch(() => null))?.data ?? []
+      setWizardSocioEncontrado(socio)
+      setWizardAcuerdosTitular(
+        filas
+          .filter((a) => a.numero_acuerdo && a.estado !== 'retirado' && a.beneficiario.parentesco.toLowerCase() === 'titular')
+          .map((a) => ({ clave: a.numero_acuerdo!, numero_acuerdo: a.numero_acuerdo, estado: a.estado, fecha_inicio: a.fecha_inicio }))
+      )
 
       // La misma regla de negocio que valida el backend al crear el grupo
       // (el socio necesita una cuenta de ahorro activa), pero verificada acá
@@ -335,11 +402,8 @@ const handleSort = (field: string) => {
       setWizardBenefError('Completa cédula, nombre, apellido, parentesco, fecha de nacimiento y fecha de ingreso.')
       return
     }
-    if (wizardBeneficiarios.length >= MAX_BENEFICIARIOS_POR_GRUPO) {
-      setWizardBenefError('Ya agregaste el máximo de 8 beneficiarios (9 personas en total con el titular).')
-      return
-    }
-    if (wizardBeneficiarios.some((b) => b.cedula === wizardBenefForm.cedula)) {
+    // "MENOR" puede repetirse: cada menor sin cédula recibe su propio MENOR-N al guardar
+    if (wizardBenefForm.cedula !== 'MENOR' && wizardBeneficiarios.some((b) => b.cedula === wizardBenefForm.cedula)) {
       setWizardBenefError('Ya agregaste un beneficiario con esa cédula.')
       return
     }
@@ -348,14 +412,15 @@ const handleSort = (field: string) => {
     setWizardBenefError(null)
   }
 
-  const quitarBeneficiarioDeWizard = (cedula: string) => {
-    setWizardBeneficiarios((prev) => prev.filter((b) => b.cedula !== cedula))
+  // Por posición: varios menores pueden tener la misma cédula "MENOR"
+  const quitarBeneficiarioDeWizard = (indice: number) => {
+    setWizardBeneficiarios((prev) => prev.filter((_, i) => i !== indice))
   }
 
-  const wizardPaso2Valido = Boolean(wizardTipoAcuerdoId) && wizardNumeroAcuerdo.trim() !== '' && wizardFechaInicio.trim() !== ''
+  const wizardPaso2Valido = wizardNumeroAcuerdo.trim() !== '' && wizardFechaInicio.trim() !== ''
 
   const confirmarNuevoAcuerdo = async () => {
-    if (!wizardSocio || !wizardTipoAcuerdoId || !wizardNumeroAcuerdo.trim()) return
+    if (!wizardSocio || !wizardNumeroAcuerdo.trim()) return
 
     setWizardEnviando(true)
     setWizardError(null)
@@ -363,9 +428,7 @@ const handleSort = (field: string) => {
     try {
       const respuesta = await saludService.crearGrupoAcuerdo({
         socio_id: wizardSocio.id,
-        tipo_acuerdo_id: wizardTipoAcuerdoId,
         numero_acuerdo: wizardNumeroAcuerdo.trim(),
-        numero_contrato: wizardNumeroContrato.trim() || undefined,
         fecha_inicio: new Date(wizardFechaInicio).toISOString(),
         beneficiarios: wizardBeneficiarios,
       })
@@ -376,7 +439,7 @@ const handleSort = (field: string) => {
       await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
       window.alert('Acuerdo de salud creado exitosamente')
     } catch (err) {
-      setWizardError(getErrorMessage(err))
+      setWizardError(getErrorMessageDetallado(err))
     } finally {
       setWizardEnviando(false)
     }
@@ -453,10 +516,14 @@ const handleSort = (field: string) => {
   // monte PrintableListadoGrupos con los datos antes de abrir el diálogo de impresión.
   useEffect(() => {
     if (!gruposParaImprimir) return
-    window.print()
     const limpiar = () => setGruposParaImprimir(null)
     window.addEventListener('afterprint', limpiar, { once: true })
-    return () => window.removeEventListener('afterprint', limpiar)
+    let cancelado = false
+    void imprimirCuandoEsteListo(() => cancelado)
+    return () => {
+      cancelado = true
+      window.removeEventListener('afterprint', limpiar)
+    }
   }, [gruposParaImprimir])
 
   const abrirGrupo = async (numeroAcuerdo: string) => {
@@ -481,6 +548,34 @@ const handleSort = (field: string) => {
     if (respuesta.success) setGrupoActual(respuesta.data)
   }
 
+  // Modificar la fecha de inicio del acuerdo (p. ej. uno creado al importar
+  // desde Funeraria, que empieza hoy por defecto)
+  const [fechaInicioEditando, setFechaInicioEditando] = useState<string | null>(null)
+  const [fechaInicioGuardando, setFechaInicioGuardando] = useState(false)
+  const [fechaInicioError, setFechaInicioError] = useState<string | null>(null)
+
+  const abrirEditarFechaInicio = () => {
+    setFechaInicioError(null)
+    setFechaInicioEditando((grupoActual?.fecha_inicio ?? hoyISO()).slice(0, 10))
+  }
+
+  const guardarFechaInicio = async () => {
+    if (!grupoActual?.numero_acuerdo || !fechaInicioEditando) return
+    setFechaInicioGuardando(true)
+    setFechaInicioError(null)
+    try {
+      const respuesta = await saludService.actualizarGrupoAcuerdo(grupoActual.numero_acuerdo, { fecha_inicio: fechaInicioEditando })
+      if (!respuesta.success) throw new Error('No fue posible guardar la fecha')
+      setGrupoActual(respuesta.data)
+      setFechaInicioEditando(null)
+      void cargarAcuerdos()
+    } catch (err) {
+      setFechaInicioError(getErrorMessage(err))
+    } finally {
+      setFechaInicioGuardando(false)
+    }
+  }
+
   const abrirDetalle = (acuerdo: AcuerdoSalud) => {
     if (acuerdo.numero_acuerdo) {
       void abrirGrupo(acuerdo.numero_acuerdo)
@@ -492,12 +587,6 @@ const handleSort = (field: string) => {
   }
 
   const gruposBeneficiariosVisibles = grupoActual?.beneficiarios || []
-  // El tope de 9 personas (titular + 8) solo cuenta miembros vigentes; los
-  // retirados del acuerdo liberan su cupo, igual que en el backend.
-  const grupoMiembrosVigentes =
-    (grupoActual?.titular && grupoActual.titular.estado_acuerdo !== 'retirado' ? 1 : 0) +
-    gruposBeneficiariosVisibles.filter((b) => b.estado_acuerdo !== 'retirado').length
-  const grupoLimiteAlcanzado = grupoMiembrosVigentes >= MAX_BENEFICIARIOS_POR_GRUPO + 1
 
   // ============================================
   // MODAL: BENEFICIARIO (agregar / editar, dentro del grupo)
@@ -515,7 +604,17 @@ const handleSort = (field: string) => {
     setBeneficiarioModalAbierto(true)
   }
 
+  // Persona de otro expediente (p. ej. un socio que es beneficiario aquí): solo
+  // se cambia su parentesco en este acuerdo; sus datos se modifican allá
+  const beneficiarioDeOtroExpediente = Boolean(beneficiarioEditando?.expediente_propio)
+
+  // Solo beneficiarios: los datos del socio titular del acuerdo se modifican
+  // en el módulo de Socios, nunca desde aquí (el backend también lo rechaza)
   const abrirEditarBeneficiarioGrupo = (miembro: MiembroGrupoSalud) => {
+    if (miembro.acuerdo_id === grupoActual?.titular?.acuerdo_id) {
+      window.alert('Los datos del socio titular no se modifican desde Salud. Hazlo desde el módulo de Socios.')
+      return
+    }
     setBeneficiarioEditando(miembro)
     setBeneficiarioForm({
       cedula: miembro.cedula,
@@ -530,8 +629,9 @@ const handleSort = (field: string) => {
     setBeneficiarioModalAbierto(true)
   }
 
-  const beneficiarioFormularioValido =
-    beneficiarioForm.cedula.trim() !== '' &&
+  const beneficiarioFormularioValido = beneficiarioDeOtroExpediente
+    ? beneficiarioForm.parentesco.trim() !== ''
+    : beneficiarioForm.cedula.trim() !== '' &&
     beneficiarioForm.nombre.trim() !== '' &&
     beneficiarioForm.apellido.trim() !== '' &&
     beneficiarioForm.parentesco.trim() !== '' &&
@@ -549,7 +649,9 @@ const handleSort = (field: string) => {
     setBeneficiarioError(null)
 
     try {
-      if (beneficiarioEditando) {
+      if (beneficiarioEditando?.expediente_propio) {
+        await saludService.actualizarParentescoEnAcuerdo(beneficiarioEditando.acuerdo_id, beneficiarioForm.parentesco)
+      } else if (beneficiarioEditando) {
         const socioId = grupoActual.socio?.id
         if (!socioId) throw new Error('No se encontró el socio del acuerdo')
         await sociosService.actualizarBeneficiario(socioId, beneficiarioEditando.beneficiario_id, beneficiarioForm)
@@ -559,7 +661,7 @@ const handleSort = (field: string) => {
       setBeneficiarioModalAbierto(false)
       await Promise.all([recargarGrupoActual(), cargarAcuerdos(), cargarEstadisticas()])
     } catch (err) {
-      setBeneficiarioError(getErrorMessage(err))
+      setBeneficiarioError(getErrorMessageDetallado(err))
     } finally {
       setBeneficiarioEnviando(false)
     }
@@ -568,7 +670,10 @@ const handleSort = (field: string) => {
   const marcarFallecidoGrupo = async (miembro: MiembroGrupoSalud) => {
     const socioId = grupoActual?.socio?.id
     if (!socioId) return
-    const confirmado = window.confirm(`¿Marcar a ${miembro.nombre} ${miembro.apellido} como fallecido?`)
+    const confirmado = window.confirm(
+      `¿Marcar a ${miembro.nombre} ${miembro.apellido} como fallecido?\n\n` +
+        'El fallecimiento es de la persona: también quedará como fallecido en Funeraria.'
+    )
     if (!confirmado) return
 
     try {
@@ -580,6 +685,45 @@ const handleSort = (field: string) => {
     } catch (err) {
       window.alert(getErrorMessage(err))
     }
+  }
+
+  // Si su acuerdo de funeraria ya tiene los 8 activos, se ofrece abrir otro
+  // acuerdo de funeraria del mismo titular para esta persona
+  const [revertirNuevoAcuerdo, setRevertirNuevoAcuerdo] = useState<MiembroGrupoSalud | null>(null)
+
+  // Corrige un "fallecido" marcado por error. El estado es de la persona, así
+  // que se revierte también en Funeraria. En Salud el cupo depende del estado
+  // del acuerdo, pero si está en un acuerdo de funeraria lleno el backend no
+  // lo permite (para que no quede activo en uno y fallecido en otro): en ese
+  // caso se ofrece ModalRevertirConNuevoAcuerdo.
+  const revertirFallecidoGrupo = async (miembro: MiembroGrupoSalud) => {
+    const socioId = grupoActual?.socio?.id
+    if (!socioId) return
+    const confirmado = window.confirm(
+      `¿${miembro.nombre} ${miembro.apellido} fue marcado como fallecido por error?\n\n` +
+        'Volverá a estar activo y se borrará la fecha de fallecimiento, también en Funeraria.'
+    )
+    if (!confirmado) return
+
+    try {
+      await sociosService.actualizarBeneficiario(socioId, miembro.beneficiario_id, {
+        estado: 'activo',
+        fecha_fallecimiento: null,
+      })
+      await Promise.all([recargarGrupoActual(), cargarAcuerdos()])
+    } catch (err) {
+      if (getErrorCode(err) === 'LIMITE_BENEFICIARIOS') setRevertirNuevoAcuerdo(miembro)
+      else window.alert(getErrorMessage(err))
+    }
+  }
+
+  const completarRevertirNuevoAcuerdo = async (numeroAcuerdo: string | null) => {
+    const miembro = revertirNuevoAcuerdo
+    setRevertirNuevoAcuerdo(null)
+    await Promise.all([recargarGrupoActual(), cargarAcuerdos()])
+    window.alert(
+      `Se abrió el acuerdo de funeraria ${numeroAcuerdo || 'sin número'} y ${miembro?.nombre} ${miembro?.apellido} volvió a estar activo en Funeraria y en Salud.`
+    )
   }
 
   const eliminarMiembroGrupo = async (miembro: MiembroGrupoSalud) => {
@@ -897,12 +1041,35 @@ const handleSort = (field: string) => {
   const [traspasoGrupo, setTraspasoGrupo] = useState<GrupoSalud | null>(null)
   const [traspasoError, setTraspasoError] = useState<string | null>(null)
   const [traspasoSeleccionados, setTraspasoSeleccionados] = useState<number[]>([])
-  const [tiposFuneraria, setTiposFuneraria] = useState<funerariaService.TipoAcuerdo[]>([])
-  const [traspasoTipoId, setTraspasoTipoId] = useState<number | ''>('')
-  const [traspasoNumeroBase, setTraspasoNumeroBase] = useState('')
-  const [traspasoNumeroContrato, setTraspasoNumeroContrato] = useState('')
+  // Acuerdos de funeraria (sin retirar) del mismo titular; si hay más de uno se
+  // pregunta en una ventana aparte a cuál copiar
+  const [traspasoAcuerdosFuneraria, setTraspasoAcuerdosFuneraria] = useState<funerariaService.AcuerdoFunerariaPorSocio[]>([])
+  const [traspasoElegirAbierto, setTraspasoElegirAbierto] = useState(false)
+  const [traspasoAcuerdoFunerariaId, setTraspasoAcuerdoFunerariaId] = useState<number | ''>('')
   const [traspasoEnviando, setTraspasoEnviando] = useState(false)
   const [traspasoResultado, setTraspasoResultado] = useState<string | null>(null)
+  // Si no caben todos en el acuerdo elegido (máx. 8): aviso y acuerdo adicional
+  const [traspasoLimite, setTraspasoLimite] = useState<{
+    acuerdoFunerariaId: number | null
+    numeroDestino: string
+    detalles: saludService.LimiteFunerariaDetalles
+  } | null>(null)
+  const [traspasoNumeroAdicional, setTraspasoNumeroAdicional] = useState('')
+  // Titular sin acuerdo de funeraria vigente: número (editable) del que se le
+  // creará al copiar. null = sí tiene acuerdo (o aún se está consultando)
+  const [traspasoNumeroNuevo, setTraspasoNumeroNuevo] = useState<string | null>(null)
+  const traspasoCrearAcuerdo = traspasoNumeroNuevo !== null
+  const [traspasoFechaNueva, setTraspasoFechaNueva] = useState(hoyISO())
+
+  // Se pueden copiar: vivos, vigentes en este acuerdo de salud y de esta
+  // familia (un socio de otro expediente tiene su propia funeraria)
+  const seleccionableParaFuneraria = (b: MiembroGrupoSalud) =>
+    b.estado_persona === 'activo' && b.estado_acuerdo !== 'retirado' && !b.expediente_propio
+  const traspasoSeleccionables = (traspasoGrupo?.beneficiarios ?? []).filter(seleccionableParaFuneraria)
+  const traspasoTodosSeleccionados =
+    traspasoSeleccionables.length > 0 && traspasoSeleccionables.every((b) => traspasoSeleccionados.includes(b.beneficiario_id))
+  const alternarTodosTraspaso = () =>
+    setTraspasoSeleccionados(traspasoTodosSeleccionados ? [] : traspasoSeleccionables.map((b) => b.beneficiario_id))
 
   const abrirTraspasoModal = async (numeroAcuerdoPrefill?: string) => {
     setTraspasoAbierto(true)
@@ -910,19 +1077,12 @@ const handleSort = (field: string) => {
     setTraspasoGrupo(null)
     setTraspasoError(null)
     setTraspasoSeleccionados([])
-    setTraspasoTipoId('')
-    setTraspasoNumeroBase('')
-    setTraspasoNumeroContrato('')
+    setTraspasoAcuerdosFuneraria([])
+    setTraspasoAcuerdoFunerariaId('')
     setTraspasoResultado(null)
-
-    if (tiposFuneraria.length === 0) {
-      try {
-        const respuesta = await funerariaService.obtenerTiposAcuerdo()
-        if (respuesta.success) setTiposFuneraria(respuesta.data)
-      } catch {
-        // El selector quedará vacío
-      }
-    }
+    setTraspasoLimite(null)
+    setTraspasoNumeroNuevo(null)
+    setTraspasoFechaNueva(hoyISO())
 
     if (numeroAcuerdoPrefill) {
       await buscarGrupoParaTraspaso(numeroAcuerdoPrefill)
@@ -935,19 +1095,32 @@ const handleSort = (field: string) => {
     setTraspasoBuscando(true)
     setTraspasoError(null)
     setTraspasoGrupo(null)
+    setTraspasoAcuerdosFuneraria([])
+    setTraspasoAcuerdoFunerariaId('')
+    setTraspasoNumeroNuevo(null)
     try {
       const respuesta = await saludService.obtenerGrupoPorNumeroAcuerdo(numero)
       if (!respuesta.success) throw new Error('Acuerdo no encontrado')
       setTraspasoGrupo(respuesta.data)
-      const todosLosIds = [
-        ...(respuesta.data.titular ? [respuesta.data.titular.beneficiario_id] : []),
-        ...respuesta.data.beneficiarios.map((b) => b.beneficiario_id),
-      ]
-      setTraspasoSeleccionados(todosLosIds)
+      // Se eligen uno a uno o con "Seleccionar todos"; el titular ya es el dueño del acuerdo de funeraria
+      setTraspasoSeleccionados([])
       if (respuesta.data.estado === 'suspendido') {
         setTraspasoError(
-          `El acuerdo ${numero} está suspendido; reactívelo antes de traspasar personas a Funeraria.`
+          `El acuerdo ${numero} está suspendido; reactívelo antes de copiar personas a Funeraria.`
         )
+        return
+      }
+
+      // Acuerdos de funeraria del titular, buscados por su expediente
+      const socioId = respuesta.data.socio?.id
+      const acuerdos = socioId ? await funerariaService.obtenerAcuerdosPorSocio(socioId) : null
+      const vigentes = (acuerdos?.data ?? []).filter((a) => a.estado !== 'retirado')
+      setTraspasoAcuerdosFuneraria(vigentes)
+      if (vigentes.length === 1) setTraspasoAcuerdoFunerariaId(vigentes[0]!.id)
+      if (vigentes.length === 0 && socioId) {
+        // No tiene acuerdo de funeraria: se le creará uno al copiar
+        const sugerido = await saludService.obtenerNumeroSugeridoFuneraria(socioId)
+        setTraspasoNumeroNuevo(sugerido.data?.numero_sugerido ?? `${respuesta.data.socio?.codigo_socio ?? ''}-0`)
       }
     } catch (err) {
       setTraspasoError(getErrorMessage(err) || 'Acuerdo no encontrado')
@@ -962,37 +1135,103 @@ const handleSort = (field: string) => {
     )
   }
 
+  // Al crear el acuerdo de funeraria se puede copiar solo al titular (sin marcar a nadie)
   const traspasoFormularioValido =
     !!traspasoGrupo &&
     traspasoGrupo.estado !== 'suspendido' &&
-    traspasoSeleccionados.length > 0 &&
-    !!traspasoTipoId &&
-    traspasoNumeroBase.trim() !== ''
+    (traspasoCrearAcuerdo || (traspasoSeleccionados.length > 0 && traspasoAcuerdosFuneraria.length > 0))
 
-  const confirmarTraspasoFuneraria = async () => {
-    if (!traspasoGrupo?.numero_acuerdo || !traspasoFormularioValido || !traspasoTipoId) return
+  // Sin acuerdo de funeraria se crea uno; con uno solo se copia directo; con
+  // varios, primero se pregunta a cuál
+  const continuarTraspasoFuneraria = () => {
+    if (!traspasoFormularioValido) return
+    if (traspasoCrearAcuerdo) {
+      void confirmarTraspasoFuneraria(null)
+      return
+    }
+    if (traspasoAcuerdosFuneraria.length > 1) {
+      setTraspasoElegirAbierto(true)
+      return
+    }
+    void confirmarTraspasoFuneraria(traspasoAcuerdosFuneraria[0]!.id)
+  }
 
-    const confirmado = window.confirm(
-      `¿Transferir ${traspasoSeleccionados.length} persona(s) del acuerdo de salud ${traspasoGrupo.numero_acuerdo} al servicio de funeraria? Esta acción no se puede deshacer.`
-    )
-    if (!confirmado) return
+  // acuerdoFunerariaId null = el titular no tiene acuerdo de funeraria y se crea.
+  // `numeroAdicional` solo se envía después del aviso de límite: los que no
+  // caben en el acuerdo elegido van a un acuerdo nuevo del mismo titular
+  const confirmarTraspasoFuneraria = async (acuerdoFunerariaId: number | null, numeroAdicional?: string) => {
+    if (!traspasoGrupo?.numero_acuerdo || !traspasoFormularioValido) return
+    const destino = traspasoAcuerdosFuneraria.find((a) => a.id === acuerdoFunerariaId)
+    const numeroNuevo = (traspasoNumeroNuevo ?? '').trim()
+    if (acuerdoFunerariaId === null && !numeroNuevo) {
+      setTraspasoError('Escribe el número del acuerdo de funeraria que se va a crear.')
+      return
+    }
+    if (acuerdoFunerariaId === null && !traspasoFechaNueva) {
+      setTraspasoError('Indica la fecha de inicio del acuerdo de funeraria que se va a crear.')
+      return
+    }
 
+    if (!numeroAdicional) {
+      const cantidad = traspasoSeleccionados.length
+      const confirmado = window.confirm(
+        (acuerdoFunerariaId === null
+          ? `El socio ${traspasoGrupo.socio?.codigo_socio ?? ''} no tiene acuerdo de funeraria.\n\n` +
+            `Se CREARÁ el acuerdo de funeraria ${numeroNuevo} a su nombre (inicia el ${formatearFecha(traspasoFechaNueva)})` +
+            (cantidad > 0
+              ? ` y se copiarán ahí ${cantidad} beneficiario(s) del acuerdo de salud ${traspasoGrupo.numero_acuerdo}. ¿Continuar?\n\n`
+              : ' con los datos del titular. ¿Continuar?\n\n')
+          : `¿Copiar ${cantidad} beneficiario(s) del acuerdo de salud ${traspasoGrupo.numero_acuerdo} al acuerdo de funeraria ${destino?.numero_acuerdo || 'sin número'}?\n\n`) +
+          'Solo se copian: en Salud no se borra ni cambia nada.'
+      )
+      if (!confirmado) return
+    }
+
+    setTraspasoElegirAbierto(false)
     setTraspasoEnviando(true)
     setTraspasoError(null)
     try {
       const respuesta = await saludService.importarGrupoAFuneraria(traspasoGrupo.numero_acuerdo, {
         beneficiario_ids: traspasoSeleccionados,
-        tipo_acuerdo_funeraria_id: traspasoTipoId,
-        numero_acuerdo_funeraria: traspasoNumeroBase.trim(),
-        numero_contrato_funeraria: traspasoNumeroContrato.trim() || undefined,
+        ...(acuerdoFunerariaId === null
+          ? { acuerdo_nuevo: { numero_acuerdo: numeroNuevo, fecha_inicio: traspasoFechaNueva } }
+          : { acuerdo_funeraria_id: acuerdoFunerariaId }),
+        ...(numeroAdicional ? { acuerdo_adicional: { numero_acuerdo: numeroAdicional } } : {}),
       })
-      if (!respuesta.success) throw new Error('No fue posible completar el traspaso')
+      if (!respuesta.success) throw new Error('No fue posible completar la copia')
 
+      const { copiados, ya_estaban, omitidos, numero_acuerdo_funeraria, acuerdo_adicional, acuerdo_creado } = respuesta.data
+      setTraspasoLimite(null)
       setTraspasoResultado(
-        `${respuesta.data.transferidos} persona(s) transferida(s) a Funeraria con los números: ${respuesta.data.numeros_acuerdo_funeraria.join(', ')}`
+        [
+          acuerdo_creado
+            ? `Se creó el acuerdo de funeraria ${numero_acuerdo_funeraria} a nombre del socio ${traspasoGrupo.socio?.codigo_socio ?? ''}, con sus datos como titular.`
+            : '',
+          copiados.length || !acuerdo_creado
+            ? `${copiados.length} beneficiario(s) copiado(s) al acuerdo de funeraria ${numero_acuerdo_funeraria || 'sin número'}${copiados.length ? `: ${copiados.join(', ')}` : ''}.`
+            : '',
+          acuerdo_adicional
+            ? `Se creó el acuerdo de funeraria adicional ${acuerdo_adicional.numero_acuerdo} con: ${acuerdo_adicional.copiados.join(', ')}.`
+            : '',
+          ya_estaban.length ? `Ya estaban en ese acuerdo: ${ya_estaban.join(', ')}.` : '',
+          omitidos.length ? `No se copiaron (titular o no activos): ${omitidos.join(', ')}.` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
       )
     } catch (err) {
-      setTraspasoError(getErrorMessage(err))
+      const detalles = getErrorDetalles<saludService.LimiteFunerariaDetalles>(err)
+      if (getErrorCode(err) === 'LIMITE_BENEFICIARIOS' && detalles && !numeroAdicional) {
+        setTraspasoNumeroAdicional(detalles.numero_sugerido)
+        setTraspasoLimite({ acuerdoFunerariaId, numeroDestino: destino?.numero_acuerdo || numeroNuevo || 'sin número', detalles })
+      } else {
+        // Todo o nada: se informa que no quedó nada a medias
+        setTraspasoError(
+          (acuerdoFunerariaId === null
+            ? `No se creó el acuerdo de funeraria ${numeroNuevo} ni se copió ningún dato. Motivo: `
+            : 'No se copió ningún beneficiario. Motivo: ') + getErrorMessage(err)
+        )
+      }
     } finally {
       setTraspasoEnviando(false)
     }
@@ -1135,10 +1374,14 @@ const handleSort = (field: string) => {
   // obsoleto y espera a que React monte PrintableFichaAcuerdo con los datos.
   useEffect(() => {
     if (!fichaParaImprimir) return
-    window.print()
     const limpiar = () => setFichaParaImprimir(null)
     window.addEventListener('afterprint', limpiar, { once: true })
-    return () => window.removeEventListener('afterprint', limpiar)
+    let cancelado = false
+    void imprimirCuandoEsteListo(() => cancelado)
+    return () => {
+      cancelado = true
+      window.removeEventListener('afterprint', limpiar)
+    }
   }, [fichaParaImprimir])
 
 
@@ -1174,7 +1417,7 @@ const handleSort = (field: string) => {
     switch (estado) {
       case 'fallecido':
         return (
-          <Badge variant="purple" icon={<Skull className="h-3.5 w-3.5" />}>
+          <Badge variant="purple" icon={<CruzFallecido className="h-3.5 w-3.5" />}>
             Fallecido
           </Badge>
         )
@@ -1242,7 +1485,7 @@ const handleSort = (field: string) => {
         <div>
           <h1 className="text-3xl font-bold text-neutral-900">Salud</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Acuerdos familiares de salud · Hasta 9 personas comparten un mismo número de acuerdo
+            Acuerdos familiares de salud · El titular y sus beneficiarios comparten un mismo número de acuerdo
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1254,6 +1497,12 @@ const handleSort = (field: string) => {
             <Button size="sm" onClick={() => setWizardAbierto(true)}>
               <PlusCircle className="w-4 h-4" />
               Nuevo Acuerdo
+            </Button>
+          )}
+          {puedeEscribir && (
+            <Button variant="outline" size="sm" onClick={() => abrirTraspasoAcuerdo()}>
+              <ArrowRightLeft className="w-4 h-4" />
+              Traspaso
             </Button>
           )}
           <ActionMenu
@@ -1287,7 +1536,7 @@ const handleSort = (field: string) => {
                 ? [
                     {
                       key: 'traspaso',
-                      label: 'Traspaso a Funeraria',
+                      label: 'Importar a Funeraria',
                       icon: <ArrowRightLeft className="h-4 w-4 text-primary-600" />,
                       onSelect: () => void abrirTraspasoModal(),
                     },
@@ -1464,15 +1713,7 @@ const handleSort = (field: string) => {
                 <SortableHeader
                  label="Titular"
                  field="beneficiario.nombre_completo"
-                 className={tab === 'activo' ? 'w-[30%]' : 'w-[27%]'}
-                 currentSortField={sortField}
-                 currentSortOrder={sortOrder}
-                 onSort={handleSort}
-                  />
-                <SortableHeader
-                 label="Tipo"
-                 field="tipo_acuerdo.nombre"
-                 className={tab === 'activo' ? 'w-[15%]' : 'w-[13%]'}
+                 className={tab === 'activo' ? 'w-[45%]' : 'w-[40%]'}
                  currentSortField={sortField}
                  currentSortOrder={sortOrder}
                  onSort={handleSort}
@@ -1516,7 +1757,7 @@ const handleSort = (field: string) => {
             <tbody className="bg-white divide-y divide-neutral-100">
               {loading ? (
                 <tr>
-                  <td colSpan={tab === 'activo' ? 7 : 8} className="px-6 py-12 text-center">
+                  <td colSpan={tab === 'activo' ? 6 : 7} className="px-6 py-12 text-center">
                     <div className="flex justify-center items-center gap-2 text-neutral-500">
                       <Loader2 className="w-5 h-5 animate-spin" />
                       <span>Cargando acuerdos...</span>
@@ -1525,13 +1766,13 @@ const handleSort = (field: string) => {
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={tab === 'activo' ? 7 : 8} className="px-6 py-12 text-center text-rose-600">
+                  <td colSpan={tab === 'activo' ? 6 : 7} className="px-6 py-12 text-center text-rose-600">
                     {error}
                   </td>
                 </tr>
               ) : acuerdos.length === 0 ? (
                 <tr>
-                  <td colSpan={tab === 'activo' ? 7 : 8} className="px-6 py-12 text-center text-neutral-500">
+                  <td colSpan={tab === 'activo' ? 6 : 7} className="px-6 py-12 text-center text-neutral-500">
                     No se encontraron acuerdos
                   </td>
                 </tr>
@@ -1555,9 +1796,6 @@ const handleSort = (field: string) => {
                         {acuerdo.beneficiario.nombre_completo}
                       </p>
                       <p className="truncate text-xs text-neutral-500">{acuerdo.beneficiario.cedula}</p>
-                    </td>
-                    <td className="overflow-hidden px-3 py-3">
-                      <Badge variant="info">{acuerdo.tipo_acuerdo.nombre}</Badge>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-center">
                       {acuerdo.semanas_sin_pago >= 10 ? (
@@ -1734,7 +1972,7 @@ const handleSort = (field: string) => {
             <Input
               label="Número de expediente del socio"
               value={wizardExpediente}
-              onChange={(e) => setWizardExpediente(e.target.value)}
+              onChange={(e) => setWizardExpediente(valorEnMayusculas(e))}
               placeholder="Ej: S001"
               data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocioWizard()}
               autoFocus
@@ -1744,6 +1982,7 @@ const handleSort = (field: string) => {
               <Search className="w-4 h-4" />
               Buscar Socio
             </Button>
+            {listaTraspasoWizard()}
           </div>
         )}
 
@@ -1753,42 +1992,30 @@ const handleSort = (field: string) => {
               nombre={`Titular: ${wizardSocio.apellido}, ${wizardSocio.nombre}`}
               detalle={`${wizardSocio.codigo_socio} • ${wizardSocio.cedula}`}
             />
+            {listaTraspasoWizard()}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Select
-                label="Tipo de acuerdo"
-                value={wizardTipoAcuerdoId}
-                onChange={(e) => setWizardTipoAcuerdoId(Number(e.target.value))}
-              >
-                <option value="">Selecciona un tipo...</option>
-                {tiposAcuerdo.map((tipo) => (
-                  <option key={tipo.id} value={tipo.id}>
-                    {tipo.nombre} (${tipo.monto_usd} USD)
-                  </option>
-                ))}
-              </Select>
+              <Input label="Número de acuerdo" value={wizardNumeroAcuerdo} onChange={(e) => setWizardNumeroAcuerdo(valorEnMayusculas(e))} placeholder="Ej: SAL-001234" required />
               <Input label="Fecha de ingreso" type="date" value={wizardFechaInicio} onChange={(e) => setWizardFechaInicio(e.target.value)} />
-              <Input label="Número de acuerdo" value={wizardNumeroAcuerdo} onChange={(e) => setWizardNumeroAcuerdo(e.target.value)} placeholder="Ej: SAL-001234" required />
-              <Input label="Número de contrato (opcional)" value={wizardNumeroContrato} onChange={(e) => setWizardNumeroContrato(e.target.value)} />
             </div>
 
             <div className="border-t border-neutral-200 pt-4">
               <h4 className="text-sm font-semibold text-neutral-900 mb-1">
-                Beneficiarios ({wizardBeneficiarios.length} / {MAX_BENEFICIARIOS_POR_GRUPO})
+                Beneficiarios ({wizardBeneficiarios.length})
               </h4>
               <p className="text-xs text-neutral-500 mb-3">
-                Hasta 8 personas además del titular (9 en total). Puedes continuar sin beneficiarios y agregarlos después.
+                Puedes continuar sin beneficiarios y agregarlos después.
               </p>
 
               {wizardBeneficiarios.length > 0 && (
                 <div className="mb-3 space-y-2">
-                  {wizardBeneficiarios.map((b) => (
-                    <div key={b.cedula} className="flex items-center justify-between rounded-lg border border-neutral-200 px-3 py-2">
+                  {wizardBeneficiarios.map((b, indice) => (
+                    <div key={`${b.cedula}-${indice}`} className="flex items-center justify-between rounded-lg border border-neutral-200 px-3 py-2">
                       <div>
                         <p className="text-sm font-medium text-neutral-900">{b.nombre} {b.apellido}</p>
                         <p className="text-xs text-neutral-500">{b.cedula} • {b.parentesco}</p>
                       </div>
-                      <button onClick={() => quitarBeneficiarioDeWizard(b.cedula)} className="text-neutral-400 hover:text-rose-600">
+                      <button onClick={() => quitarBeneficiarioDeWizard(indice)} className="text-neutral-400 hover:text-rose-600">
                         <X className="h-4 w-4" />
                       </button>
                     </div>
@@ -1796,62 +2023,65 @@ const handleSort = (field: string) => {
                 </div>
               )}
 
-              {wizardBeneficiarios.length < MAX_BENEFICIARIOS_POR_GRUPO && (
-                <div className="rounded-lg border border-dashed border-neutral-300 p-3 space-y-3">
-                  {wizardBenefError && <p className="text-xs text-rose-600">{wizardBenefError}</p>}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <Input
-                      label="Cédula"
-                      value={wizardBenefForm.cedula}
-                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, cedula: e.target.value }))}
-                    />
-                    <Select
-                      label="Parentesco"
-                      value={wizardBenefForm.parentesco}
-                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, parentesco: e.target.value }))}
-                    >
-                      <option value="">Selecciona...</option>
-                      {saludService.PARENTESCOS_BENEFICIARIO_SALUD.map((p) => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </Select>
-                    <Input
-                      label="Nombre"
-                      value={wizardBenefForm.nombre}
-                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, nombre: e.target.value }))}
-                    />
-                    <Input
-                      label="Apellido"
-                      value={wizardBenefForm.apellido}
-                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, apellido: e.target.value }))}
-                    />
-                    <Input
-                      label="Fecha de nacimiento"
-                      type="date"
-                      value={wizardBenefForm.fecha_nacimiento}
-                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, fecha_nacimiento: e.target.value }))}
-                    />
-                    <Input
-                      label="Fecha de ingreso"
-                      type="date"
-                      value={wizardBenefForm.fecha_ingreso}
-                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, fecha_ingreso: e.target.value }))}
-                    />
-                    <Select
-                      label="Estado"
-                      value={wizardBenefForm.estado}
-                      onChange={(e) => setWizardBenefForm((f) => ({ ...f, estado: e.target.value as 'activo' | 'fallecido' }))}
-                    >
-                      <option value="activo">Vivo</option>
-                      <option value="fallecido">Fallecido</option>
-                    </Select>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={agregarBeneficiarioAWizard} className="w-full">
-                    <UserPlus className="h-4 w-4" />
-                    Agregar a la lista
-                  </Button>
+              <div className="rounded-lg border border-dashed border-neutral-300 p-3 space-y-3">
+                {wizardBenefError && <p className="text-xs text-rose-600">{wizardBenefError}</p>}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    label="Cédula"
+                    value={wizardBenefForm.cedula}
+                    onChange={(e) =>
+                      setWizardBenefForm((f) => ({ ...f, cedula: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '') }))
+                    }
+                    maxLength={20}
+                    placeholder="Ej: 12345678 o 12345678-1"
+                    helperText="Números, letras y guión (-). Menor sin cédula: escribe MENOR y se le asigna MENOR-1, MENOR-2…"
+                  />
+                  <Select
+                    label="Parentesco"
+                    value={wizardBenefForm.parentesco}
+                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, parentesco: e.target.value }))}
+                  >
+                    <option value="">Selecciona...</option>
+                    {saludService.PARENTESCOS_BENEFICIARIO_SALUD.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </Select>
+                  <Input
+                    label="Nombre"
+                    value={wizardBenefForm.nombre}
+                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, nombre: valorEnMayusculas(e) }))}
+                  />
+                  <Input
+                    label="Apellido"
+                    value={wizardBenefForm.apellido}
+                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, apellido: valorEnMayusculas(e) }))}
+                  />
+                  <Input
+                    label="Fecha de nacimiento"
+                    type="date"
+                    value={wizardBenefForm.fecha_nacimiento}
+                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, fecha_nacimiento: e.target.value }))}
+                  />
+                  <Input
+                    label="Fecha de ingreso"
+                    type="date"
+                    value={wizardBenefForm.fecha_ingreso}
+                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, fecha_ingreso: e.target.value }))}
+                  />
+                  <Select
+                    label="Estado"
+                    value={wizardBenefForm.estado}
+                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, estado: e.target.value as 'activo' | 'fallecido' }))}
+                  >
+                    <option value="activo">Vivo</option>
+                    <option value="fallecido">Fallecido</option>
+                  </Select>
                 </div>
-              )}
+                <Button variant="outline" size="sm" onClick={agregarBeneficiarioAWizard} className="w-full">
+                  <UserPlus className="h-4 w-4" />
+                  Agregar a la lista
+                </Button>
+              </div>
             </div>
 
             <div className="flex gap-3">
@@ -1871,7 +2101,6 @@ const handleSort = (field: string) => {
           <div className="space-y-4">
             <div className="rounded-lg border border-neutral-200 p-4 space-y-2 text-sm">
               <p><span className="text-neutral-500">Titular:</span> <span className="font-medium">{wizardSocio.apellido}, {wizardSocio.nombre}</span></p>
-              <p><span className="text-neutral-500">Tipo de acuerdo:</span> <span className="font-medium">{tiposAcuerdo.find((t) => t.id === wizardTipoAcuerdoId)?.nombre}</span></p>
               <p><span className="text-neutral-500">Número de acuerdo:</span> <span className="font-mono font-medium">{wizardNumeroAcuerdo}</span></p>
               <p><span className="text-neutral-500">Fecha de ingreso:</span> <span className="font-medium">{formatearFecha(wizardFechaInicio)}</span></p>
               <p><span className="text-neutral-500">Total de personas:</span> <span className="font-medium">{wizardBeneficiarios.length + 1} (titular + {wizardBeneficiarios.length} beneficiario(s))</span></p>
@@ -1915,16 +2144,23 @@ const handleSort = (field: string) => {
                 <dd className="text-sm font-mono font-semibold text-primary-700">{grupoActual.numero_acuerdo}</dd>
               </div>
               <div>
-                <dt className="text-xs font-medium uppercase text-neutral-500">Tipo de Acuerdo</dt>
-                <dd className="text-sm text-neutral-900">{grupoActual.tipo_acuerdo?.nombre}</dd>
-              </div>
-              <div>
                 <dt className="text-xs font-medium uppercase text-neutral-500">Estado del Acuerdo</dt>
                 <dd>{grupoActual.estado && badgeEstado(grupoActual.estado)}</dd>
               </div>
               <div>
                 <dt className="text-xs font-medium uppercase text-neutral-500">Semanas Sin Pago</dt>
                 <dd className="text-sm text-neutral-900">{grupoActual.semanas_sin_pago}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium uppercase text-neutral-500">Fecha de Inicio</dt>
+                <dd className="flex items-center gap-2 text-sm text-neutral-900">
+                  {formatearFecha(grupoActual.fecha_inicio) || '—'}
+                  {puedeEscribir && grupoActual.estado !== 'retirado' && (
+                    <button title="Modificar fecha de inicio" onClick={abrirEditarFechaInicio} className="text-primary-600 hover:text-primary-800">
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </dd>
               </div>
               {grupoActual.estado === 'retirado' && (
                 <div>
@@ -1937,9 +2173,9 @@ const handleSort = (field: string) => {
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-sm font-semibold text-neutral-900">
-                  Beneficiarios ({gruposBeneficiariosVisibles.filter((b) => b.estado_acuerdo !== 'retirado').length} / {MAX_BENEFICIARIOS_POR_GRUPO})
+                  Beneficiarios ({gruposBeneficiariosVisibles.filter((b) => b.estado_acuerdo !== 'retirado').length})
                 </h4>
-                {puedeEscribir && !grupoLimiteAlcanzado && grupoActual.estado !== 'retirado' && (
+                {puedeEscribir && grupoActual.estado !== 'retirado' && (
                   <Button size="sm" onClick={abrirNuevoBeneficiarioGrupo}>
                     <UserPlus className="h-4 w-4" />
                     Agregar
@@ -1988,9 +2224,12 @@ const handleSort = (field: string) => {
                                   <button title="Editar" onClick={() => abrirEditarBeneficiarioGrupo(b)} className="text-primary-600 hover:text-primary-800">
                                     <Edit2 className="h-4 w-4" />
                                   </button>
-                                  <button title="Marcar como fallecido" onClick={() => void marcarFallecidoGrupo(b)} className="text-purple-600 hover:text-purple-800">
-                                    <Skull className="h-4 w-4" />
-                                  </button>
+                                  {/* De otro expediente: su fallecimiento se registra en el suyo */}
+                                  {!b.expediente_propio && (
+                                    <button title="Marcar como fallecido" onClick={() => void marcarFallecidoGrupo(b)} className="text-purple-600 hover:text-purple-800">
+                                      <CruzFallecido className="h-4 w-4" />
+                                    </button>
+                                  )}
                                   <button
                                     title="Retirar"
                                     onClick={() => abrirRetirarDirecto({
@@ -2005,6 +2244,17 @@ const handleSort = (field: string) => {
                                   </button>
                                   <button title="Eliminar" onClick={() => void eliminarMiembroGrupo(b)} className="text-rose-600 hover:text-rose-800">
                                     <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              )}
+                              {b.estado_persona === 'fallecido' && b.estado_acuerdo !== 'retirado' && (
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    title="Revertir fallecimiento (volver a activo)"
+                                    onClick={() => void revertirFallecidoGrupo(b)}
+                                    className="text-emerald-600 hover:text-emerald-800"
+                                  >
+                                    <RotateCcw className="h-4 w-4" />
                                   </button>
                                 </div>
                               )}
@@ -2048,7 +2298,7 @@ const handleSort = (field: string) => {
                   }
                 >
                   <ArrowRightLeft className="h-4 w-4" />
-                  Traspaso a Funeraria
+                  Importar a Funeraria
                 </Button>
               )}
               <div className="flex-1" />
@@ -2078,8 +2328,25 @@ const handleSort = (field: string) => {
         {beneficiarioError && (
           <Alert variant="error" className="mb-4">{beneficiarioError}</Alert>
         )}
+        {beneficiarioDeOtroExpediente && (
+          <Alert variant="info" className="mb-4">
+            Esta persona está registrada en el expediente {beneficiarioEditando?.expediente_propio}: sus datos
+            personales se modifican allí. En este acuerdo puedes cambiar su parentesco con el titular.
+          </Alert>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Cédula" value={beneficiarioForm.cedula} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, cedula: e.target.value }))} disabled={!!beneficiarioEditando} required />
+          <Input
+            label="Cédula"
+            value={beneficiarioForm.cedula}
+            onChange={(e) =>
+              setBeneficiarioForm((f) => ({ ...f, cedula: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '') }))
+            }
+            required
+            disabled={beneficiarioDeOtroExpediente}
+            maxLength={20}
+            placeholder="Ej: 12345678 o 12345678-1"
+            helperText={beneficiarioDeOtroExpediente ? undefined : 'Números, letras y guión (-). Menor sin cédula: escribe MENOR y se le asigna MENOR-1, MENOR-2…'}
+          />
           <Select
             label="Parentesco"
             value={beneficiarioForm.parentesco}
@@ -2090,11 +2357,11 @@ const handleSort = (field: string) => {
               <option key={p} value={p}>{p}</option>
             ))}
           </Select>
-          <Input label="Nombre" value={beneficiarioForm.nombre} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, nombre: e.target.value }))} required />
-          <Input label="Apellido" value={beneficiarioForm.apellido} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, apellido: e.target.value }))} required />
-          <Input label="Fecha de nacimiento" type="date" value={beneficiarioForm.fecha_nacimiento} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, fecha_nacimiento: e.target.value }))} required />
-          <Input label="Fecha de ingreso" type="date" value={beneficiarioForm.fecha_ingreso} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, fecha_ingreso: e.target.value }))} required />
-          <Input label="Teléfono (opcional)" value={beneficiarioForm.telefono || ''} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, telefono: e.target.value }))} />
+          <Input label="Nombre" value={beneficiarioForm.nombre} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, nombre: valorEnMayusculas(e) }))} required disabled={beneficiarioDeOtroExpediente} />
+          <Input label="Apellido" value={beneficiarioForm.apellido} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, apellido: valorEnMayusculas(e) }))} required disabled={beneficiarioDeOtroExpediente} />
+          <Input label="Fecha de nacimiento" type="date" value={beneficiarioForm.fecha_nacimiento} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, fecha_nacimiento: e.target.value }))} required disabled={beneficiarioDeOtroExpediente} />
+          <Input label="Fecha de ingreso" type="date" value={beneficiarioForm.fecha_ingreso} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, fecha_ingreso: e.target.value }))} required disabled={beneficiarioDeOtroExpediente} />
+          <Input label="Teléfono (opcional)" value={beneficiarioForm.telefono || ''} onChange={(e) => setBeneficiarioForm((f) => ({ ...f, telefono: e.target.value }))} disabled={beneficiarioDeOtroExpediente} />
         </div>
       </Modal>
 
@@ -2171,7 +2438,7 @@ const handleSort = (field: string) => {
           <Input
             label="Número de expediente o número de acuerdo"
             value={buscarInput}
-            onChange={(e) => setBuscarInput(e.target.value)}
+            onChange={(e) => setBuscarInput(valorEnMayusculas(e))}
             data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void ejecutarBusqueda()}
             autoFocus
           />
@@ -2429,7 +2696,7 @@ const handleSort = (field: string) => {
       {/* ============================================ */}
       {/* MODAL: TRASPASO A FUNERARIA */}
       {/* ============================================ */}
-      <Modal open={traspasoAbierto} onClose={() => setTraspasoAbierto(false)} title="Traspaso a Funeraria" description="Copia al titular y beneficiarios seleccionados al servicio de funeraria" size="md">
+      <Modal open={traspasoAbierto} onClose={() => setTraspasoAbierto(false)} title="Importar a Funeraria" description="Copia los beneficiarios seleccionados a un acuerdo de funeraria del mismo titular (si no tiene uno, se le crea). En Salud no se borra nada." size="md">
         {traspasoError && (
           <Alert variant="error" className="mb-4">{traspasoError}</Alert>
         )}
@@ -2452,54 +2719,269 @@ const handleSort = (field: string) => {
 
             {traspasoGrupo && (
               <>
-                <div>
-                  <p className="text-sm font-semibold text-neutral-900 mb-2">Personas a transferir</p>
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {traspasoGrupo.titular && (
-                      <label className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-neutral-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={traspasoSeleccionados.includes(traspasoGrupo.titular.beneficiario_id)}
-                          onChange={() => alternarSeleccionTraspaso(traspasoGrupo.titular!.beneficiario_id)}
-                        />
-                        <span>{traspasoGrupo.titular.nombre} {traspasoGrupo.titular.apellido} <span className="text-neutral-400">(Titular)</span></span>
-                      </label>
-                    )}
-                    {traspasoGrupo.beneficiarios.map((b) => (
-                      <label key={b.beneficiario_id} className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-neutral-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={traspasoSeleccionados.includes(b.beneficiario_id)}
-                          onChange={() => alternarSeleccionTraspaso(b.beneficiario_id)}
-                        />
-                        <span>{b.nombre} {b.apellido} <span className="text-neutral-400">({b.parentesco})</span></span>
-                      </label>
-                    ))}
+                {traspasoGrupo.titular && (
+                  <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                    <p className="text-sm font-semibold text-neutral-900">
+                      {traspasoGrupo.titular.nombre} {traspasoGrupo.titular.apellido}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      Titular • Exp. {traspasoGrupo.socio?.codigo_socio} •{' '}
+                      {traspasoCrearAcuerdo ? 'será el titular del acuerdo de funeraria nuevo' : 'ya es el dueño de su acuerdo de funeraria'}
+                    </p>
                   </div>
+                )}
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-neutral-900">
+                      Beneficiarios a copiar ({traspasoSeleccionados.length} de {traspasoSeleccionables.length})
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={alternarTodosTraspaso}
+                      disabled={traspasoSeleccionables.length === 0}
+                      title={traspasoSeleccionables.length === 0 ? 'No hay beneficiarios que se puedan copiar' : undefined}
+                    >
+                      {traspasoTodosSeleccionados ? 'Quitar todos' : 'Seleccionar todos'}
+                    </Button>
+                  </div>
+                  <div className="space-y-1 max-h-56 overflow-y-auto">
+                    {traspasoGrupo.beneficiarios.length === 0 && (
+                      <p className="px-2 py-1.5 text-sm text-neutral-500">Este acuerdo de salud no tiene beneficiarios.</p>
+                    )}
+                    {traspasoGrupo.beneficiarios.map((b) => {
+                      const seleccionable = seleccionableParaFuneraria(b)
+                      const motivo =
+                        b.estado_persona !== 'activo'
+                          ? b.estado_persona
+                          : b.estado_acuerdo === 'retirado'
+                            ? 'retirado de este acuerdo'
+                            : b.expediente_propio
+                              ? `socio del exp. ${b.expediente_propio}: tiene su propia funeraria`
+                              : ''
+                      return (
+                        <label
+                          key={b.beneficiario_id}
+                          className={`flex items-center gap-2 px-2 py-1.5 text-sm rounded ${seleccionable ? 'hover:bg-neutral-50 cursor-pointer' : 'text-neutral-400'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={!seleccionable}
+                            checked={traspasoSeleccionados.includes(b.beneficiario_id)}
+                            onChange={() => alternarSeleccionTraspaso(b.beneficiario_id)}
+                          />
+                          <span>
+                            {b.nombre} {b.apellido} <span className="text-neutral-400">({b.parentesco}{motivo ? ` • ${motivo}` : ''})</span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-2 text-xs text-neutral-500">
+                    Cada acuerdo de funeraria admite hasta 8 beneficiarios. Si no caben todos, se te ofrecerá crear un acuerdo adicional del mismo titular con los que falten.
+                  </p>
                 </div>
 
-                <Select
-                  label="Tipo de acuerdo de funeraria"
-                  value={traspasoTipoId}
-                  onChange={(e) => setTraspasoTipoId(Number(e.target.value))}
-                >
-                  <option value="">Selecciona...</option>
-                  {tiposFuneraria.map((t) => (
-                    <option key={t.id} value={t.id}>{t.nombre}</option>
-                  ))}
-                </Select>
-                <Input label="Número de acuerdo base (funeraria)" value={traspasoNumeroBase} onChange={(e) => setTraspasoNumeroBase(e.target.value)} placeholder="Ej: FUN-005500" />
-                <Input label="Número de contrato (opcional)" value={traspasoNumeroContrato} onChange={(e) => setTraspasoNumeroContrato(e.target.value)} />
+                {traspasoCrearAcuerdo && (
+                  <div className="space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                    <p className="text-sm text-sky-800">
+                      El socio {traspasoGrupo.socio?.codigo_socio} <strong>no tiene acuerdo de funeraria</strong>. Al copiar se le creará
+                      uno nuevo a su nombre
+                      {traspasoSeleccionables.length > 0
+                        ? ' y los beneficiarios seleccionados se agregarán a ese acuerdo (si no marcas ninguno, queda solo con el titular).'
+                        : ', con sus datos como titular.'}
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <Input
+                        label="N° del acuerdo de funeraria que se creará"
+                        value={traspasoNumeroNuevo ?? ''}
+                        onChange={(e) => setTraspasoNumeroNuevo(valorEnMayusculas(e))}
+                        maxLength={20}
+                        helperText="Propuesto como expediente-N; puedes modificarlo"
+                      />
+                      <Input
+                        label="Fecha de inicio"
+                        type="date"
+                        value={traspasoFechaNueva}
+                        onChange={(e) => setTraspasoFechaNueva(e.target.value)}
+                        helperText="Por defecto hoy; puedes modificarla"
+                      />
+                    </div>
+                  </div>
+                )}
+                {traspasoAcuerdosFuneraria.length === 1 && (
+                  <p className="text-sm text-neutral-600">
+                    Se copiarán al acuerdo de funeraria{' '}
+                    <span className="font-mono font-medium">{traspasoAcuerdosFuneraria[0]!.numero_acuerdo || 'sin número'}</span>.
+                  </p>
+                )}
+                {traspasoAcuerdosFuneraria.length > 1 && (
+                  <p className="text-sm text-neutral-600">
+                    El titular tiene {traspasoAcuerdosFuneraria.length} acuerdos de funeraria; al continuar se te preguntará a cuál copiarlos.
+                  </p>
+                )}
 
-                <Button onClick={() => void confirmarTraspasoFuneraria()} disabled={!traspasoFormularioValido} isLoading={traspasoEnviando} className="w-full">
+                <Button onClick={continuarTraspasoFuneraria} disabled={!traspasoFormularioValido} isLoading={traspasoEnviando} className="w-full">
                   <ArrowRightLeft className="w-4 h-4" />
-                  Confirmar Traspaso
+                  {traspasoCrearAcuerdo
+                    ? traspasoSeleccionados.length > 0
+                      ? 'Crear acuerdo de funeraria y copiar'
+                      : 'Crear acuerdo de funeraria'
+                    : traspasoAcuerdosFuneraria.length > 1
+                      ? 'Continuar'
+                      : 'Copiar a Funeraria'}
                 </Button>
               </>
             )}
           </div>
         )}
       </Modal>
+
+      {/* Ventana adicional: el titular tiene más de un acuerdo de funeraria */}
+      <Modal
+        open={traspasoElegirAbierto}
+        onClose={() => setTraspasoElegirAbierto(false)}
+        title="¿A qué acuerdo de funeraria?"
+        description={`El titular (exp. ${traspasoGrupo?.socio?.codigo_socio ?? ''}) tiene varios acuerdos de funeraria. Elige a cuál copiar los ${traspasoSeleccionados.length} beneficiario(s).`}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setTraspasoElegirAbierto(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => traspasoAcuerdoFunerariaId && void confirmarTraspasoFuneraria(traspasoAcuerdoFunerariaId)}
+              disabled={!traspasoAcuerdoFunerariaId}
+              isLoading={traspasoEnviando}
+            >
+              Copiar a este acuerdo
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          {traspasoAcuerdosFuneraria.map((a) => (
+            <label
+              key={a.id}
+              className="flex items-center gap-3 rounded-lg border border-neutral-200 p-3 text-sm hover:bg-neutral-50 cursor-pointer"
+            >
+              <input
+                type="radio"
+                name="acuerdo-funeraria-destino"
+                checked={traspasoAcuerdoFunerariaId === a.id}
+                onChange={() => setTraspasoAcuerdoFunerariaId(a.id)}
+              />
+              <span className="font-mono font-medium">{a.numero_acuerdo || 'sin número'}</span>
+              <span className="text-neutral-500">
+                • desde {formatearFecha(a.fecha_inicio)} • {a.estado}
+              </span>
+            </label>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Ventana adicional: modificar la fecha de inicio del acuerdo */}
+      <Modal
+        open={fechaInicioEditando !== null}
+        onClose={() => setFechaInicioEditando(null)}
+        title="Modificar fecha de inicio"
+        description={`Acuerdo de salud ${grupoActual?.numero_acuerdo ?? ''}`}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setFechaInicioEditando(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void guardarFechaInicio()} isLoading={fechaInicioGuardando} disabled={!fechaInicioEditando}>
+              Guardar
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          {fechaInicioError && (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{fechaInicioError}</div>
+          )}
+          <Input
+            label="Fecha de inicio"
+            type="date"
+            value={fechaInicioEditando ?? ''}
+            onChange={(e) => setFechaInicioEditando(e.target.value)}
+          />
+          <p className="text-xs text-neutral-500">
+            Cambia la fecha del titular y de quienes empezaron junto con él; los beneficiarios que se sumaron después conservan su propia fecha.
+          </p>
+        </div>
+      </Modal>
+
+      {/* Ventana adicional: se superó el límite de 8 beneficiarios del acuerdo de funeraria */}
+      <Modal
+        open={!!traspasoLimite}
+        onClose={() => setTraspasoLimite(null)}
+        title="Límite de beneficiarios superado"
+        description={`El acuerdo de funeraria ${traspasoLimite?.numeroDestino ?? ''} admite hasta 8 beneficiarios.`}
+        size="md"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setTraspasoLimite(null)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() =>
+                traspasoLimite &&
+                void confirmarTraspasoFuneraria(traspasoLimite.acuerdoFunerariaId, traspasoNumeroAdicional.trim())
+              }
+              disabled={!traspasoNumeroAdicional.trim()}
+              isLoading={traspasoEnviando}
+            >
+              Crear acuerdo adicional y copiar
+            </Button>
+          </>
+        }
+      >
+        {traspasoLimite && (
+          <div className="space-y-4 text-sm">
+            <Alert variant="info">
+              Se superó el límite de beneficiarios en el acuerdo {traspasoLimite.numeroDestino}: solo quedan{' '}
+              {traspasoLimite.detalles.cupos} cupo(s). Los que faltan se agregarán a un acuerdo de funeraria
+              adicional con el mismo titular.
+            </Alert>
+            {traspasoLimite.detalles.al_elegido.length > 0 && (
+              <div>
+                <p className="font-medium text-neutral-900">Al acuerdo {traspasoLimite.numeroDestino}:</p>
+                <p className="text-neutral-600">{traspasoLimite.detalles.al_elegido.join(', ')}</p>
+              </div>
+            )}
+            <div>
+              <p className="font-medium text-neutral-900">Al acuerdo adicional:</p>
+              <p className="text-neutral-600">{traspasoLimite.detalles.sobrantes.join(', ')}</p>
+            </div>
+            <Input
+              label="Número del acuerdo adicional"
+              value={traspasoNumeroAdicional}
+              onChange={(e) => setTraspasoNumeroAdicional(valorEnMayusculas(e))}
+              maxLength={20}
+              helperText="Propuesto como expediente-N; puedes modificarlo. Inicia hoy y sigue las reglas de cualquier acuerdo nuevo."
+            />
+          </div>
+        )}
+      </Modal>
+
+      {revertirNuevoAcuerdo && grupoActual?.socio && (
+        <ModalRevertirConNuevoAcuerdo
+          open
+          onClose={() => setRevertirNuevoAcuerdo(null)}
+          onCompletado={(numero) => void completarRevertirNuevoAcuerdo(numero)}
+          socio={grupoActual.socio}
+          beneficiario={{
+            id: revertirNuevoAcuerdo.beneficiario_id,
+            nombre: revertirNuevoAcuerdo.nombre,
+            apellido: revertirNuevoAcuerdo.apellido,
+            parentesco: revertirNuevoAcuerdo.parentesco,
+          }}
+        />
+      )}
 
       {/* ============================================ */}
       {/* MODAL: CAMBIAR ESTADO */}
@@ -2523,7 +3005,7 @@ const handleSort = (field: string) => {
             Motivo (opcional)
             <textarea
               value={estadoMotivo}
-              onChange={(e) => setEstadoMotivo(e.target.value)}
+              onChange={(e) => setEstadoMotivo(valorEnMayusculas(e))}
               rows={3}
               className="mt-1.5 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
@@ -2538,6 +3020,18 @@ const handleSort = (field: string) => {
           </Button>
         </div>
       </Modal>
+
+      {/* ============================================ */}
+      {/* MODAL: TRASPASO DEL ACUERDO A OTRO SOCIO */}
+      {/* ============================================ */}
+      <ModalTraspasoAcuerdo
+        open={traspasoAcuerdoAbierto}
+        onClose={cerrarTraspasoAcuerdo}
+        modulo="salud"
+        acuerdoInicial={traspasoAcuerdoInicial}
+        titularInicial={traspasoTitularInicial}
+        onCompletado={() => void Promise.all([cargarAcuerdos(), cargarEstadisticas()])}
+      />
     </div>
   )
 }

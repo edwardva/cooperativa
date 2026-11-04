@@ -109,6 +109,46 @@ describe('armarPaquete — socio con ambos servicios', () => {
     });
     expect(p.totales.ahorro_usd).toBe(5.06);
   });
+
+  it('cobra el adicional en bolivares exactos, sin el redondeo de los dolares', () => {
+    // `Adic:` se escribe en Bs, como en el sistema actual. A 820,13 Bs/$,
+    // 500 Bs son 0,6097 $: pasar por 0,61 $ cobraria 500,28 Bs
+    const tasa = 820.13;
+    const p = armarPaquete({
+      semanas: 1,
+      acuerdos: [crearAcuerdo('funeraria')],
+      tarifas: TARIFAS,
+      tasa,
+      cuentaAhorroId: 7,
+      ahorroAdicionalBs: 500,
+    });
+    const obligatorioBs = Math.round(0.03 * tasa * 100) / 100;
+    expect(p.totales.ahorro_bs).toBe(Math.round((obligatorioBs + 500) * 100) / 100);
+    expect(p.totales.ahorro_usd).toBe(0.64);
+    expect(p.totales.total_bs).toBe(
+      Math.round((p.totales.ahorro_bs + p.totales.funeraria_bs) * 100) / 100
+    );
+  });
+});
+
+describe('armarPaquete — salud por grupo familiar', () => {
+  it('cobra salud una sola vez, tenga las personas que tenga', () => {
+    // Observación del 03/11: 8 personas y 3 semanas son 0,96 x 3, no 8 x 0,96 x 3
+    const acuerdos = Array.from({ length: 8 }, (_, i) => crearAcuerdo('salud', { id: 10 + i }));
+    const p = armarPaquete({ semanas: 3, acuerdos, tarifas: TARIFAS, tasa: TASA, cuentaAhorroId: 7 });
+    expect(p.totales.salud_usd).toBe(2.88);
+    // Todas las personas siguen en el paquete para que su cobertura avance
+    const salud = p.renglones.filter((r) => r.servicio === 'salud');
+    expect(salud).toHaveLength(8);
+    expect(salud.filter((r) => r.monto_usd > 0)).toHaveLength(1);
+    expect(salud.every((r) => r.cobertura_despues !== null)).toBe(true);
+  });
+
+  it('funeraria sigue cobrándose por acuerdo', () => {
+    const acuerdos = [crearAcuerdo('funeraria', { id: 1 }), crearAcuerdo('funeraria', { id: 3 })];
+    const p = armarPaquete({ semanas: 1, acuerdos, tarifas: TARIFAS, tasa: TASA, cuentaAhorroId: 7 });
+    expect(p.totales.funeraria_usd).toBe(1.5);
+  });
 });
 
 describe('armarPaquete — socio con un solo servicio', () => {
@@ -139,7 +179,8 @@ describe('armarPaquete — cobertura resultante', () => {
   it('cruza de diciembre a enero al calcular la cobertura resultante', () => {
     const acuerdos = [crearAcuerdo('salud', { pagadoHasta: 51 })];
     const p = armarPaquete({ semanas: 5, acuerdos, tarifas: TARIFAS, tasa: TASA, cuentaAhorroId: null });
-    expect(p.renglones[0]!.cobertura_despues).toEqual({ ano: 2027, semana: 3 });
+    // Desde la 51 de 2026: 52, y 1, 2, 3 y 4 de 2027 (2026 tiene 52 semanas)
+    expect(p.renglones[0]!.cobertura_despues).toEqual({ ano: 2027, semana: 4 });
   });
 });
 

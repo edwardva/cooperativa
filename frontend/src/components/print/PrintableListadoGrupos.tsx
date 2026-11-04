@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import logo from '@/logoR.png';
 import { nombreEnMayusculas } from '../../utils/formatters';
+import { EncabezadoImpresion } from './EncabezadoImpresion';
 import type { GrupoSalud } from '../../services/saludService';
 
 export type TipoListadoGrupos = 'activos' | 'suspendidos' | 'proximos_suspender';
@@ -80,23 +80,7 @@ export const PrintableListadoGrupos = ({ tipo, grupos }: PrintableListadoGruposP
       `}</style>
 
       <div className="listado-grupos-print-root">
-        <div className="flex items-start justify-between gap-4 border-b-2 border-neutral-300 pb-3">
-          <div className="flex items-center gap-3">
-            <img src={logo} alt="Cooperativa el Triunfo" className="h-12 w-auto object-contain" />
-            <div>
-              <div className="text-sm font-bold uppercase tracking-wide text-neutral-900">
-                Cooperativa el Triunfo, R.L.
-              </div>
-              <div className="mt-1 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
-                {TITULOS[tipo]} - Salud
-              </div>
-            </div>
-          </div>
-          <div className="text-right text-[10px] text-neutral-500">
-            <div>Total de grupos: {grupos.length}</div>
-            <div>Generado: {new Date().toLocaleString('es-VE')}</div>
-          </div>
-        </div>
+        <EncabezadoImpresion titulo={`${TITULOS[tipo]} - Salud`} detalles={<div>Total de grupos: {grupos.length}</div>} />
 
         <div className="mt-4">
           {grupos.length === 0 ? (

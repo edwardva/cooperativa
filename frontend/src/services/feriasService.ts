@@ -7,10 +7,14 @@
 
 import apiClient from './api';
 
+/** Sector: socio particular, con ahorro. Feria: socio de feria, sólo salud */
+export type TipoUbicacion = 'sector' | 'feria';
+
 export interface Ubicacion {
   id: number;
   codigo: string;
   nombre: string;
+  tipo: TipoUbicacion;
   ubicacion?: string | null;
   direccion?: string | null;
   responsable?: string | null;
@@ -28,6 +32,7 @@ export interface Ubicacion {
 export interface CrearUbicacionDTO {
   codigo: string;
   nombre: string;
+  tipo: TipoUbicacion;
   ubicacion?: string | null;
   direccion?: string | null;
   responsable?: string | null;
@@ -54,10 +59,10 @@ export interface ApiResponse<T> {
 }
 
 /**
- * Obtener todas las ubicaciones
+ * Obtener todas las ubicaciones, o sólo los sectores o sólo las ferias
  */
-export const obtenerUbicaciones = async (): Promise<ApiResponse<Ubicacion[]>> => {
-  const response = await apiClient.get<ApiResponse<Ubicacion[]>>('/ubicaciones');
+export const obtenerUbicaciones = async (tipo?: TipoUbicacion): Promise<ApiResponse<Ubicacion[]>> => {
+  const response = await apiClient.get<ApiResponse<Ubicacion[]>>('/ubicaciones', { params: tipo ? { tipo } : {} });
   return response.data;
 };
 

@@ -55,6 +55,11 @@ import { ponerInteresAlDia } from '../services/interesPrestamoService';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
 import { hoyDia } from '../utils/fechaDia';
 import { nombreEnMayusculas } from '../utils/reportes';
+import {
+  correoConfigurado,
+  enviarAvisoReversoEnSegundoPlano,
+  enviarDetalleColectaEnSegundoPlano,
+} from '../services/correoService';
 
 /** Búsqueda por nombre en la caja */
 const MINIMO_LETRAS_NOMBRE = 3;
@@ -84,7 +89,14 @@ const detalleColectaSchema = z.object({
   servicio: z.enum(['ahorro', 'funeraria', 'salud', 'prestamo']),
   /** Id de la cuenta de ahorro o del acuerdo, según el servicio */
   referencia_id: z.number().int().positive(),
-  monto_usd: z.number().positive('El monto debe ser mayor a cero'),
+  monto_usd: z.number().min(0),
+  /**
+   * Monto en bolívares, sólo para el ahorro. El ahorro adicional se escribe en
+   * Bs (`Adic:`, como en el sistema actual) y se cobra tal cual: el monto en
+   * dólares sale de aquí, y no al revés, para no mover los bolívares al
+   * redondear. En los demás servicios se ignora.
+   */
+  monto_bs: z.number().min(0).optional(),
   /**
    * Cuántas semanas cubre ESTE renglón. Normalmente es el mismo valor global
    * de `semanas`, pero se admite por renglón para casos excepcionales.
@@ -100,7 +112,18 @@ const detalleColectaSchema = z.object({
   es_reintegro: z.boolean().optional().default(false),
 
   concepto: z.string().max(300).optional().nullable(),
-});
+}).refine(
+  (d) =>
+    d.monto_usd > 0 ||
+    (d.servicio === 'ahorro' && (d.monto_bs ?? 0) > 0) ||
+    // Salud se cobra una vez por grupo familiar: el resto de las personas
+    // viaja en 0 para que su cobertura avance con el mismo pago
+    (d.servicio === 'salud' && !d.es_reintegro),
+  {
+    message: 'El monto debe ser mayor a cero',
+    path: ['monto_usd'],
+  }
+);
 
 const registrarColectaSchema = z.object({
   socio_id: z.number().int().positive(),
@@ -124,6 +147,8 @@ const registrarColectaSchema = z.object({
    * tiene el campo "Asistio a la Asamblea" en esta misma pantalla).
    */
   asamblea_id: z.number().int().positive().optional().nullable(),
+  /** Sí (true, por defecto) o No (false): el "No" queda como inasistencia en su historial */
+  asistio_asamblea: z.boolean().optional().default(true),
 
   /**
    * Oficina y canal del cobro. El cuadre se pide por oficina, por colector y
@@ -406,18 +431,25 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
       return;
     }
 
-    // Asambleas del año en curso, para poder marcar la asistencia en la caja
-    const anoActual = new Date().getFullYear();
+    // Asambleas sobre las que la caja marca Sí/No. Confirmado el 23/10: todas
+    // son en marzo, así que antes de la primera del año se marca la del año
+    // anterior, y desde esa fecha la del año en curso. Sólo las ya hechas.
+    const hoyAsamblea = new Date();
+    const anoActual = hoyAsamblea.getFullYear();
+    const yaEmpezoElAno = await prisma.asamblea.count({
+      where: { ano: anoActual, estado: true, fecha: { lte: hoyAsamblea } },
+    });
+    const anoAsamblea = yaEmpezoElAno > 0 ? anoActual : anoActual - 1;
     const asambleas = await prisma.asamblea.findMany({
-      where: { ano: anoActual, estado: true },
+      where: { ano: anoAsamblea, estado: true, fecha: { lte: hoyAsamblea } },
       orderBy: { fecha: 'desc' },
       select: { id: true, titulo: true, fecha: true, tipo: true },
     });
 
-    // A cuáles ya asistió cada socio, para no volver a ofrecerlas
+    // A cuáles fue cada socio y en cuáles la caja ya marcó "No"
     const asistencias = await prisma.asistenciaAsamblea.findMany({
-      where: { socio_id: { in: socios.map((s) => s.id) }, asamblea: { ano: anoActual } },
-      select: { socio_id: true, asamblea_id: true },
+      where: { socio_id: { in: socios.map((s) => s.id) }, asamblea: { ano: anoAsamblea } },
+      select: { socio_id: true, asamblea_id: true, asistio: true },
     });
 
     // Cuantas veces ha estado suspendido CADA socio, contando todo su historial.
@@ -684,7 +716,11 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         cuota_salud_usd: Math.max(0, ...acuerdosSalud.map((a) => tarifaDeAcuerdo(a, tarifas))),
         mayor_atraso: pendientes,
         asambleas_asistidas: asistencias
-          .filter((a) => a.socio_id === socio.id)
+          .filter((a) => a.socio_id === socio.id && a.asistio)
+          .map((a) => a.asamblea_id),
+        // Donde la caja ya dejó registrado que NO fue
+        asambleas_no_asistidas: asistencias
+          .filter((a) => a.socio_id === socio.id && !a.asistio)
           .map((a) => a.asamblea_id),
 
         // Historial de estados, del mas reciente al mas viejo. `veces_suspendido`
@@ -704,6 +740,12 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         alertas: {
           // Se avisa, no se bloquea: la decisión es del cajero
           socio_retirado: socio.estado === 'retirado',
+          // Confirmado el 23/10: si se retiró por faltar a las asambleas, se le
+          // dice así cuando vuelve a hacer cualquier movimiento
+          motivo_retiro:
+            socio.estado === 'retirado'
+              ? (socio.historial_estados.find((h) => h.estado_nuevo === 'retirado')?.motivo ?? null)
+              : null,
           acuerdos_suspendidos: acuerdos.filter(
             (a) => a.situacion.estado_registrado === 'suspendido'
           ).length,
@@ -776,10 +818,12 @@ const calcularPaqueteSchema = z.object({
   socio_id: z.coerce.number().int().positive(),
   semanas: z.coerce.number().int().min(1).max(104).default(1),
   ahorro_adicional_usd: z.coerce.number().min(0).default(0),
+  /** Lo que escribe el cajero en `Adic:`: bolívares. Si viene, manda sobre el de USD */
+  ahorro_adicional_bs: z.coerce.number().min(0).default(0),
 });
 
 /**
- * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_usd=
+ * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_bs=
  *
  * El cajero escribe cuántas semanas paga el socio y esto devuelve el importe:
  * ahorro obligatorio más cada servicio contratado, con su desglose y el total
@@ -794,7 +838,7 @@ export const calcularPaquete = async (req: Request, res: Response): Promise<void
     if (!validacion.success) {
       throw new BadRequestError('Indique el socio y la cantidad de semanas');
     }
-    const { socio_id, semanas, ahorro_adicional_usd } = validacion.data;
+    const { socio_id, semanas, ahorro_adicional_usd, ahorro_adicional_bs } = validacion.data;
 
     const [{ tasa }, tarifas, codigoCuenta] = await Promise.all([
       obtenerTasaActual(),
@@ -827,6 +871,7 @@ export const calcularPaquete = async (req: Request, res: Response): Promise<void
       tasa,
       cuentaAhorroId: cuentaAhorro?.id ?? null,
       ahorroAdicionalUsd: ahorro_adicional_usd,
+      ahorroAdicionalBs: ahorro_adicional_bs,
     });
 
     const pendientes = semanasParaPonerseAlDia(acuerdos);
@@ -918,12 +963,16 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
       await bloquearSocio(tx, datos.socio_id);
 
       let totalUsd = 0;
+      let totalBs = 0;
 
       // Se valida TODO antes de escribir nada
       const preparados = [];
       for (const detalle of datos.detalles) {
-        const montoUsd = redondear(detalle.monto_usd);
-        const montoBs = redondear(montoUsd * tasa);
+        // El ahorro puede venir en bolívares exactos (el adicional se escribe
+        // en Bs): entonces los Bs mandan y los dólares salen de ellos
+        const enBs = detalle.servicio === 'ahorro' && (detalle.monto_bs ?? 0) > 0;
+        const montoBs = enBs ? redondear(detalle.monto_bs!) : redondear(detalle.monto_usd * tasa);
+        const montoUsd = enBs ? redondear(montoBs / tasa) : redondear(detalle.monto_usd);
 
         if (detalle.servicio === 'ahorro') {
           const cuenta = await tx.cuentaAhorro.findUnique({ where: { id: detalle.referencia_id } });
@@ -962,10 +1011,13 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
         }
 
         totalUsd += montoUsd;
+        totalBs += montoBs;
       }
 
       totalUsd = redondear(totalUsd);
-      const totalBs = redondear(totalUsd * tasa);
+      // Suma de los renglones: con el ahorro en Bs exactos, totalUsd * tasa
+      // ya no daría lo que se cobró
+      totalBs = redondear(totalBs);
 
       const colecta = await tx.colecta.create({
         data: {
@@ -1215,15 +1267,29 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
         const asamblea = await tx.asamblea.findUnique({ where: { id: datos.asamblea_id } });
         if (!asamblea) throw new NotFoundError('Asamblea no encontrada');
 
-        await tx.asistenciaAsamblea.createMany({
-          data: [{
-            asamblea_id: datos.asamblea_id,
-            socio_id: datos.socio_id,
-            registrado_por: req.user!.userId,
-            observacion: `Registrada en colecta #${colecta.id}`,
-          }],
-          skipDuplicates: true,
+        const previa = await tx.asistenciaAsamblea.findUnique({
+          where: { asamblea_id_socio_id: { asamblea_id: datos.asamblea_id, socio_id: datos.socio_id } },
+          select: { id: true, asistio: true },
         });
+        const observacion = `${datos.asistio_asamblea ? 'Asistencia' : 'Inasistencia'} registrada en colecta #${colecta.id}`;
+        if (!previa) {
+          await tx.asistenciaAsamblea.create({
+            data: {
+              asamblea_id: datos.asamblea_id,
+              socio_id: datos.socio_id,
+              asistio: datos.asistio_asamblea,
+              registrado_por: req.user!.userId,
+              observacion,
+            },
+          });
+        } else if (previa.asistio !== datos.asistio_asamblea && datos.asistio_asamblea) {
+          // Un "No" anterior se corrige a "Sí"; una asistencia ya registrada no
+          // se borra desde la caja
+          await tx.asistenciaAsamblea.update({
+            where: { id: previa.id },
+            data: { asistio: true, registrado_por: req.user!.userId, observacion },
+          });
+        }
       }
 
       await registrarAuditoria(tx, {
@@ -1241,13 +1307,18 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
       where: { id: resultado.id },
       include: {
         detalles: true,
-        socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true } },
+        socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true, email: true } },
         usuario: { select: { username: true, nombre_completo: true } },
       },
     });
 
     logger.info(`Colecta ${resultado.id} registrada: ${resultado.monto_total_usd} USD`);
-    res.status(201).json({ success: true, data: completa });
+
+    // El detalle le llega al socio por correo, sin hacer esperar a la caja
+    const correoA = correoConfigurado() && completa?.socio.email?.trim() ? completa.socio.email.trim() : null;
+    if (correoA) enviarDetalleColectaEnSegundoPlano(resultado.id);
+
+    res.status(201).json({ success: true, data: { ...completa, correo_enviado_a: correoA } });
   } catch (error) {
     responderError(res, error, 'Error al registrar la colecta');
   }
@@ -1727,6 +1798,10 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
     });
 
     logger.info(`Colecta ${colecta.id} reversada por usuario ${req.user!.userId}`);
+
+    // También se le avisa al socio por correo (pedido del 23/10)
+    if (correoConfigurado()) enviarAvisoReversoEnSegundoPlano(colecta.id);
+
     res.json({ success: true, data: { id: colecta.id, reversada: true } });
   } catch (error) {
     responderError(res, error, 'Error al reversar la colecta');

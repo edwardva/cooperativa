@@ -32,15 +32,18 @@ export const Modal = ({ open, onClose, title, description, size = 'md', children
         className={clsx('max-h-[92vh] w-full overflow-y-auto border-neutral-200', sizeStyles[size])}
       >
         {(title || description) && (
-          <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
-            <div>
+          // Sin flex-wrap: con una descripción larga la X bajaba debajo del texto;
+          // así queda siempre en la esquina superior derecha
+          <div className="flex items-start justify-between gap-3 mb-5">
+            <div className="min-w-0 flex-1">
               {title && <h2 className="text-2xl font-semibold text-neutral-900">{title}</h2>}
               {description && <p className="mt-1 text-sm text-neutral-500">{description}</p>}
             </div>
             <button
               onClick={onClose}
-              className="rounded-lg border border-neutral-200 p-1.5 text-neutral-500 transition hover:bg-neutral-50"
+              className="shrink-0 rounded-lg border border-neutral-200 p-1.5 text-neutral-500 transition hover:bg-neutral-50"
               aria-label="Cerrar"
+              title="Cerrar"
             >
               <X className="h-4 w-4" />
             </button>

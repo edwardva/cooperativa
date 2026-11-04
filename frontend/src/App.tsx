@@ -20,9 +20,12 @@ import { AhorroPage } from './pages/AhorroPage'
 import FunerariaPage from './pages/FunerariaPage'
 import SaludPage from './pages/SaludPage'
 import AsambleasPage from './pages/AsambleasPage'
+import MultasPage from './pages/MultasPage'
+import FondoPage from './pages/FondoPage'
 import ColectaPage from './pages/ColectaPage'
 import PrestamosPage from './pages/PrestamosPage'
 import ColectaReportesPage from './pages/ColectaReportesPage'
+import CajeroDigitalPage from './pages/CajeroDigitalPage'
 import TrabajadoresPage from './pages/TrabajadoresPage'
 import SaludFeriaPage from './pages/SaludFeriaPage'
 
@@ -205,6 +208,17 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+        <Route
+          path="/cajero-digital"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <CajeroDigitalPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
         
         <Route
           path="/asambleas"
@@ -212,6 +226,28 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <AsambleasPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/multas"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <MultasPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/fondo"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <FondoPage />
               </MainLayout>
             </ProtectedRoute>
           }
