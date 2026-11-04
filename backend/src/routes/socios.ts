@@ -15,6 +15,7 @@ import {
   eliminarBeneficiario,
   obtenerEstadisticasSocios,
 } from '../controllers/sociosController';
+import { consultarCedulaCne } from '../controllers/cneController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -49,6 +50,13 @@ router.get(
   authorize('socios', 'read'),
   obtenerEstadisticasSocios
 );
+
+/**
+ * GET /api/socios/cne/:cedula
+ * Nombres y apellidos del CNE para la inscripción (vía cedula.com.ve)
+ * Permisos: socios:create
+ */
+router.get('/cne/:cedula', authorize('socios', 'create'), consultarCedulaCne);
 
 /**
  * GET /api/socios/buscar/:cedula

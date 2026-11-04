@@ -272,6 +272,9 @@ export const SociosPage = () => {
   const [fotoPreview, setFotoPreview] = useState<string | null>(null)
   // Fase 2: la cedula se consulta al salir del campo para no duplicar a la persona
   const [identificacion, setIdentificacion] = useState<ResultadoIdentificacion | null>(null)
+  // Resultado de la consulta al CNE al salir del campo cedula (solo en altas)
+  const [avisoCne, setAvisoCne] = useState<{ encontrado: boolean; texto: string } | null>(null)
+  const [consultandoCne, setConsultandoCne] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const alEnter = useEnterNavigation()
   const navigate = useNavigate()
@@ -525,6 +528,7 @@ export const SociosPage = () => {
     setFormData({ ...emptyForm(), cedula })
     setTipoSocio('sector')
     setIdentificacion(null)
+    setAvisoCne(null)
     setFotoPreview(null)
     setErrorFormulario('')
     setModalAbierto(true)
@@ -611,12 +615,15 @@ export const SociosPage = () => {
     const revision = validarCedula(cedula)
     if (!revision.valida) {
       setIdentificacion(null)
+      setAvisoCne(null)
       return
     }
+    let yaRegistrada = false
     try {
       const r = await personasService.buscarPorIdentificacion(revision.cedula)
       setIdentificacion(r.data)
       const persona = r.data.persona
+      yaRegistrada = !!persona
       if (persona) {
         setFormData((prev) => ({
           ...prev,
@@ -631,6 +638,38 @@ export const SociosPage = () => {
       }
     } catch {
       setIdentificacion(null)
+    }
+
+    // Persona nueva: nombres y apellidos del CNE. Solo llena lo que este vacio,
+    // y si el servicio falla se sigue a mano, como siempre.
+    if (!yaRegistrada) void consultarCne(revision.cedula)
+  }
+
+  const consultarCne = async (cedula: string) => {
+    setConsultandoCne(true)
+    setAvisoCne(null)
+    try {
+      const r = await sociosService.consultarCne(cedula)
+      if (!r.data.disponible) return
+      const datos = r.data.datos
+      if (!datos) {
+        setAvisoCne({ encontrado: false, texto: 'La cédula no aparece en el CNE: escriba los datos a mano.' })
+        return
+      }
+      setFormData((prev) =>
+        // Si el operador cambio la cedula mientras tanto, no se pisa nada
+        validarCedula(prev.cedula).cedula !== cedula
+          ? prev
+          : { ...prev, nombre: prev.nombre || datos.nombres, apellido: prev.apellido || datos.apellidos }
+      )
+      setAvisoCne({
+        encontrado: true,
+        texto: `Datos del CNE: ${datos.nombres} ${datos.apellidos}${datos.estado ? ` · ${datos.estado}` : ''}. Revíselos antes de guardar.`,
+      })
+    } catch {
+      // Sin aviso: el alta sigue a mano
+    } finally {
+      setConsultandoCne(false)
     }
   }
 
@@ -1338,6 +1377,7 @@ export const SociosPage = () => {
                       onChange={(e) => {
                         actualizarCampo('cedula', e.target.value.replace(/\D/g, ''))
                         setIdentificacion(null)
+                        setAvisoCne(null)
                       }}
                       onBlur={() => void consultarCedula()}
                       className={controlClass}
@@ -1423,6 +1463,20 @@ export const SociosPage = () => {
                     />
                   </label>
                   </div>
+
+                  {!modoEdicion && (consultandoCne || avisoCne) && (
+                    <p
+                      className={`rounded-lg border px-3 py-2 text-sm ${
+                        consultandoCne
+                          ? 'border-neutral-200 bg-neutral-50 text-neutral-600'
+                          : avisoCne?.encontrado
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                            : 'border-amber-200 bg-amber-50 text-amber-900'
+                      }`}
+                    >
+                      {consultandoCne ? 'Consultando la cédula en el CNE...' : avisoCne?.texto}
+                    </p>
+                  )}
 
                   {identificacion && !modoEdicion && (identificacion.persona || identificacion.socios_sin_persona.length > 0) && (
                     <div className="space-y-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
