@@ -26,6 +26,9 @@ const TARIFAS: TarifasColecta = {
   bloquear_adelanto_excedido: false,
   semanas_suspension_funeraria: 6,
   semanas_suspension_salud: 6,
+  // El cobro semanal no los usa; van para completar el tipo
+  dias_abono_prestamo: 21,
+  dias_aviso_abono_prestamo: 18,
 };
 
 const TASA = 100;
