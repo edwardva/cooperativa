@@ -9,7 +9,6 @@ import {
   actualizarCodigoSocial,
   retirarSocio,
   reactivarSocioRetirado,
-  traspasarSocio,
   obtenerBeneficiarios,
   agregarBeneficiario,
   actualizarBeneficiario,
@@ -64,7 +63,7 @@ router.get(
 
 /**
  * GET /api/socios/expediente/:codigo
- * Buscar socio por número de expediente exacto (para Traspaso en Funeraria)
+ * Buscar socio por número de expediente exacto (lo usan los traspasos de Funeraria y Salud)
  * Permisos: socios:read
  */
 router.get(
@@ -135,17 +134,6 @@ router.post(
   '/:id/reactivar-retirado',
   authorize('socios', 'reactivar_retirado'),
   reactivarSocioRetirado
-);
-
-/**
- * POST /api/socios/:id/traspaso
- * Traspasar la titularidad del socio a un familiar directo
- * Permisos: socios:update
- */
-router.post(
-  '/:id/traspaso',
-  authorize('socios', 'update'),
-  traspasarSocio
 );
 
 // ============================================

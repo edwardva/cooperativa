@@ -11,6 +11,7 @@ import { idsSociosPorTexto } from '../services/busquedaSociosService';
 import { tipoEfectivo, verificarCupoPorCedula } from '../services/sectorFeriaService';
 import type { TipoUbicacion } from '@prisma/client';
 import { responderError } from '../utils/responderError';
+import { cedulaParaGuardar, esPedidoDeMenor } from '../utils/cedulaMenor';
 import { anosAdeudados, cobrarMulta, montoMultaVigente } from '../services/multasService';
 
 // ============================================
@@ -102,19 +103,37 @@ const PARENTESCOS_BENEFICIARIO = [
   'Yerna',
   'Ahijado',
   'Otro',
+  // Parentescos que la pantalla de Funeraria ofrece (PARENTESCOS_FUNERARIA en
+  // el frontend) y que faltaban aquí: elegirlos hacía fallar el guardado con
+  // "Datos inválidos". Ver la lista del frontend antes de quitar alguno.
+  'Hijo de crianza',
+  'Hija de crianza',
+  'Padrastro',
+  'Madrastra',
+  'Sobrina',
 ] as const;
 
 const agregarBeneficiarioSchema = z.object({
-  cedula: z.string().min(7).max(11).regex(/^\d+$/, 'Cédula solo debe contener números'),
+  // Números, letras y guión: los menores sin cédula propia se registran con
+  // identificaciones como "12345678-1" o "M-12345678" (confirmado el 30/10)
+  cedula: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .min(3, 'La cédula debe tener al menos 3 caracteres')
+    .max(20, 'La cédula admite hasta 20 caracteres')
+    .regex(/^[A-Z0-9-]+$/, 'La cédula solo admite números, letras y guión (-)'),
   nombre: z.string().min(2).max(100),
   apellido: z.string().min(2).max(100),
   fecha_nacimiento: z.string().min(1, 'La fecha de nacimiento es requerida'),
   fecha_ingreso: z.string().min(1, 'La fecha de ingreso es requerida'),
   parentesco: z.enum(PARENTESCOS_BENEFICIARIO, { errorMap: () => ({ message: 'Selecciona un parentesco válido' }) }),
   telefono: z.string().max(20).optional().nullable(),
+  // Acuerdo de funeraria al que se agrega (el tope de 8 se cuenta por acuerdo)
+  acuerdo_funeraria_id: z.number().int().positive().optional(),
 });
 
-const actualizarBeneficiarioSchema = agregarBeneficiarioSchema.extend({
+const actualizarBeneficiarioSchema = agregarBeneficiarioSchema.omit({ acuerdo_funeraria_id: true }).extend({
   estado: z.enum(['activo', 'inactivo', 'retirado', 'fallecido']).optional(),
   fecha_fallecimiento: z.string().optional().nullable(),
 }).partial();
@@ -173,46 +192,6 @@ const prepararSocioParaRespuesta = (socio: any) => {
     ...socio,
     foto: socio.foto ? convertirBufferABase64(socio.foto) : null,
   };
-};
-
-// Parentescos aceptados para un traspaso de socio (familiar directo únicamente)
-const PARENTESCOS_TRASPASO_DIRECTO = [
-  'Esposo',
-  'Esposa',
-  'Hijo',
-  'Hija',
-  'Padre',
-  'Madre',
-  'Hermano',
-  'Hermana',
-] as const;
-
-const EDAD_MINIMA_TRASPASO = 60;
-
-const traspasoSocioSchema = z.object({
-  nueva_cedula: z.string().min(7, 'Cédula debe tener al menos 7 dígitos').max(11).regex(/^\d+$/, 'Cédula solo debe contener números'),
-  nuevo_nombre: z.string().min(2).max(100),
-  nuevo_apellido: z.string().min(2).max(100),
-  nueva_fecha_nacimiento: z.string().min(1, 'La fecha de nacimiento del nuevo titular es requerida'),
-  parentesco: z.enum(PARENTESCOS_TRASPASO_DIRECTO, {
-    errorMap: () => ({ message: 'El traspaso solo se permite a un familiar directo (esposo/a, hijo/a, padre, madre, hermano/a)' }),
-  }),
-  nuevo_telefono: z.string().max(20).optional().nullable(),
-  nuevo_email: z.string().email('Email inválido').max(100).optional().nullable().or(z.literal('')),
-  nueva_direccion: z.string().max(500).optional().nullable(),
-  motivo: z.string().min(10, 'Describe el motivo del traspaso (mínimo 10 caracteres)'),
-  confirma_acuerdo_titular: z.boolean(),
-  confirma_problemas_medicos: z.boolean(),
-});
-
-const calcularEdadDesde = (fechaNacimiento: Date): number => {
-  const hoy = new Date();
-  let edad = hoy.getFullYear() - fechaNacimiento.getFullYear();
-  const mes = hoy.getMonth() - fechaNacimiento.getMonth();
-  if (mes < 0 || (mes === 0 && hoy.getDate() < fechaNacimiento.getDate())) {
-    edad--;
-  }
-  return edad;
 };
 
 // ============================================
@@ -1359,239 +1338,6 @@ export const buscarSocioPorExpediente = async (req: Request, res: Response): Pro
   }
 };
 
-/**
- * Traspasar la titularidad de un socio a un familiar directo.
- * Requiere: un acuerdo de funeraria activo, socio con 60 años o más,
- * conformidad del titular y problemas médicos que motiven el traspaso. El
- * expediente (codigo_socio) y todo su historial (acuerdos, beneficiarios,
- * cuentas, préstamos) se mantienen; solo cambian los datos de identidad del
- * titular.
- * POST /api/socios/:id/traspaso
- */
-export const traspasarSocio = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-
-    if (!id) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_ID',
-          message: 'ID de socio inválido',
-        },
-      });
-      return;
-    }
-
-    const socioId = parseInt(id, 10);
-    const validacion = traspasoSocioSchema.safeParse(req.body);
-
-    if (!validacion.success) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Datos inválidos',
-          details: validacion.error.errors,
-        },
-      });
-      return;
-    }
-
-    const datos = validacion.data;
-
-    if (!datos.confirma_acuerdo_titular) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'CONFIRMACION_REQUERIDA',
-          message: 'Debe confirmar que el titular está de acuerdo con el traspaso',
-        },
-      });
-      return;
-    }
-
-    if (!datos.confirma_problemas_medicos) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'CONFIRMACION_REQUERIDA',
-          message: 'El traspaso solo procede si el titular presenta problemas médicos que lo motiven',
-        },
-      });
-      return;
-    }
-
-    const socio = await prisma.socio.findUnique({ where: { id: socioId } });
-
-    if (!socio) {
-      res.status(404).json({
-        success: false,
-        error: {
-          code: 'SOCIO_NOT_FOUND',
-          message: 'Socio no encontrado',
-        },
-      });
-      return;
-    }
-
-    if (socio.estado === 'retirado') {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'SOCIO_RETIRADO',
-          message: 'No se puede traspasar un socio retirado',
-        },
-      });
-      return;
-    }
-
-    const acuerdoFunerariaActivo = await prisma.acuerdoFuneraria.findFirst({
-      where: { beneficiario: { socio_id: socioId }, estado: 'activo' },
-    });
-
-    if (!acuerdoFunerariaActivo) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'ACUERDO_NO_ACTIVO',
-          message: 'El traspaso solo puede realizarse si el socio tiene un acuerdo de funeraria activo',
-        },
-      });
-      return;
-    }
-
-    if (!socio.fecha_nacimiento) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'FECHA_NACIMIENTO_REQUERIDA',
-          message: 'El socio no tiene fecha de nacimiento registrada; no es posible validar la edad mínima para el traspaso',
-        },
-      });
-      return;
-    }
-
-    const edad = calcularEdadDesde(socio.fecha_nacimiento);
-    if (edad < EDAD_MINIMA_TRASPASO) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'EDAD_INSUFICIENTE',
-          message: `El traspaso solo procede si el titular tiene ${EDAD_MINIMA_TRASPASO} años o más (edad actual: ${edad})`,
-        },
-      });
-      return;
-    }
-
-    if (datos.nueva_cedula === socio.cedula) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'CEDULA_INVALIDA',
-          message: 'La cédula del nuevo titular debe ser diferente a la del titular actual',
-        },
-      });
-      return;
-    }
-
-    // Socio.cedula no es única (una cédula puede tener varios expedientes),
-    // por eso la búsqueda es findFirst y no findUnique.
-    const cedulaEnUso = await prisma.socio.findFirst({ where: { cedula: datos.nueva_cedula } });
-    if (cedulaEnUso) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'CEDULA_DUPLICADA',
-          message: `La cédula ${datos.nueva_cedula} ya pertenece a otro socio`,
-        },
-      });
-      return;
-    }
-
-    // La cédula de Beneficiario también es única a nivel de base de datos, así
-    // que no puede coincidir con ninguna fila existente (ni de este socio ni de
-    // otro): la fila "titular" quedará con esta cédula al finalizar el traspaso.
-    const cedulaEnUsoBeneficiario = await prisma.beneficiario.findFirst({
-      where: { cedula: datos.nueva_cedula, NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } } },
-    });
-    if (cedulaEnUsoBeneficiario) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'CEDULA_DUPLICADA',
-          message:
-            cedulaEnUsoBeneficiario.socio_id === socioId
-              ? `La cédula ${datos.nueva_cedula} ya está registrada como beneficiario (${cedulaEnUsoBeneficiario.parentesco}) de este mismo socio. Retire ese beneficiario antes de continuar con el traspaso.`
-              : `La cédula ${datos.nueva_cedula} ya está registrada como beneficiario de otro socio`,
-        },
-      });
-      return;
-    }
-
-    const fechaHoy = new Date().toISOString().split('T')[0];
-    const notaTraspaso = `[TRASPASO ${fechaHoy}] Titular anterior: ${socio.nombre} ${socio.apellido} (C.I. ${socio.cedula}) -> Nuevo titular: ${datos.nuevo_nombre} ${datos.nuevo_apellido} (C.I. ${datos.nueva_cedula}), parentesco: ${datos.parentesco}. Motivo: ${datos.motivo}. Usuario: ${req.user!.userId}`;
-    const notasActualizadas = [socio.notas?.trim(), notaTraspaso].filter(Boolean).join('\n');
-
-    const socioActualizado = await prisma.$transaction(async (tx) => {
-      const actualizado = await tx.socio.update({
-        where: { id: socioId },
-        data: {
-          cedula: datos.nueva_cedula,
-          nombre: datos.nuevo_nombre,
-          apellido: datos.nuevo_apellido,
-          fecha_nacimiento: new Date(datos.nueva_fecha_nacimiento),
-          telefono: datos.nuevo_telefono || socio.telefono,
-          email: datos.nuevo_email || socio.email,
-          direccion: datos.nueva_direccion || socio.direccion,
-          notas: notasActualizadas,
-        },
-      });
-
-      // Mantener sincronizada la fila "titular" autogenerada de Beneficiario
-      // (se usa para imprimir la ficha del acuerdo de funeraria).
-      await tx.beneficiario.updateMany({
-        where: { socio_id: socioId, parentesco: { equals: 'titular', mode: 'insensitive' } },
-        data: {
-          cedula: datos.nueva_cedula,
-          nombre: datos.nuevo_nombre,
-          apellido: datos.nuevo_apellido,
-          fecha_nacimiento: new Date(datos.nueva_fecha_nacimiento),
-        },
-      });
-
-      await registrarAuditoria(tx, {
-        req,
-        accion: 'TRASPASO',
-        modulo: 'socios',
-        registro_id: socio.id,
-        antes: socio,
-        despues: actualizado,
-      });
-
-      return actualizado;
-    });
-
-    logger.info(
-      `Socio traspasado: expediente ${socio.codigo_socio} de ${socio.nombre} ${socio.apellido} a ${datos.nuevo_nombre} ${datos.nuevo_apellido}`
-    );
-
-    res.json({
-      success: true,
-      data: socioActualizado,
-    });
-  } catch (error) {
-    logger.error('Error al traspasar socio:', error);
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Error al traspasar socio',
-      },
-    });
-  }
-};
-
 // ============================================
 // CONTROLADORES - BENEFICIARIOS
 // ============================================
@@ -1708,13 +1454,33 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Validar límite de 8 beneficiarios activos (sumando al titular, 9 personas en total).
-    // Los que pasaron a 'fallecido' o 'retirado' liberan su cupo. La fila de
-    // Beneficiario con parentesco 'titular' (creada por la migración para
-    // representar al propio socio) no cuenta como cupo de familia.
+    // Validar límite de 8 beneficiarios activos por acuerdo de funeraria (sumando
+    // al titular, 9 personas). Un socio puede tener varios acuerdos, cada uno con
+    // su propio tope. Los que pasaron a 'fallecido' o 'retirado' liberan su cupo.
+    // La fila de Beneficiario con parentesco 'titular' (creada por la migración
+    // para representar al propio socio) no cuenta como cupo de familia.
+    if (datos.acuerdo_funeraria_id) {
+      const acuerdo = await prisma.acuerdoFuneraria.findFirst({
+        where: { id: datos.acuerdo_funeraria_id, beneficiario: { socio_id: id } },
+      });
+
+      if (!acuerdo) {
+        res.status(404).json({
+          success: false,
+          error: {
+            code: 'ACUERDO_NOT_FOUND',
+            message: 'El acuerdo de funeraria no existe o no pertenece a este socio',
+          },
+        });
+        return;
+      }
+    }
+
     const beneficiariosActivos = await prisma.beneficiario.count({
       where: {
-        socio_id: id,
+        ...(datos.acuerdo_funeraria_id
+          ? { acuerdo_funeraria_id: datos.acuerdo_funeraria_id, fecha_retiro_funeraria: null }
+          : { socio_id: id }),
         estado: 'activo',
         NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
       },
@@ -1725,16 +1491,16 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
         success: false,
         error: {
           code: 'LIMITE_BENEFICIARIOS',
-          message: 'Un socio no puede tener más de 8 beneficiarios activos (9 personas en total, incluyendo al titular)',
+          message: 'Un acuerdo no puede tener más de 8 beneficiarios activos (9 personas en total, incluyendo al titular)',
         },
       });
       return;
     }
 
-    // Validar cédula única
-    const cedulaExistente = await prisma.beneficiario.findUnique({
-      where: { cedula: datos.cedula },
-    });
+    // Validar cédula única ("MENOR" no se valida: recibe un MENOR-N nuevo al crear)
+    const cedulaExistente = esPedidoDeMenor(datos.cedula)
+      ? null
+      : await prisma.beneficiario.findFirst({ where: { cedula: datos.cedula } });
 
     if (cedulaExistente) {
       res.status(400).json({
@@ -1752,13 +1518,14 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
       const beneficiario = await tx.beneficiario.create({
         data: {
           socio_id: id,
-          cedula: datos.cedula,
+          cedula: await cedulaParaGuardar(tx, datos.cedula),
           nombre: datos.nombre,
           apellido: datos.apellido,
           fecha_nacimiento: new Date(datos.fecha_nacimiento),
           fecha_ingreso: new Date(datos.fecha_ingreso),
           parentesco: datos.parentesco,
           telefono: datos.telefono,
+          acuerdo_funeraria_id: datos.acuerdo_funeraria_id ?? null,
         },
       });
 
@@ -1846,10 +1613,26 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
       return;
     }
 
-    // Validar cédula única si se está cambiando
-    if (datos.cedula && datos.cedula !== beneficiarioExistente.cedula) {
-      const cedulaExistente = await prisma.beneficiario.findUnique({
-        where: { cedula: datos.cedula },
+    // Los datos personales del socio titular (su fila "titular") se modifican
+    // solo en el módulo de Socios, nunca desde Salud o Funeraria. Sí se permite
+    // cambiar su estado (fallecido / revertir), que es de la persona.
+    const esTitularFila = beneficiarioExistente.parentesco?.trim().toLowerCase() === 'titular';
+    const camposPersonales = ['cedula', 'nombre', 'apellido', 'fecha_nacimiento', 'fecha_ingreso', 'parentesco', 'telefono'] as const;
+    if (esTitularFila && camposPersonales.some((campo) => datos[campo] !== undefined)) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'TITULAR_NO_EDITABLE',
+          message: 'Los datos del socio titular no se modifican aquí. Hazlo desde el módulo de Socios.',
+        },
+      });
+      return;
+    }
+
+    // Validar cédula única si se está cambiando ("MENOR" recibe un MENOR-N propio)
+    if (datos.cedula && datos.cedula !== beneficiarioExistente.cedula && !esPedidoDeMenor(datos.cedula)) {
+      const cedulaExistente = await prisma.beneficiario.findFirst({
+        where: { cedula: datos.cedula, NOT: { id: beneficiarioExistente.id } },
       });
 
       if (cedulaExistente) {
@@ -1858,6 +1641,39 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
           error: {
             code: 'CEDULA_DUPLICADA',
             message: `La cédula ${datos.cedula} ya está registrada como beneficiario`,
+          },
+        });
+        return;
+      }
+    }
+
+    // Reactivar (p. ej. revertir un "fallecido" marcado por error) vuelve a
+    // ocupar un cupo en su acuerdo de funeraria: aplicar el mismo tope de 8
+    // activos que agregarBeneficiario. Si no está en funeraria (solo Salud), el
+    // cupo lo controla Salud y aquí no se limita.
+    const reactivando =
+      datos.estado === 'activo' &&
+      beneficiarioExistente.estado !== 'activo' &&
+      beneficiarioExistente.acuerdo_funeraria_id !== null &&
+      beneficiarioExistente.fecha_retiro_funeraria === null &&
+      beneficiarioExistente.parentesco?.trim().toLowerCase() !== 'titular';
+
+    if (reactivando) {
+      const beneficiariosActivos = await prisma.beneficiario.count({
+        where: {
+          acuerdo_funeraria_id: beneficiarioExistente.acuerdo_funeraria_id,
+          fecha_retiro_funeraria: null,
+          estado: 'activo',
+          NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
+        },
+      });
+
+      if (beneficiariosActivos >= 8) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'LIMITE_BENEFICIARIOS',
+            message: 'No se puede reactivar: su acuerdo de funeraria ya tiene 8 beneficiarios activos (9 personas en total, incluyendo al titular)',
           },
         });
         return;
@@ -1878,6 +1694,13 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
 
     // Actualizar beneficiario
     const beneficiario = await prisma.$transaction(async (tx) => {
+      if (esPedidoDeMenor(datos.cedula)) {
+        // Si ya era un MENOR-N conserva su número; si no, recibe el siguiente
+        datosActualizacion.cedula = /^MENOR-\d+$/.test(beneficiarioExistente.cedula)
+          ? beneficiarioExistente.cedula
+          : await cedulaParaGuardar(tx, datos.cedula!);
+      }
+
       const beneficiario = await tx.beneficiario.update({
         where: { id },
         data: datosActualizacion,
