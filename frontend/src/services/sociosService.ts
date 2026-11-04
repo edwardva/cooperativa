@@ -216,6 +216,30 @@ export const obtenerSociosParaImprimir = async (params: {
 /**
  * Obtener un socio por ID
  */
+/** Nombres y apellidos del CNE para una cedula (via cedula.com.ve) */
+export interface DatosCne {
+  nacionalidad: 'V' | 'E'
+  cedula: string
+  nombres: string
+  apellidos: string
+  rif: string | null
+  estado: string | null
+  municipio: string | null
+  parroquia: string | null
+  centro_electoral: string | null
+}
+
+/**
+ * `disponible: false` si el servicio no esta configurado; `datos: null` si la
+ * cedula no aparece o el servicio no respondio. Nunca debe trabar el alta.
+ */
+export const consultarCne = async (
+  cedula: string
+): Promise<SingleResponse<{ disponible: boolean; datos: DatosCne | null }>> => {
+  const response = await apiClient.get(`/socios/cne/${encodeURIComponent(cedula)}`)
+  return response.data
+}
+
 export const obtenerSocioPorId = async (id: number): Promise<SingleResponse<Socio>> => {
   const response = await apiClient.get(`/socios/${id}`)
   return response.data
