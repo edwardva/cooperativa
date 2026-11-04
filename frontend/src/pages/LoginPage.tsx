@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import authService from '../services/authService'
+import type { Caja } from '../services/authService'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -10,6 +12,8 @@ import logo from '@/logoR.png'
 const loginSchema = z.object({
   username: z.string().min(1, 'Usuario es requerido'),
   password: z.string().min(1, 'Contraseña es requerida'),
+  // Desde que caja entra. Vacio para los usuarios que no atienden caja.
+  caja_id: z.string().optional(),
 })
 
 type LoginFormData = z.infer<typeof loginSchema>
@@ -22,6 +26,17 @@ export default function LoginPage() {
   const location = useLocation()
   const { login, isAuthenticated, isLoading, error, clearError } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
+
+  // Las cajas se piden al abrir: la cooperativa atiende en dos sedes y hay que
+  // saber desde cual se trabaja para poder rastrear quien hizo que y donde.
+  const [cajas, setCajas] = useState<Caja[]>([])
+  useEffect(() => {
+    authService
+      .cajas()
+      .then(setCajas)
+      // Si no se pueden cargar, se entra sin elegir caja en vez de bloquear
+      .catch(() => setCajas([]))
+  }, [])
 
   const {
     register,
@@ -46,7 +61,11 @@ export default function LoginPage() {
 
   const onSubmit = async (data: LoginFormData) => {
     try {
-      await login(data)
+      await login({
+        username: data.username,
+        password: data.password,
+        caja_id: data.caja_id ? Number(data.caja_id) : null,
+      })
       // La redirección se maneja en el useEffect de arriba
     } catch (error) {
       // El error se maneja en el store
@@ -177,6 +196,31 @@ export default function LoginPage() {
                 <p className="mt-2 text-sm text-error-600">{errors.password.message}</p>
               )}
             </div>
+
+            {/* En que caja va a trabajar. Solo aparece si hay cajas cargadas:
+                una instalacion con una sola sede no tiene que elegir nada. */}
+            {cajas.length > 0 && (
+              <div>
+                <label htmlFor="caja_id" className="mb-2 block text-sm font-medium text-neutral-700">
+                  ¿En qué caja va a trabajar?
+                </label>
+                <select
+                  id="caja_id"
+                  {...register('caja_id')}
+                  className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-neutral-900 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                >
+                  <option value="">Sin caja (solo consulta)</option>
+                  {cajas.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-neutral-500">
+                  Queda registrado en todo lo que haga durante la sesión.
+                </p>
+              </div>
+            )}
 
             {/* Botón de submit */}
             <button

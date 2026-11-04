@@ -13,7 +13,7 @@ import { BadRequestError } from '../middleware/errorHandler';
 import { fechaDia } from '../utils/fechaDia';
 import { responderError } from '../utils/responderError';
 
-/** GET /api/auditoria?usuario=&modulo=&accion=&registro_id=&desde=&hasta=&page=&limit= */
+/** GET /api/auditoria?usuario=&caja=&modulo=&accion=&registro_id=&desde=&hasta=&page=&limit= */
 export const listarAuditoria = async (req: Request, res: Response): Promise<void> => {
   try {
     const q = req.query;
@@ -24,6 +24,13 @@ export const listarAuditoria = async (req: Request, res: Response): Promise<void
 
     if (q.modulo) where.modulo = String(q.modulo);
     if (q.accion) where.accion = String(q.accion);
+    // Desde que caja se hizo: la cooperativa atiende en dos y quiere poder
+    // mirar por separado lo que pasa en cada una
+    if (q.caja) {
+      const cajaId = Number(q.caja);
+      if (!Number.isInteger(cajaId)) throw new BadRequestError('La caja debe ser un número');
+      where.caja_id = cajaId;
+    }
     if (q.registro_id) {
       const id = Number(q.registro_id);
       if (!Number.isInteger(id)) throw new BadRequestError('El registro debe ser un número');
@@ -55,7 +62,10 @@ export const listarAuditoria = async (req: Request, res: Response): Promise<void
         orderBy: { created_at: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
-        include: { usuario: { select: { id: true, username: true, nombre_completo: true } } },
+        include: {
+          usuario: { select: { id: true, username: true, nombre_completo: true } },
+          caja: { select: { id: true, codigo: true, nombre: true } },
+        },
       }),
     ]);
 
@@ -68,11 +78,19 @@ export const listarAuditoria = async (req: Request, res: Response): Promise<void
 /** GET /api/auditoria/opciones — módulos y acciones que existen, para los filtros */
 export const opcionesAuditoria = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const [modulos, acciones] = await Promise.all([
+    const [modulos, acciones, cajas] = await Promise.all([
       prisma.auditLog.findMany({ distinct: ['modulo'], select: { modulo: true }, orderBy: { modulo: 'asc' } }),
       prisma.auditLog.findMany({ distinct: ['accion'], select: { accion: true }, orderBy: { accion: 'asc' } }),
+      prisma.caja.findMany({
+        where: { estado: true },
+        select: { id: true, codigo: true, nombre: true },
+        orderBy: { codigo: 'asc' },
+      }),
     ]);
-    res.json({ success: true, data: { modulos: modulos.map((m) => m.modulo), acciones: acciones.map((a) => a.accion) } });
+    res.json({
+      success: true,
+      data: { modulos: modulos.map((m) => m.modulo), acciones: acciones.map((a) => a.accion), cajas },
+    });
   } catch (error) {
     responderError(res, error, 'Error al leer las opciones de auditoría');
   }

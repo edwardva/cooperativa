@@ -11,6 +11,8 @@ declare global {
         userId: number
         username: string
         rolId: number
+        /** Caja desde la que abrio sesion. Nulo si no eligio ninguna. */
+        cajaId: number | null
       }
     }
   }
