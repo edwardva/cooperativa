@@ -19,6 +19,7 @@ import {
   exportarFuneraria,
   asientoContable,
 } from '../controllers/colectaController';
+import { obtenerLibretaAhorro } from '../controllers/libretaController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -35,7 +36,7 @@ router.use(authenticate);
 router.get('/buscar', authorize('colecta', 'read'), buscarSocioParaColecta);
 
 /**
- * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_usd=
+ * GET /api/colecta/calcular?socio_id=&semanas=&ahorro_adicional_bs=
  * Importe del paquete semanal, para el desglose en vivo de la pantalla
  */
 router.get('/calcular', authorize('colecta', 'read'), calcularPaquete);
@@ -89,6 +90,13 @@ router.get('/', authorize('colecta', 'read'), listarColectas);
  * Registra el cobro completo en una transacción
  */
 router.post('/', authorize('colecta', 'create'), registrarColecta);
+
+/**
+ * GET /api/colecta/libreta/:cuentaId
+ * Libreta de ahorro para imprimir: encabezado del socio y todos los renglones.
+ * Va antes de /:id para que "libreta" no se tome como un id.
+ */
+router.get('/libreta/:cuentaId', authorize('colecta', 'read'), obtenerLibretaAhorro);
 
 /**
  * GET /api/colecta/:id

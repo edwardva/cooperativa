@@ -159,7 +159,7 @@ export default function TrabajadoresPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const r = await feriasService.obtenerUbicaciones()
+        const r = await feriasService.obtenerUbicaciones('feria')
         if (r.success && r.data) setFerias(r.data)
       } catch {
         // Sin ferias el filtro queda vacio; el error se ve al guardar

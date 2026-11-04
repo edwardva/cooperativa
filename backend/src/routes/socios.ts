@@ -8,13 +8,14 @@ import {
   actualizarSocio,
   actualizarCodigoSocial,
   retirarSocio,
-  traspasarSocio,
+  reactivarSocioRetirado,
   obtenerBeneficiarios,
   agregarBeneficiario,
   actualizarBeneficiario,
   eliminarBeneficiario,
   obtenerEstadisticasSocios,
 } from '../controllers/sociosController';
+import { consultarCedulaCne } from '../controllers/cneController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -51,6 +52,13 @@ router.get(
 );
 
 /**
+ * GET /api/socios/cne/:cedula
+ * Nombres y apellidos del CNE para la inscripción (vía cedula.com.ve)
+ * Permisos: socios:create
+ */
+router.get('/cne/:cedula', authorize('socios', 'create'), consultarCedulaCne);
+
+/**
  * GET /api/socios/buscar/:cedula
  * Buscar socio rápido por cédula (para Colecta)
  * Permisos: socios:read
@@ -63,7 +71,7 @@ router.get(
 
 /**
  * GET /api/socios/expediente/:codigo
- * Buscar socio por número de expediente exacto (para Traspaso en Funeraria)
+ * Buscar socio por número de expediente exacto (lo usan los traspasos de Funeraria y Salud)
  * Permisos: socios:read
  */
 router.get(
@@ -127,14 +135,13 @@ router.post(
 );
 
 /**
- * POST /api/socios/:id/traspaso
- * Traspasar la titularidad del socio a un familiar directo
- * Permisos: socios:update
+ * POST /api/socios/:id/reactivar-retirado
+ * Devolver a activo a un socio retirado, con motivo. Sólo el administrador.
  */
 router.post(
-  '/:id/traspaso',
-  authorize('socios', 'update'),
-  traspasarSocio
+  '/:id/reactivar-retirado',
+  authorize('socios', 'reactivar_retirado'),
+  reactivarSocioRetirado
 );
 
 // ============================================

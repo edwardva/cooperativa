@@ -75,9 +75,9 @@ export interface PaqueteSemanal {
  * Tarifa semanal que aplica a un acuerdo.
  *
  * Manda la tarifa GENERAL del parámetro. La cooperativa cobra una sola cuota
- * por servicio y la multiplica por la cantidad de acuerdos del socio — es lo
- * que hace el sistema actual, donde la pantalla tiene un único campo por
- * servicio (`bs_fun`, `bs_sal`) multiplicado por `nu_fun` / `nu_sal`.
+ * por servicio. Funeraria la multiplica por la cantidad de acuerdos del socio
+ * (`bs_fun` x `nu_fun` en el sistema actual); salud NO: es una cuota por grupo
+ * familiar, sin importar cuántas personas tenga (ver `armarPaquete`).
  *
  * El `monto_usd` del tipo de acuerdo queda como respaldo, por si el parámetro
  * llegara vacío o en cero. Antes tenía precedencia, y eso cobraba de más: el
@@ -114,11 +114,21 @@ export function armarPaquete(opciones: {
   tasa: number;
   /** Cuenta que recibe el ahorro obligatorio; sin ella no se cobra ahorro */
   cuentaAhorroId: number | null;
-  /** Ahorro voluntario que el socio agrega en el mismo cobro */
+  /** Ahorro voluntario que el socio agrega en el mismo cobro, en dólares */
   ahorroAdicionalUsd?: number;
+  /**
+   * El mismo ahorro voluntario, en bolívares. Es lo que escribe el cajero en
+   * `Adic:` (como en el sistema actual). Se lleva tal cual al renglón: pasarlo
+   * a dólares con dos decimales y volver a bolívares lo movería varios Bs.
+   */
+  ahorroAdicionalBs?: number;
 }): PaqueteSemanal {
   const { semanas, acuerdos, tarifas, tasa, cuentaAhorroId } = opciones;
-  const ahorroAdicional = redondear(Math.max(0, opciones.ahorroAdicionalUsd ?? 0));
+  const adicionalBs = redondear(Math.max(0, opciones.ahorroAdicionalBs ?? 0));
+  const ahorroAdicional =
+    adicionalBs > 0 && tasa > 0
+      ? redondear(adicionalBs / tasa)
+      : redondear(Math.max(0, opciones.ahorroAdicionalUsd ?? 0));
 
   const renglones: RenglonPaquete[] = [];
   const advertencias: string[] = [];
@@ -126,6 +136,10 @@ export function armarPaquete(opciones: {
   // --- Ahorro obligatorio: va siempre que el socio tenga cuenta ---
   const ahorroObligatorio = redondear(tarifas.ahorro_usd * semanas);
   const montoAhorro = redondear(ahorroObligatorio + ahorroAdicional);
+  const montoAhorroBs =
+    adicionalBs > 0
+      ? redondear(redondear(ahorroObligatorio * tasa) + adicionalBs)
+      : redondear(montoAhorro * tasa);
 
   if (cuentaAhorroId === null) {
     if (ahorroObligatorio > 0) {
@@ -133,23 +147,33 @@ export function armarPaquete(opciones: {
         'El socio no tiene cuenta de ahorro activa: no se cobra el ahorro obligatorio'
       );
     }
-  } else if (montoAhorro > 0) {
+  } else if (montoAhorro > 0 || montoAhorroBs > 0) {
     renglones.push({
       servicio: 'ahorro',
       referencia_id: cuentaAhorroId,
-      titulo: ahorroAdicional > 0 ? 'Ahorro obligatorio + adicional' : 'Ahorro obligatorio',
+      titulo: ahorroAdicional > 0 || adicionalBs > 0 ? 'Ahorro obligatorio + adicional' : 'Ahorro obligatorio',
       semanas,
       tarifa_unitaria_usd: tarifas.ahorro_usd,
       monto_usd: montoAhorro,
-      monto_bs: redondear(montoAhorro * tasa),
+      monto_bs: montoAhorroBs,
       cobertura_antes: null,
       cobertura_despues: null,
     });
   }
 
   // --- Servicios contratados: todos, no una selección ---
+  //
+  // Salud se cobra POR GRUPO FAMILIAR, no por persona (observación de la
+  // cooperativa al probar, 03/11: "el cobro de salud sale por persona y es
+  // 0,96 $ por el grupo familiar"). Con 8 personas y 3 semanas son 0,96 x 3,
+  // no 8 x 0,96 x 3. La tarifa va en el primer acuerdo de salud; los demás
+  // siguen en el paquete con monto 0 para que su cobertura avance igual.
+  // Funeraria sigue siendo por acuerdo.
+  let saludCobrada = false;
   for (const acuerdo of acuerdos) {
-    const tarifa = tarifaDeAcuerdo(acuerdo, tarifas);
+    const tarifaBase = tarifaDeAcuerdo(acuerdo, tarifas);
+    const tarifa = acuerdo.servicio === 'salud' && saludCobrada ? 0 : tarifaBase;
+    if (acuerdo.servicio === 'salud') saludCobrada = true;
     const monto = redondear(tarifa * semanas);
     const antes = acuerdo.situacion.cobertura;
 
@@ -199,7 +223,9 @@ export function armarPaquete(opciones: {
       ahorro_bs: sumar('ahorro', 'monto_bs'),
       funeraria_bs: sumar('funeraria', 'monto_bs'),
       salud_bs: sumar('salud', 'monto_bs'),
-      total_bs: redondear(totalUsd * tasa),
+      // Suma de los renglones en Bs, no total_usd * tasa: el ahorro adicional
+      // viene en bolívares exactos y así el total coincide con lo cobrado
+      total_bs: redondear(renglones.reduce((a, r) => a + r.monto_bs, 0)),
     },
     advertencias,
   };

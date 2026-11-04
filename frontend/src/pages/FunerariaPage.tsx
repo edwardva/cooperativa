@@ -27,7 +27,7 @@ import {
   UserPlus,
   Edit2,
   Trash2,
-  Skull,
+  RotateCcw,
   ArrowRight,
   ArrowLeft,
   ArrowRightLeft,
@@ -37,16 +37,22 @@ import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Badge } from '../components/ui/Badge'
+import { CruzFallecido } from '../components/ui/CruzFallecido'
 import { Modal } from '../components/ui/Modal'
 import { SortableHeader } from '../components/ui/SortableHeader'
 import { PrintableListado } from '../components/print/PrintableListado'
+import { PrintableFichaAcuerdo, type PrintableFichaAcuerdoProps } from '../components/print/PrintableFichaAcuerdo'
+import { EncabezadoImpresion, imprimirCuandoEsteListo, LOGO_COOPERATIVA, NOMBRE_COOPERATIVA } from '../components/print/EncabezadoImpresion'
+import { ModalRevertirConNuevoAcuerdo } from '../components/funeraria/ModalRevertirConNuevoAcuerdo'
+import { ModalTraspasoAcuerdo, type AcuerdoATraspasar } from '../components/traspaso/ModalTraspasoAcuerdo'
 import * as funerariaService from '../services/funerariaService'
 import * as sociosService from '../services/sociosService'
 import * as saludService from '../services/saludService'
-import type { AcuerdoFuneraria, AcuerdoDetalle, TipoAcuerdo } from '../services/funerariaService'
+import type { AcuerdoFuneraria, AcuerdoDetalle } from '../services/funerariaService'
 import type { Socio, Beneficiario, BeneficiarioFormData } from '../services/sociosService'
-import { getErrorMessage } from '../services/api'
+import { getErrorCode, getErrorMessage, getErrorMessageDetallado } from '../services/api'
 import { formatearFecha, calcularEdad, nombreEnMayusculas } from '../utils/formatters'
+import { valorEnMayusculas } from '../utils/mayusculas'
 import { usePermissions } from '../store/authStore'
 
 type Tab = 'activo' | 'suspendido' | 'retirado' | 'todos'
@@ -69,7 +75,6 @@ export default function FunerariaPage() {
 
   // Datos
   const [acuerdos, setAcuerdos] = useState<AcuerdoFuneraria[]>([])
-  const [tiposAcuerdo, setTiposAcuerdo] = useState<TipoAcuerdo[]>([])
   const [estadisticas, setEstadisticas] = useState({
     total_acuerdos: 0,
     activos: 0,
@@ -80,7 +85,6 @@ export default function FunerariaPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [filtroTipo] = useState<string>('todos')
 
 // Filtros y paginación
 const [busqueda, setBusqueda] = useState('')
@@ -177,145 +181,46 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [wizardBuscando, setWizardBuscando] = useState(false)
   const [wizardError, setWizardError] = useState<string | null>(null)
   const [wizardSocio, setWizardSocio] = useState<Socio | null>(null)
-  const [wizardTipoAcuerdoId, setWizardTipoAcuerdoId] = useState<number | ''>('')
   const [wizardNumeroAcuerdo, setWizardNumeroAcuerdo] = useState('')
-  // Un socio puede tener varios acuerdos: uno por persona cubierta
-  const [wizardBeneficiarios, setWizardBeneficiarios] = useState<Beneficiario[]>([])
-  const [wizardBeneficiarioId, setWizardBeneficiarioId] = useState<number | ''>('')
-  const [wizardNumeroContrato, setWizardNumeroContrato] = useState('')
+  // Un socio puede tener varios acuerdos activos, cada uno con hasta 8 beneficiarios
+  const [wizardAcuerdosSocio, setWizardAcuerdosSocio] = useState<funerariaService.AcuerdoFunerariaPorSocio[]>([])
   const [wizardFechaInicio, setWizardFechaInicio] = useState(hoyISO())
   const [wizardEnviando, setWizardEnviando] = useState(false)
 
   const cerrarWizard = () => {
     setWizardAbierto(false)
     setWizardPaso(1)
-    setWizardBeneficiarios([])
-    setWizardBeneficiarioId('')
+    setWizardAcuerdosSocio([])
     setWizardCedula('')
     setWizardError(null)
     setWizardSocio(null)
-    setWizardTipoAcuerdoId('')
     setWizardNumeroAcuerdo('')
-    setWizardNumeroContrato('')
     setWizardFechaInicio(hoyISO())
   }
 
   // ============================================
-  // TRASPASO DE SOCIO (transferir titularidad a un familiar directo)
+  // TRASPASO DEL ACUERDO A OTRO SOCIO (fallecimiento, migración...)
   // ============================================
-  const emptyTraspasoForm = (): sociosService.TraspasoSocioData => ({
-    nueva_cedula: '',
-    nuevo_nombre: '',
-    nuevo_apellido: '',
-    nueva_fecha_nacimiento: '',
-    parentesco: sociosService.PARENTESCOS_TRASPASO_DIRECTO[0],
-    nuevo_telefono: '',
-    nuevo_email: '',
-    nueva_direccion: '',
-    motivo: '',
-    confirma_acuerdo_titular: false,
-    confirma_problemas_medicos: false,
-  })
-
+  // Desde el botón principal se pide el expediente del titular actual; desde
+  // "Nuevo acuerdo" el acuerdo ya viene elegido.
   const [traspasoAbierto, setTraspasoAbierto] = useState(false)
-  const [traspasoPaso, setTraspasoPaso] = useState<1 | 2 | 3>(1)
-  const [traspasoExpediente, setTraspasoExpediente] = useState('')
-  const [traspasoBuscando, setTraspasoBuscando] = useState(false)
-  const [traspasoError, setTraspasoError] = useState<string | null>(null)
-  const [traspasoSocio, setTraspasoSocio] = useState<Socio | null>(null)
-  const [traspasoTieneAcuerdoActivo, setTraspasoTieneAcuerdoActivo] = useState<boolean | null>(null)
-  const [traspasoForm, setTraspasoForm] = useState<sociosService.TraspasoSocioData>(emptyTraspasoForm())
-  const [traspasoEnviando, setTraspasoEnviando] = useState(false)
-  const [traspasoResultado, setTraspasoResultado] = useState<Socio | null>(null)
+  const [traspasoAcuerdoInicial, setTraspasoAcuerdoInicial] = useState<AcuerdoATraspasar | null>(null)
+  const [traspasoTitularInicial, setTraspasoTitularInicial] = useState<Socio | null>(null)
 
-  const abrirTraspaso = () => {
+  const abrirTraspaso = (acuerdo?: funerariaService.AcuerdoFunerariaPorSocio, titular?: Socio) => {
+    setTraspasoAcuerdoInicial(
+      acuerdo
+        ? { clave: acuerdo.id, numero_acuerdo: acuerdo.numero_acuerdo, estado: acuerdo.estado, fecha_inicio: acuerdo.fecha_inicio }
+        : null
+    )
+    setTraspasoTitularInicial(titular ?? null)
     setTraspasoAbierto(true)
-    setTraspasoPaso(1)
-    setTraspasoExpediente('')
-    setTraspasoError(null)
-    setTraspasoSocio(null)
-    setTraspasoTieneAcuerdoActivo(null)
-    setTraspasoForm(emptyTraspasoForm())
-    setTraspasoResultado(null)
   }
 
   const cerrarTraspaso = () => {
     setTraspasoAbierto(false)
-    setTraspasoPaso(1)
-    setTraspasoExpediente('')
-    setTraspasoError(null)
-    setTraspasoSocio(null)
-    setTraspasoTieneAcuerdoActivo(null)
-    setTraspasoForm(emptyTraspasoForm())
-    setTraspasoResultado(null)
-  }
-
-  const traspasoEdadSocio = traspasoSocio ? calcularEdad(traspasoSocio.fecha_nacimiento) : null
-  const traspasoSocioElegible =
-    !!traspasoSocio &&
-    traspasoSocio.estado !== 'retirado' &&
-    traspasoTieneAcuerdoActivo === true &&
-    traspasoEdadSocio !== null &&
-    traspasoEdadSocio >= sociosService.EDAD_MINIMA_TRASPASO
-
-  const buscarSocioTraspaso = async () => {
-    if (!traspasoExpediente.trim()) return
-
-    setTraspasoBuscando(true)
-    setTraspasoError(null)
-    setTraspasoSocio(null)
-    setTraspasoTieneAcuerdoActivo(null)
-
-    try {
-      const respuesta = await sociosService.buscarSocioPorExpediente(traspasoExpediente.trim())
-      if (!respuesta.success || !respuesta.data) {
-        throw new Error('Socio no encontrado')
-      }
-      setTraspasoSocio(respuesta.data)
-      setTraspasoForm(emptyTraspasoForm())
-
-      const respuestaAcuerdos = await funerariaService.obtenerAcuerdosPorSocio(respuesta.data.id)
-      const acuerdos = respuestaAcuerdos.success ? respuestaAcuerdos.data : []
-      setTraspasoTieneAcuerdoActivo(acuerdos.some((a) => a.estado === 'activo'))
-    } catch (err) {
-      setTraspasoError(getErrorMessage(err) || 'Socio no encontrado')
-    } finally {
-      setTraspasoBuscando(false)
-    }
-  }
-
-  const traspasoFormularioValido =
-    traspasoSocioElegible &&
-    traspasoForm.nueva_cedula.trim() !== '' &&
-    traspasoForm.nuevo_nombre.trim() !== '' &&
-    traspasoForm.nuevo_apellido.trim() !== '' &&
-    traspasoForm.nueva_fecha_nacimiento.trim() !== '' &&
-    traspasoForm.motivo.trim().length >= 10 &&
-    traspasoForm.confirma_acuerdo_titular &&
-    traspasoForm.confirma_problemas_medicos
-
-  const confirmarTraspaso = async () => {
-    if (!traspasoSocio || !traspasoFormularioValido) return
-
-    const confirmado = window.confirm(
-      `¿Confirmas el traspaso del expediente ${traspasoSocio.codigo_socio}, de ${traspasoSocio.nombre} ${traspasoSocio.apellido} a ${traspasoForm.nuevo_nombre} ${traspasoForm.nuevo_apellido}? El acuerdo, los beneficiarios y el histórico se mantienen; esta acción no se puede deshacer.`
-    )
-    if (!confirmado) return
-
-    setTraspasoEnviando(true)
-    setTraspasoError(null)
-
-    try {
-      const respuesta = await sociosService.traspasarSocio(traspasoSocio.id, traspasoForm)
-      if (!respuesta.success) throw new Error('No fue posible completar el traspaso')
-      setTraspasoResultado(respuesta.data)
-      setTraspasoPaso(3)
-      await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
-    } catch (err) {
-      setTraspasoError(getErrorMessage(err))
-    } finally {
-      setTraspasoEnviando(false)
-    }
+    setTraspasoAcuerdoInicial(null)
+    setTraspasoTitularInicial(null)
   }
 
   // ============================================
@@ -369,6 +274,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       if (!respuesta.success) throw new Error('No fue posible guardar el código social')
       setSocialesSocio(respuesta.data)
       setSocialesCodigo(respuesta.data.codigo_social || '')
+      // Si el detalle de un acuerdo de este socio está cargado, se refleja al instante
+      const guardado = respuesta.data
+      setAcuerdoDetalle((prev) =>
+        prev?.socio && prev.socio.id === guardado.id ? { ...prev, socio: { ...prev.socio, codigo_social: guardado.codigo_social } } : prev
+      )
       cerrarSociales()
     } catch (err) {
       setSocialesError(getErrorMessage(err))
@@ -382,8 +292,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   // ============================================
   const [editModalAbierto, setEditModalAbierto] = useState(false)
   const [acuerdoEditando, setAcuerdoEditando] = useState<AcuerdoFuneraria | null>(null)
-  const [editTipoAcuerdoId, setEditTipoAcuerdoId] = useState<number | ''>('')
-  const [editNumeroContrato, setEditNumeroContrato] = useState('')
+  const [editNumeroAcuerdo, setEditNumeroAcuerdo] = useState('')
   const [editFechaInicio, setEditFechaInicio] = useState(hoyISO())
   const [editEnviando, setEditEnviando] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
@@ -391,18 +300,17 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const abrirModalEditar = (acuerdo: AcuerdoFuneraria) => {
     cerrarMenuAcciones()
     setAcuerdoEditando(acuerdo)
-    setEditTipoAcuerdoId(acuerdo.tipo_acuerdo.id)
-    setEditNumeroContrato(acuerdo.numero_contrato || '')
+    setEditNumeroAcuerdo(acuerdo.numero_acuerdo || '')
     setEditFechaInicio(acuerdo.fecha_inicio.split('T')[0] || hoyISO())
     setEditError(null)
     setEditModalAbierto(true)
   }
 
-  const editFormularioValido = Boolean(editTipoAcuerdoId) && editFechaInicio.trim() !== ''
+  const editFormularioValido = editFechaInicio.trim() !== ''
 
   const confirmarEdicion = async () => {
     if (!acuerdoEditando || !editFormularioValido) {
-      setEditError('El tipo de acuerdo y la fecha de ingreso son obligatorios.')
+      setEditError('La fecha de ingreso es obligatoria.')
       return
     }
 
@@ -411,8 +319,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
     try {
       const respuesta = await funerariaService.actualizarAcuerdo(acuerdoEditando.id, {
-        tipo_acuerdo_id: editTipoAcuerdoId || undefined,
-        numero_contrato: editNumeroContrato.trim() || null,
+        // Vacío = se deja el número que tenía
+        ...(editNumeroAcuerdo.trim() ? { numero_acuerdo: editNumeroAcuerdo.trim() } : {}),
         fecha_inicio: new Date(editFechaInicio).toISOString(),
       })
 
@@ -439,7 +347,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [beneficiariosSocio, setBeneficiariosSocio] = useState<Beneficiario[]>([])
   const [imprimiendo, setImprimiendo] = useState(false)
 
-  const abrirFicha = async (acuerdo: AcuerdoFuneraria) => {
+  // Solo necesita el id: se llama con una fila de la tabla o con el acuerdo recién creado
+  const abrirFicha = async (acuerdo: Pick<AcuerdoFuneraria, 'id'>) => {
     cerrarMenuAcciones()
     setDrawerAbierto(true)
     setDrawerCargando(true)
@@ -489,22 +398,32 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     setBeneficiarioModalAbierto(true)
   }
 
-  // Máximo 8 beneficiarios activos por socio; sumando al titular dan 9 personas
-  // en total. Al retirar o marcar como fallecido a un beneficiario, su cupo
-  // queda libre. El backend aplica el mismo tope al crear (ver agregarBeneficiario
-  // en sociosController.ts). La lista del detalle solo muestra beneficiarios
-  // activos; los retirados/fallecidos solo aparecen en la ficha impresa.
+  // Máximo 8 beneficiarios activos por ACUERDO; sumando al titular dan 9
+  // personas. Un socio puede tener varios acuerdos, cada uno con sus propios
+  // beneficiarios y su propio tope. Al retirar o marcar como fallecido a un
+  // beneficiario, su cupo queda libre. El backend aplica el mismo tope al crear
+  // (ver agregarBeneficiario en sociosController.ts). La lista del detalle solo
+  // muestra los beneficiarios activos y fallecidos (estos sin acciones) de ESTE
+  // acuerdo; los retirados desaparecen de la lista y solo aparecen en la ficha impresa.
   //
   // Los datos migrados incluyen, para cada socio, una fila de Beneficiario con
   // parentesco "titular" que representa al propio socio (usada para imprimir la
   // ficha con el formato histórico). Esa fila no es un beneficiario real: hay
   // que excluirla de la lista visible y del conteo, o el titular ocuparía uno
   // de los 8 cupos de su propia familia.
-  const MAX_BENEFICIARIOS_POR_SOCIO = 8
+  const MAX_BENEFICIARIOS_POR_ACUERDO = 8
   const esFilaTitular = (b: Beneficiario) => b.parentesco?.trim().toLowerCase() === 'titular'
-  const beneficiariosVisibles = beneficiariosSocio.filter((b) => b.estado === 'activo' && !esFilaTitular(b))
-  const beneficiariosActivosCount = beneficiariosVisibles.length
-  const limiteBeneficiariosAlcanzado = beneficiariosActivosCount >= MAX_BENEFICIARIOS_POR_SOCIO
+  // Beneficiarios de un acuerdo, incluidos los retirados de funeraria (para la ficha)
+  const beneficiariosDeAcuerdo = (beneficiarios: Beneficiario[], acuerdoId: number) =>
+    beneficiarios.filter((b) => b.acuerdo_funeraria_id === acuerdoId && !esFilaTitular(b))
+  // El retiro de funeraria es propio de este módulo (fecha_retiro_funeraria):
+  // retirar aquí no cambia el estado de la persona en Salud, ni al revés.
+  const retiradoDeFuneraria = (b: Beneficiario) => b.fecha_retiro_funeraria !== null
+  const beneficiariosVisibles = (acuerdoDetalle ? beneficiariosDeAcuerdo(beneficiariosSocio, acuerdoDetalle.id) : []).filter(
+    (b) => !retiradoDeFuneraria(b) && (b.estado === 'activo' || b.estado === 'fallecido')
+  )
+  const beneficiariosActivosCount = beneficiariosVisibles.filter((b) => b.estado === 'activo').length
+  const limiteBeneficiariosAlcanzado = beneficiariosActivosCount >= MAX_BENEFICIARIOS_POR_ACUERDO
 
   const abrirEditarBeneficiario = (beneficiario: Beneficiario) => {
     setBeneficiarioEditando(beneficiario)
@@ -545,12 +464,15 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       if (beneficiarioEditando) {
         await sociosService.actualizarBeneficiario(socioId, beneficiarioEditando.id, beneficiarioForm)
       } else {
-        await sociosService.crearBeneficiario(socioId, beneficiarioForm)
+        await sociosService.crearBeneficiario(socioId, {
+          ...beneficiarioForm,
+          ...(acuerdoDetalle ? { acuerdo_funeraria_id: acuerdoDetalle.id } : {}),
+        })
       }
       setBeneficiarioModalAbierto(false)
       await recargarBeneficiarios()
     } catch (err) {
-      setBeneficiarioError(getErrorMessage(err))
+      setBeneficiarioError(getErrorMessageDetallado(err))
     } finally {
       setBeneficiarioEnviando(false)
     }
@@ -560,7 +482,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     const socioId = acuerdoDetalle?.socio?.id
     if (!socioId) return
     const confirmado = window.confirm(
-      `¿Marcar a ${beneficiario.nombre} ${beneficiario.apellido} como fallecido?`
+      `¿Marcar a ${beneficiario.nombre} ${beneficiario.apellido} como fallecido?\n\n` +
+        'El fallecimiento es de la persona: también quedará como fallecido en Salud.'
     )
     if (!confirmado) return
 
@@ -575,16 +498,63 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     }
   }
 
-  const eliminarBeneficiarioAccion = async (beneficiario: Beneficiario) => {
+  // Si el acuerdo ya tiene los 8 activos, revertir un fallecido abre otro
+  // acuerdo del mismo titular para esa persona (ver ModalRevertirConNuevoAcuerdo)
+  const [revertirNuevoAcuerdo, setRevertirNuevoAcuerdo] = useState<Beneficiario | null>(null)
+
+  // Corrige un "fallecido" marcado por error: vuelve a activo y ocupa de nuevo
+  // uno de los 8 cupos (el backend valida el mismo tope).
+  const revertirFallecido = async (beneficiario: Beneficiario) => {
     const socioId = acuerdoDetalle?.socio?.id
     if (!socioId) return
+    if (limiteBeneficiariosAlcanzado) {
+      setRevertirNuevoAcuerdo(beneficiario)
+      return
+    }
     const confirmado = window.confirm(
-      `¿Retirar a ${beneficiario.nombre} ${beneficiario.apellido} de los beneficiarios?`
+      `¿${beneficiario.nombre} ${beneficiario.apellido} fue marcado como fallecido por error?\n\n` +
+        'Volverá a estar activo, se borrará la fecha de fallecimiento y ocupará nuevamente un cupo. También se revierte en Salud.'
     )
     if (!confirmado) return
 
     try {
-      await sociosService.eliminarBeneficiario(socioId, beneficiario.id)
+      await sociosService.actualizarBeneficiario(socioId, beneficiario.id, {
+        estado: 'activo',
+        fecha_fallecimiento: null,
+      })
+      await recargarBeneficiarios()
+    } catch (err) {
+      // Otro usuario pudo llenar el acuerdo mientras tanto
+      if (getErrorCode(err) === 'LIMITE_BENEFICIARIOS') setRevertirNuevoAcuerdo(beneficiario)
+      else window.alert(getErrorMessage(err))
+    }
+  }
+
+  const completarRevertirNuevoAcuerdo = async (numeroAcuerdo: string | null) => {
+    const beneficiario = revertirNuevoAcuerdo
+    setRevertirNuevoAcuerdo(null)
+    await Promise.all([recargarBeneficiarios(), cargarAcuerdos(), cargarEstadisticas()])
+    window.alert(
+      `Se abrió el acuerdo ${numeroAcuerdo || 'sin número'} y ${beneficiario?.nombre} ${beneficiario?.apellido} volvió a estar activo en él.`
+    )
+  }
+
+  const eliminarBeneficiarioAccion = async (beneficiario: Beneficiario) => {
+    if (!acuerdoDetalle) return
+    const nombreCompleto = `${beneficiario.nombre} ${beneficiario.apellido}`
+    const confirmado = window.confirm(
+      `¿Retirar a ${nombreCompleto} (C.I. ${beneficiario.cedula}) de este acuerdo de funeraria?\n\n` +
+        'Dejará de aparecer en la lista y su cupo quedará libre. Si también está en Salud, allá no cambia nada.'
+    )
+    if (!confirmado) return
+    // Segunda confirmación: retirar es una acción que no se deshace desde esta pantalla
+    const reconfirmado = window.confirm(
+      `Confirma de nuevo: ¿seguro que deseas retirar a ${nombreCompleto}? Esta acción no se puede deshacer.`
+    )
+    if (!reconfirmado) return
+
+    try {
+      await funerariaService.retirarBeneficiarioAcuerdo(acuerdoDetalle.id, beneficiario.id)
       await recargarBeneficiarios()
     } catch (err) {
       window.alert(getErrorMessage(err))
@@ -641,63 +611,195 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   // ============================================
   // MODAL: IMPORTAR A SALUD
   // ============================================
+  // COPIA beneficiarios de este acuerdo de funeraria al acuerdo de salud del
+  // mismo titular (si tiene varios, se pregunta a cuál). En Funeraria nada cambia.
+  // Si el acuerdo no tiene beneficiarios se copia solo el titular: si ya tiene
+  // acuerdo de salud se pregunta si se le abre otro.
   const [importarSaludAbierto, setImportarSaludAbierto] = useState(false)
-  const [tiposSalud, setTiposSalud] = useState<saludService.TipoAcuerdo[]>([])
-  const [importarSaludTipoId, setImportarSaludTipoId] = useState<number | ''>('')
+  const [importarSaludCargando, setImportarSaludCargando] = useState(false)
+  const [importarSaludGrupos, setImportarSaludGrupos] = useState<{ numero_acuerdo: string; estado: string; fecha_inicio: string }[]>([])
+  const [importarSaludElegirAbierto, setImportarSaludElegirAbierto] = useState(false)
+  const [importarSaludGrupoElegido, setImportarSaludGrupoElegido] = useState('')
   const [importarSaludSeleccionados, setImportarSaludSeleccionados] = useState<number[]>([])
   const [importarSaludEnviando, setImportarSaludEnviando] = useState(false)
   const [importarSaludError, setImportarSaludError] = useState<string | null>(null)
-  const [importarSaludResultado, setImportarSaludResultado] = useState<string | null>(null)
+  // Ventana final: éxito o fallo de la operación, antes de volver al detalle
+  const [importarSaludResultado, setImportarSaludResultado] = useState<{ exito: boolean; mensaje: string } | null>(null)
+  // Acuerdo sin beneficiarios y el titular ya tiene acuerdo de salud: ¿abrir otro?
+  const [importarSaludPreguntarOtro, setImportarSaludPreguntarOtro] = useState(false)
+  const [importarSaludAbrirOtro, setImportarSaludAbrirOtro] = useState(false)
+  // Titular sin acuerdo de salud: número del acuerdo que se le creará (editable).
+  // null = sí tiene acuerdo de salud (o aún se está consultando)
+  const [importarSaludNumeroNuevo, setImportarSaludNumeroNuevo] = useState<string | null>(null)
+  const importarSaludCrearAcuerdo = importarSaludNumeroNuevo !== null
+  // Fecha de inicio del acuerdo de salud que se creará (por defecto hoy, editable)
+  const [importarSaludFechaNueva, setImportarSaludFechaNueva] = useState(hoyISO())
+
+  // Beneficiarios vivos y vigentes de ESTE acuerdo (el titular ya es el dueño de su acuerdo de salud)
+  const importarSaludCandidatos = (acuerdoDetalle ? beneficiariosDeAcuerdo(beneficiariosSocio, acuerdoDetalle.id) : []).filter(
+    (b) => b.estado === 'activo' && !retiradoDeFuneraria(b)
+  )
+  const importarSaludTodos =
+    importarSaludCandidatos.length > 0 && importarSaludCandidatos.every((b) => importarSaludSeleccionados.includes(b.id))
+  const alternarTodosImportarSalud = () =>
+    setImportarSaludSeleccionados(importarSaludTodos ? [] : importarSaludCandidatos.map((b) => b.id))
+
+  // Número propuesto para el acuerdo de salud nuevo (el expediente, o -1, -2… si ya se usa)
+  const proponerNumeroSaludNuevo = async (socioId: number) => {
+    const sugerido = await saludService.obtenerNumeroSugeridoSalud(socioId)
+    setImportarSaludNumeroNuevo(sugerido.data?.numero_sugerido ?? acuerdoDetalle?.socio?.codigo_socio ?? '')
+  }
+
+  const cerrarImportarSalud = () => {
+    setImportarSaludPreguntarOtro(false)
+    setImportarSaludElegirAbierto(false)
+    setImportarSaludAbierto(false)
+  }
 
   const abrirImportarSalud = async () => {
     cerrarMenuAcciones()
     setImportarSaludSeleccionados([])
-    setImportarSaludTipoId('')
+    setImportarSaludGrupos([])
+    setImportarSaludGrupoElegido('')
     setImportarSaludError(null)
     setImportarSaludResultado(null)
+    setImportarSaludNumeroNuevo(null)
+    setImportarSaludFechaNueva(hoyISO())
+    setImportarSaludPreguntarOtro(false)
+    setImportarSaludAbrirOtro(false)
     setImportarSaludAbierto(true)
 
-    if (tiposSalud.length === 0) {
-      try {
-        const respuesta = await saludService.obtenerTiposAcuerdo()
-        if (respuesta.success) setTiposSalud(respuesta.data)
-      } catch {
-        // El selector quedará vacío; el usuario verá el mensaje de "sin tipos disponibles"
+    const socioId = acuerdoDetalle?.socio?.id
+    if (!socioId) return
+    const sinBeneficiarios = importarSaludCandidatos.length === 0
+    setImportarSaludCargando(true)
+    try {
+      // Acuerdos de salud vigentes donde este socio es el titular
+      const respuesta = await saludService.obtenerAcuerdosPorSocio(socioId)
+      const grupos = (respuesta.data ?? [])
+        .filter((a) => a.numero_acuerdo && a.estado !== 'retirado' && a.beneficiario.parentesco.trim().toLowerCase() === 'titular')
+        .map((a) => ({ numero_acuerdo: a.numero_acuerdo!, estado: a.estado, fecha_inicio: a.fecha_inicio }))
+      setImportarSaludGrupos(grupos)
+      if (grupos.length === 1) setImportarSaludGrupoElegido(grupos[0]!.numero_acuerdo)
+      if (grupos.length === 0) {
+        // No tiene acuerdo de salud: se le creará uno al copiar
+        await proponerNumeroSaludNuevo(socioId)
+      } else if (sinBeneficiarios) {
+        // Solo se copiaría el titular, que ya tiene acuerdo de salud: se pregunta
+        setImportarSaludPreguntarOtro(true)
       }
+    } catch (err) {
+      setImportarSaludError(getErrorMessage(err))
+    } finally {
+      setImportarSaludCargando(false)
     }
   }
 
-  const confirmarImportarSalud = async () => {
+  // Respuesta "Sí" a "¿Desea abrir un nuevo acuerdo para este socio?"
+  const aceptarAbrirOtroSalud = async () => {
     const socioId = acuerdoDetalle?.socio?.id
-    if (!socioId || !importarSaludTipoId || importarSaludSeleccionados.length === 0) return
+    setImportarSaludPreguntarOtro(false)
+    if (!socioId) return
+    setImportarSaludCargando(true)
+    try {
+      await proponerNumeroSaludNuevo(socioId)
+      setImportarSaludAbrirOtro(true)
+    } catch (err) {
+      setImportarSaludError(getErrorMessage(err))
+    } finally {
+      setImportarSaludCargando(false)
+    }
+  }
 
+  // Sin acuerdo de salud se crea uno; con uno solo se copia directo; con varios,
+  // primero se pregunta a cuál. Sin beneficiarios en el acuerdo de funeraria
+  // solo se puede crear (con el titular).
+  const continuarImportarSalud = () => {
+    if (importarSaludSeleccionados.length === 0 && !(importarSaludCrearAcuerdo && importarSaludCandidatos.length === 0)) return
+    if (importarSaludCrearAcuerdo) {
+      void confirmarImportarSalud(null)
+      return
+    }
+    if (importarSaludGrupos.length === 0) return
+    if (importarSaludGrupos.length > 1) {
+      setImportarSaludElegirAbierto(true)
+      return
+    }
+    void confirmarImportarSalud(importarSaludGrupos[0]!.numero_acuerdo)
+  }
+
+  // numeroAcuerdoSalud null = el titular no tiene acuerdo de salud y se crea
+  const confirmarImportarSalud = async (numeroAcuerdoSalud: string | null) => {
+    if (!acuerdoDetalle) return
+    if (importarSaludSeleccionados.length === 0 && numeroAcuerdoSalud !== null) return
+    const numeroNuevo = (importarSaludNumeroNuevo ?? '').trim()
+    if (numeroAcuerdoSalud === null && !numeroNuevo) {
+      setImportarSaludError('Escribe el número del acuerdo de salud que se va a crear.')
+      return
+    }
+    if (numeroAcuerdoSalud === null && !importarSaludFechaNueva) {
+      setImportarSaludError('Indica la fecha de inicio del acuerdo de salud que se va a crear.')
+      return
+    }
+    const cantidad = importarSaludSeleccionados.length
+    const origen = `del acuerdo de funeraria ${acuerdoDetalle.numero_acuerdo || 'sin número'}`
+    const expediente = acuerdoDetalle.socio?.codigo_socio ?? ''
+    const confirmado = window.confirm(
+      (numeroAcuerdoSalud === null
+        ? (importarSaludAbrirOtro
+            ? `El socio ${expediente} ya tiene acuerdo de salud; se le abrirá uno ADICIONAL.\n\n`
+            : `El socio ${expediente} no tiene acuerdo de salud.\n\n`) +
+          `Se CREARÁ el acuerdo de salud ${numeroNuevo} a su nombre (inicia el ${formatearFecha(importarSaludFechaNueva)})` +
+          (cantidad > 0
+            ? ` y se copiarán ahí ${cantidad} beneficiario(s) ${origen}. ¿Continuar?\n\n`
+            : ` con los datos del titular (el acuerdo de funeraria no tiene beneficiarios). ¿Continuar?\n\n`)
+        : `¿Copiar ${cantidad} beneficiario(s) ${origen} al acuerdo de salud ${numeroAcuerdoSalud}?\n\n`) +
+        'Solo se copian: en Funeraria no se borra ni cambia nada.'
+    )
+    if (!confirmado) return
+
+    setImportarSaludElegirAbierto(false)
     setImportarSaludEnviando(true)
     setImportarSaludError(null)
-
-    let exitosos = 0
-    let yaExistentes = 0
-
-    for (const beneficiarioId of importarSaludSeleccionados) {
-      try {
-        await saludService.crearAcuerdo({
-          socio_id: socioId,
-          tipo_acuerdo_id: importarSaludTipoId,
-          beneficiario_id: beneficiarioId,
-        })
-        exitosos++
-      } catch (err: any) {
-        if (err?.response?.status === 409) {
-          yaExistentes++
-        } else {
-          setImportarSaludError(getErrorMessage(err))
-        }
-      }
+    try {
+      const datos = { beneficiario_ids: importarSaludSeleccionados, acuerdo_funeraria_id: acuerdoDetalle.id }
+      const respuesta =
+        numeroAcuerdoSalud === null
+          ? await saludService.importarDesdeFunerariaNuevoAcuerdo({
+              ...datos,
+              numero_acuerdo: numeroNuevo,
+              fecha_inicio: importarSaludFechaNueva,
+              abrir_otro: importarSaludAbrirOtro,
+            })
+          : await saludService.importarDesdeFuneraria(numeroAcuerdoSalud, datos)
+      if (!respuesta.success) throw new Error('No fue posible completar la copia')
+      const { numero_acuerdo_salud, acuerdo_creado, copiados, ya_estaban, omitidos } = respuesta.data
+      setImportarSaludResultado({
+        exito: true,
+        mensaje: [
+          acuerdo_creado ? `Se creó el acuerdo de salud ${numero_acuerdo_salud} a nombre del socio ${expediente}, con sus datos como titular.` : '',
+          copiados.length || !acuerdo_creado
+            ? `${copiados.length} beneficiario(s) copiado(s) al acuerdo de salud ${numero_acuerdo_salud}${copiados.length ? `: ${copiados.join(', ')}` : ''}.`
+            : '',
+          ya_estaban.length ? `Ya estaban en ese acuerdo: ${ya_estaban.join(', ')}.` : '',
+          omitidos.length ? `No se copiaron (no activos): ${omitidos.join(', ')}.` : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      })
+    } catch (err) {
+      // Siempre se informa qué pasó: la operación es todo o nada
+      const motivo = getErrorMessage(err)
+      setImportarSaludResultado({
+        exito: false,
+        mensaje:
+          numeroAcuerdoSalud === null
+            ? `No se creó el acuerdo de salud ${numeroNuevo} ni se copió ningún dato. Motivo: ${motivo}`
+            : `No se copió ningún beneficiario al acuerdo de salud ${numeroAcuerdoSalud}. Motivo: ${motivo}`,
+      })
+    } finally {
+      setImportarSaludEnviando(false)
     }
-
-    setImportarSaludEnviando(false)
-    setImportarSaludResultado(
-      `${exitosos} beneficiario(s) importado(s) a Salud. ${yaExistentes > 0 ? `${yaExistentes} ya tenían acuerdo activo.` : ''}`
-    )
   }
 
   // ============================================
@@ -750,10 +852,6 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
   useEffect(() => {
     void cargarEstadisticas()
-    void (async () => {
-      const respuesta = await funerariaService.obtenerTiposAcuerdo()
-      if (respuesta.success) setTiposAcuerdo(respuesta.data)
-    })()
   }, [])
 
   useEffect(() => {
@@ -788,13 +886,15 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       if (!socio) throw new Error('No se encontro un socio con ese expediente ni con esa cedula')
 
       setWizardSocio(socio)
-      setWizardBeneficiarioId('')
-      const beneficiarios = await sociosService.obtenerBeneficiarios(socio.id).catch(() => null)
-      setWizardBeneficiarios(
-        (beneficiarios?.data ?? []).filter(
-          (b) => b.estado === 'activo' && b.parentesco?.trim().toLowerCase() !== 'titular'
-        )
-      )
+      // Número propuesto: expediente-0 para el primer acuerdo, -1, -2... para los
+      // siguientes (el primero libre). Se puede modificar.
+      const acuerdos = await funerariaService.obtenerAcuerdosPorSocio(socio.id).catch(() => null)
+      const existentes = acuerdos?.data ?? []
+      const usados = new Set(existentes.map((a) => a.numero_acuerdo))
+      let sufijo = 0
+      while (usados.has(`${socio.codigo_socio}-${sufijo}`)) sufijo++
+      setWizardAcuerdosSocio(existentes)
+      setWizardNumeroAcuerdo(`${socio.codigo_socio}-${sufijo}`)
       setWizardPaso(2)
     } catch (err) {
       setWizardError(getErrorMessage(err) || 'Socio no encontrado')
@@ -804,7 +904,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   }
 
   const confirmarNuevoAcuerdo = async () => {
-    if (!wizardSocio || !wizardTipoAcuerdoId) return
+    if (!wizardSocio) return
 
     setWizardEnviando(true)
     setWizardError(null)
@@ -812,10 +912,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     try {
       const respuesta = await funerariaService.crearAcuerdo({
         socio_id: wizardSocio.id,
-        tipo_acuerdo_id: wizardTipoAcuerdoId,
-        ...(wizardBeneficiarioId ? { beneficiario_id: wizardBeneficiarioId } : {}),
         numero_acuerdo: wizardNumeroAcuerdo.trim() || undefined,
-        numero_contrato: wizardNumeroContrato.trim() || undefined,
         fecha_inicio: new Date(wizardFechaInicio).toISOString(),
       })
 
@@ -824,9 +921,17 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       cerrarWizard()
       await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
       const advertencias = (respuesta as { advertencias?: string[] }).advertencias ?? []
-      window.alert(['Acuerdo de funeraria creado exitosamente', ...advertencias].join('\n\n'))
+      window.alert(
+        [
+          `Acuerdo de funeraria ${respuesta.data.numero_acuerdo || ''} creado exitosamente`,
+          ...advertencias,
+          'A continuación se abre el detalle del acuerdo para agregar sus beneficiarios.',
+        ].join('\n\n')
+      )
+      // Detalle del acuerdo recién creado, para cargar ahí sus beneficiarios
+      await abrirFicha(respuesta.data)
     } catch (err) {
-      setWizardError(getErrorMessage(err))
+      setWizardError(getErrorMessageDetallado(err))
     } finally {
       setWizardEnviando(false)
     }
@@ -835,12 +940,20 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   // ============================================
   // IMPRIMIR FICHA
   // ============================================
+  // Mismo formato y encabezado que la ficha de Salud: el documento se renderiza
+  // localmente con PrintableFichaAcuerdo y la API de impresión solo se llama
+  // para dejar la impresión en el audit log.
+  //
+  // Estado con que sale cada beneficiario: el del acuerdo (suspendido/retirado)
+  // manda, luego su retiro de funeraria y por último el de la persona.
+  const estadoEnFicha = (detalle: AcuerdoDetalle, b: Beneficiario): string =>
+    detalle.estado !== 'activo' ? detalle.estado : retiradoDeFuneraria(b) ? 'retirado' : b.estado
+
   const construirPayloadFicha = (
     detalle: AcuerdoDetalle,
     beneficiarios: Beneficiario[]
   ): funerariaService.FichaAcuerdoFunerariaData => ({
     numero_acuerdo: detalle.numero_acuerdo || 'S/N',
-    numero_contrato: detalle.numero_contrato || undefined,
     fecha_inicio: detalle.fecha_inicio,
     socio: {
       codigo: detalle.socio?.codigo_socio || '',
@@ -857,47 +970,67 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       fecha_ingreso: b.fecha_ingreso || b.created_at,
       fecha_nacimiento: b.fecha_nacimiento || undefined,
       edad: calcularEdad(b.fecha_nacimiento) ?? undefined,
-      estado: b.estado,
+      estado: estadoEnFicha(detalle, b),
     })),
   })
 
-  const abrirVentanaImpresionFicha = (contenido: string) => {
-    const ventana = window.open('', '_blank')
-    if (ventana) {
-      ventana.document.write(`
-        <html>
-          <head>
-            <title>Ficha de Acuerdo - Cooperativa el Triunfo</title>
-            <style>
-              body { margin: 0; padding: 20mm; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; }
-              pre { margin: 0; white-space: pre-wrap; }
-              @media print { body { padding: 0; } }
-            </style>
-          </head>
-          <body>
-            <pre>${contenido}</pre>
-            <script>
-              window.onload = function () {
-                window.print();
-                window.onafterprint = function () { window.close(); };
-              };
-            </script>
-          </body>
-        </html>
-      `)
-      ventana.document.close()
-    }
+  const construirPropsFichaImpresion = (
+    detalle: AcuerdoDetalle,
+    beneficiarios: Beneficiario[]
+  ): PrintableFichaAcuerdoProps => ({
+    servicio: 'FUNERARIA',
+    numero_acuerdo: detalle.numero_acuerdo || 'S/N',
+    fecha_inicio: detalle.fecha_inicio,
+    estado: detalle.estado,
+    socio: {
+      codigo: detalle.socio?.codigo_socio || '',
+      cedula: detalle.socio?.cedula || '',
+      nombre: detalle.socio?.nombre_completo || '',
+      direccion: detalle.socio?.direccion,
+      telefono: detalle.socio?.telefono,
+    },
+    beneficiarios: beneficiarios.map((b, index) => ({
+      numero: index + 1,
+      nombre: `${b.nombre} ${b.apellido}`,
+      cedula: b.cedula,
+      parentesco: b.parentesco,
+      fecha_ingreso: b.fecha_ingreso || b.created_at,
+      fecha_nacimiento: b.fecha_nacimiento,
+      edad: calcularEdad(b.fecha_nacimiento),
+      estado: estadoEnFicha(detalle, b),
+    })),
+  })
+
+  const [fichaParaImprimir, setFichaParaImprimir] = useState<PrintableFichaAcuerdoProps | null>(null)
+
+  // Solo los beneficiarios de ESTE acuerdo (el titular va en el encabezado)
+  const generarFicha = async (detalle: AcuerdoDetalle, beneficiariosDelSocio: Beneficiario[]) => {
+    const beneficiarios = beneficiariosDeAcuerdo(beneficiariosDelSocio, detalle.id)
+    const respuesta = await funerariaService.imprimirFichaAcuerdo(construirPayloadFicha(detalle, beneficiarios))
+    if (!respuesta.success) throw new Error('No fue posible generar la ficha')
+    setFichaParaImprimir(construirPropsFichaImpresion(detalle, beneficiarios))
   }
+
+  // Se dispara solo cuando hay una ficha lista: espera a que React monte
+  // PrintableFichaAcuerdo con los datos antes de abrir el diálogo de impresión.
+  useEffect(() => {
+    if (!fichaParaImprimir) return
+    const limpiar = () => setFichaParaImprimir(null)
+    window.addEventListener('afterprint', limpiar, { once: true })
+    let cancelado = false
+    void imprimirCuandoEsteListo(() => cancelado)
+    return () => {
+      cancelado = true
+      window.removeEventListener('afterprint', limpiar)
+    }
+  }, [fichaParaImprimir])
 
   const imprimirFicha = async () => {
     if (!acuerdoDetalle?.socio) return
 
     setImprimiendo(true)
     try {
-      const payload = construirPayloadFicha(acuerdoDetalle, beneficiariosSocio)
-      const respuesta = await funerariaService.imprimirFichaAcuerdo(payload)
-      if (!respuesta.success) throw new Error('No fue posible generar la ficha')
-      abrirVentanaImpresionFicha(respuesta.data.contenido)
+      await generarFicha(acuerdoDetalle, beneficiariosSocio)
     } catch (err) {
       window.alert(getErrorMessage(err))
     } finally {
@@ -920,10 +1053,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         if (respuestaBeneficiarios.success) beneficiarios = respuestaBeneficiarios.data
       }
 
-      const payload = construirPayloadFicha(detalle, beneficiarios)
-      const respuesta = await funerariaService.imprimirFichaAcuerdo(payload)
-      if (!respuesta.success) throw new Error('No fue posible generar la ficha')
-      abrirVentanaImpresionFicha(respuesta.data.contenido)
+      await generarFicha(detalle, beneficiarios)
     } catch (err) {
       window.alert(getErrorMessage(err))
     } finally {
@@ -947,16 +1077,122 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     }
   }
 
+  // ============================================
+  // REPORTE SUSPENDIDOS: vista previa en pantalla y, si el usuario quiere, Excel
+  // ============================================
+  const [reporteAbierto, setReporteAbierto] = useState(false)
+  const [reporteCargando, setReporteCargando] = useState(false)
+  const [reporteFilas, setReporteFilas] = useState<funerariaService.AcuerdoSuspendidoListado[]>([])
+  const [reporteError, setReporteError] = useState<string | null>(null)
+  const [reporteGeneradoEn, setReporteGeneradoEn] = useState(new Date())
+
+  const abrirReporteSuspendidos = async () => {
+    setReporteAbierto(true)
+    setReporteCargando(true)
+    setReporteError(null)
+    setReporteFilas([])
+    setReporteGeneradoEn(new Date())
+    try {
+      const respuesta = await funerariaService.obtenerListadoSuspendidos()
+      if (!respuesta.success) throw new Error('No fue posible generar el reporte')
+      setReporteFilas(respuesta.data)
+    } catch (err) {
+      setReporteError(`No se pudo generar el reporte. Motivo: ${getErrorMessage(err)}`)
+    } finally {
+      setReporteCargando(false)
+    }
+  }
+
   const descargarReporteSuspendidos = async () => {
     setGenerandoReporte(true)
+    setReporteError(null)
     try {
       await funerariaService.descargarReporteSuspendidos()
     } catch (err) {
-      window.alert(getErrorMessage(err))
+      setReporteError(`No se descargó el Excel. Motivo: ${getErrorMessage(err)}`)
     } finally {
       setGenerandoReporte(false)
     }
   }
+
+  // ============================================
+  // IMPRIMIR LISTADO: se elige qué listado y se imprime con el encabezado común
+  // ============================================
+  const OPCIONES_LISTADO: { valor: funerariaService.EstadoListadoFuneraria; etiqueta: string; titulo: string }[] = [
+    { valor: 'activo', etiqueta: 'Listado de activos', titulo: 'Listado de Acuerdos Activos - Funeraria' },
+    { valor: 'suspendido', etiqueta: 'Listado de suspendidos', titulo: 'Listado de Acuerdos Suspendidos - Funeraria' },
+    { valor: 'retirado', etiqueta: 'Listado de retirados', titulo: 'Listado de Acuerdos Retirados - Funeraria' },
+    { valor: 'todos', etiqueta: 'Todos', titulo: 'Listado de Todos los Acuerdos - Funeraria' },
+  ]
+  const [listadoElegirAbierto, setListadoElegirAbierto] = useState(false)
+  const [listadoEstado, setListadoEstado] = useState<funerariaService.EstadoListadoFuneraria>('activo')
+  const [listadoCargando, setListadoCargando] = useState(false)
+  const [listadoError, setListadoError] = useState<string | null>(null)
+  const [listadoParaImprimir, setListadoParaImprimir] = useState<{
+    estado: funerariaService.EstadoListadoFuneraria
+    filas: funerariaService.AcuerdoSuspendidoListado[]
+  } | null>(null)
+
+  const abrirElegirListado = () => {
+    setListadoEstado(tab)
+    setListadoError(null)
+    setListadoElegirAbierto(true)
+  }
+
+  const generarListado = async () => {
+    setListadoCargando(true)
+    setListadoError(null)
+    try {
+      const respuesta = await funerariaService.obtenerListadoParaImprimir(listadoEstado)
+      if (!respuesta.success) throw new Error('No fue posible generar el listado')
+      setListadoElegirAbierto(false)
+      setListadoParaImprimir({ estado: listadoEstado, filas: respuesta.data })
+    } catch (err) {
+      setListadoError(`No se generó el listado. Motivo: ${getErrorMessage(err)}`)
+    } finally {
+      setListadoCargando(false)
+    }
+  }
+
+  // Igual que la ficha: se imprime cuando el listado ya está montado (y el logo cargado)
+  useEffect(() => {
+    if (!listadoParaImprimir) return
+    const limpiar = () => setListadoParaImprimir(null)
+    window.addEventListener('afterprint', limpiar, { once: true })
+    let cancelado = false
+    void imprimirCuandoEsteListo(() => cancelado)
+    return () => {
+      cancelado = true
+      window.removeEventListener('afterprint', limpiar)
+    }
+  }, [listadoParaImprimir])
+
+  const opcionListado = OPCIONES_LISTADO.find((o) => o.valor === listadoParaImprimir?.estado)
+  const listadoConRetiro = listadoParaImprimir?.estado === 'retirado' || listadoParaImprimir?.estado === 'todos'
+  const columnasListado = [
+    'N°',
+    'N° Expediente',
+    'N° Acuerdo',
+    'Apellidos y Nombres',
+    'Cédula',
+    'Teléfono',
+    'Sem. sin pago',
+    'Estado',
+    'Fecha ingreso',
+    ...(listadoConRetiro ? ['Fecha retiro'] : []),
+  ]
+  const filasListado = (listadoParaImprimir?.filas ?? []).map((f, i) => [
+    String(i + 1),
+    f.expediente,
+    f.numero_acuerdo,
+    `${f.apellidos} ${f.nombres}`,
+    f.cedula,
+    f.telefono,
+    String(f.semanas_atraso),
+    f.estado.toUpperCase(),
+    formatearFecha(f.fecha_inicio),
+    ...(listadoConRetiro ? [f.fecha_retiro ? formatearFecha(f.fecha_retiro) : '—'] : []),
+  ])
 
   const abrirVentanaImpresionListado = (filas: funerariaService.AcuerdoSuspendidoListado[]) => {
     const ventana = window.open('', '_blank')
@@ -990,9 +1226,16 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               font-size: 12px;
               color: #1f2937;
             }
-            header { margin-bottom: 16px; border-bottom: 2px solid #1f2937; padding-bottom: 10px; }
-            h1 { font-size: 17px; margin: 0 0 3px; font-weight: 700; letter-spacing: 0.2px; }
-            p.subtitulo { margin: 0; color: #6b7280; font-size: 11px; }
+            /* Mismo encabezado que el resto de impresiones (EncabezadoImpresion) */
+            header {
+              display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+              margin-bottom: 16px; border-bottom: 2px solid #d1d5db; padding-bottom: 10px;
+            }
+            header .marca { display: flex; align-items: center; gap: 12px; }
+            header img { height: 48px; width: auto; object-fit: contain; }
+            header .cooperativa { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: #111827; }
+            header .titulo { margin-top: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.2em; color: #047857; }
+            header .datos { text-align: right; font-size: 10px; color: #6b7280; }
             table { width: 100%; border-collapse: collapse; }
             thead th {
               text-align: left;
@@ -1020,8 +1263,18 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         </head>
         <body>
           <header>
-            <h1>Listado de Socios Suspendidos · Funeraria</h1>
-            <p class="subtitulo">Cooperativa el Triunfo, R.L. — Generado el ${formatearFecha(hoyISO())} — Total: ${filas.length}</p>
+            <div class="marca">
+              <img src="${new URL(LOGO_COOPERATIVA, window.location.href).href}" alt="${NOMBRE_COOPERATIVA}" />
+              <div>
+                <div class="cooperativa">${NOMBRE_COOPERATIVA}</div>
+                <div class="titulo">Listado de Socios Suspendidos - Funeraria</div>
+              </div>
+            </div>
+            <div class="datos">
+              <div>Total: ${filas.length}</div>
+              <div>Generado: ${new Date().toLocaleString('es-VE')}</div>
+              <div>Documento generado por el sistema</div>
+            </div>
           </header>
           <table>
             <thead>
@@ -1100,7 +1353,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     switch (beneficiario.estado) {
       case 'fallecido':
         return (
-          <Badge variant="purple" icon={<Skull className="h-3.5 w-3.5" />}>
+          <Badge variant="purple" icon={<CruzFallecido className="h-3.5 w-3.5" />}>
             Fallecido
           </Badge>
         )
@@ -1162,26 +1415,6 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     return acuerdosCopia;
   }, [acuerdos, sortField, sortOrder]);
 
-  const filtrosImpresion = [
-    { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
-    { label: 'Estado', value: tab === 'todos' ? 'Todos' : tab },
-    { label: 'Tipo', value: filtroTipo === 'todos' ? 'Todos' : filtroTipo },
-    { label: 'Página', value: `${paginaActual} de ${totalPaginas}` },
-  ];
-
-  const filasImpresion = acuerdosOrdenados.map((acuerdo) => [
-    acuerdo.socio?.codigo_socio ?? '-',
-    acuerdo.numero_acuerdo ?? '-',
-    acuerdo.socio?.nombre_completo ?? '-',
-    acuerdo.beneficiario.nombre_completo,
-    acuerdo.tipo_acuerdo.nombre,
-    String(acuerdo.semanas_sin_pago ?? 0),
-    acuerdo.estado,
-    formatearFecha(
-      acuerdo.estado === 'retirado' && acuerdo.fecha_retiro ? acuerdo.fecha_retiro : acuerdo.fecha_inicio
-    ),
-  ]);
-
   // ============================================
   // RENDER
   // ============================================
@@ -1198,15 +1431,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button variant="outline" onClick={() => window.print()}>
+          <Button variant="outline" onClick={abrirElegirListado} isLoading={listadoCargando}>
             <Printer className="w-4 h-4" />
             Imprimir listado
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => void descargarReporteSuspendidos()}
-            isLoading={generandoReporte}
-          >
+          <Button variant="outline" onClick={() => void abrirReporteSuspendidos()}>
             <FileSpreadsheet className="w-4 h-4" />
             Reporte Suspendidos
           </Button>
@@ -1219,20 +1448,21 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         </div>
       </div>
 
-      <PrintableListado
-        titulo="Listado de Acuerdos de Funeraria"
-        subtitulo="Listado generado con los filtros y orden actual del módulo de funeraria"
-        filtros={filtrosImpresion}
-        resumenes={[
-          { label: 'Acuerdos visibles', value: String(acuerdosOrdenados.length) },
-          { label: 'Total acuerdos', value: String(estadisticas.total_acuerdos) },
-          { label: 'Activos', value: String(estadisticas.activos) },
-          { label: 'Suspendidos', value: String(estadisticas.suspendidos) },
-        ]}
-        columnas={['N° Expediente', 'N° Acuerdo', 'Socio', 'Beneficiario', 'Tipo de acuerdo', 'Semanas sin pago', 'Estado', 'Fecha']}
-        columnasMayusculas={['Socio', 'Beneficiario']}
-        filas={filasImpresion}
-      />
+      {/* Solo se monta un documento imprimible a la vez (igual que en Salud): el
+          listado oculta todo lo demás al imprimir (body * { visibility: hidden }),
+          así que si estuviera montado junto a la ficha, ésta saldría en blanco. */}
+      {fichaParaImprimir ? (
+        <PrintableFichaAcuerdo {...fichaParaImprimir} />
+      ) : listadoParaImprimir && opcionListado ? (
+        <PrintableListado
+          titulo={opcionListado.titulo}
+          subtitulo={`Total de acuerdos: ${listadoParaImprimir.filas.length}`}
+          filtros={[{ label: 'Listado', value: opcionListado.etiqueta }]}
+          columnas={columnasListado}
+          columnasMayusculas={['Apellidos y Nombres']}
+          filas={filasListado}
+        />
+      ) : null}
 
       {/* ESTADÍSTICAS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1325,7 +1555,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             </div>
 
           {puedeEscribir && (
-            <Button variant="outline" onClick={abrirTraspaso}>
+            <Button variant="outline" onClick={() => abrirTraspaso()}>
               <ArrowRightLeft className="w-4 h-4" />
               Traspaso
             </Button>
@@ -1352,7 +1582,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       {/* TABLA */}
       <Card padding="none">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-200">
+          <table className="w-full divide-y divide-neutral-200">
             <thead className="bg-neutral-50">
               <tr className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
                 <SortableHeader
@@ -1431,23 +1661,23 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                     className="hover:bg-primary-50/40 cursor-pointer transition-colors"
                     onClick={() => void abrirFicha(acuerdo)}
                   >
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap">
                       <span className="font-mono text-sm font-semibold text-neutral-900">
                         {acuerdo.socio?.codigo_socio || '—'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap">
                       <span className="font-mono text-sm font-semibold text-primary-700">
                         {acuerdo.numero_acuerdo || '—'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-3 min-w-[12rem] break-words">
                       <p className="text-sm font-medium text-neutral-900">
                         {acuerdo.socio?.nombre_completo || 'Sin socio asignado'}
                       </p>
                       <p className="text-xs text-neutral-500">{acuerdo.socio?.cedula}</p>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                    <td className="px-3 py-3 whitespace-nowrap text-center">
                       {acuerdo.semanas_sin_pago >= 5 ? (
                         <Badge variant="error">{acuerdo.semanas_sin_pago}</Badge>
                       ) : acuerdo.semanas_sin_pago > 0 ? (
@@ -1456,8 +1686,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                         <span className="text-sm text-neutral-400">0</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-center">{badgeEstado(acuerdo.estado)}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
+                    <td className="px-3 py-3 whitespace-nowrap text-center">{badgeEstado(acuerdo.estado)}</td>
+                    <td className="px-3 py-3 text-sm text-neutral-500">
                       {acuerdo.estado === 'retirado' && acuerdo.fecha_retiro
                         ? formatearFecha(acuerdo.fecha_retiro)
                         : formatearFecha(acuerdo.fecha_inicio)}
@@ -1673,7 +1903,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             <Input
               label="N° de expediente del socio (o su cédula)"
               value={wizardCedula}
-              onChange={(e) => setWizardCedula(e.target.value)}
+              onChange={(e) => setWizardCedula(valorEnMayusculas(e))}
               placeholder="Ej: 00123 o 012345678"
               data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocioWizard()}
               autoFocus
@@ -1692,52 +1922,61 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                 {wizardSocio.apellido}, {wizardSocio.nombre}
               </p>
               <p className="text-xs text-neutral-500">
-                {wizardSocio.codigo_socio} • {wizardSocio.cedula}
+                {wizardSocio.codigo_socio} • {wizardSocio.cedula} • Tel. {wizardSocio.telefono || 'sin dato'}
               </p>
             </div>
 
-            <label className="block text-sm font-medium text-neutral-700">
-              Tipo de acuerdo
-              <select
-                value={wizardTipoAcuerdoId}
-                onChange={(e) => setWizardTipoAcuerdoId(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                <option value="">Selecciona un tipo...</option>
-                {tiposAcuerdo.map((tipo) => (
-                  <option key={tipo.id} value={tipo.id}>
-                    {tipo.nombre} (${tipo.monto_usd} USD)
-                  </option>
-                ))}
-              </select>
-            </label>
+            {wizardAcuerdosSocio.length > 0 && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+                Este socio ya tiene {wizardAcuerdosSocio.length} acuerdo(s) de funeraria:{' '}
+                <span className="font-mono">
+                  {wizardAcuerdosSocio.map((a) => a.numero_acuerdo || 'sin número').join(', ')}
+                </span>
+                . Se abrirá uno adicional con sus propios beneficiarios (hasta {MAX_BENEFICIARIOS_POR_ACUERDO}).
+              </div>
+            )}
 
-            <label className="block text-sm font-medium text-neutral-700">
-              ¿Para quién es el acuerdo?
-              <select
-                value={wizardBeneficiarioId}
-                onChange={(e) => setWizardBeneficiarioId(e.target.value ? Number(e.target.value) : '')}
-                className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                <option value="">El titular ({wizardSocio.nombre} {wizardSocio.apellido})</option>
-                {wizardBeneficiarios.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.nombre} {b.apellido} ({b.parentesco})
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/* Si el titular ya no estará (fallecimiento, migración...), su acuerdo se traspasa a otro socio */}
+            {puedeEscribir && wizardAcuerdosSocio.some((a) => a.estado !== 'retirado') && (
+              <div className="space-y-2">
+                <p className="text-xs text-neutral-500">
+                  ¿El titular ya no estará? Traspasa su acuerdo a otro socio registrado:
+                </p>
+                {wizardAcuerdosSocio
+                  .filter((a) => a.estado !== 'retirado')
+                  .map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2"
+                    >
+                      <div className="text-sm">
+                        <p className="font-mono font-medium text-neutral-900">{a.numero_acuerdo || 'sin número'}</p>
+                        <p className="text-xs text-neutral-500">
+                          {a.estado} • desde {formatearFecha(a.fecha_inicio)}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const titular = wizardSocio
+                          cerrarWizard()
+                          abrirTraspaso(a, titular)
+                        }}
+                      >
+                        <ArrowRightLeft className="w-4 h-4" />
+                        Traspaso
+                      </Button>
+                    </div>
+                  ))}
+              </div>
+            )}
 
             <Input
-              label="N° de acuerdo de funeraria (opcional)"
+              label="N° de acuerdo de funeraria"
               value={wizardNumeroAcuerdo}
-              onChange={(e) => setWizardNumeroAcuerdo(e.target.value)}
-              placeholder="Se asigna después del registro"
-            />
-            <Input
-              label="Número de contrato (opcional)"
-              value={wizardNumeroContrato}
-              onChange={(e) => setWizardNumeroContrato(e.target.value)}
+              onChange={(e) => setWizardNumeroAcuerdo(valorEnMayusculas(e))}
+              helperText="Propuesto como expediente-número; puedes modificarlo"
             />
             <Input
               label="Fecha de inicio"
@@ -1751,11 +1990,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                 <ArrowLeft className="w-4 h-4" />
                 Atrás
               </Button>
-              <Button
-                onClick={() => setWizardPaso(3)}
-                disabled={!wizardTipoAcuerdoId}
-                className="flex-1"
-              >
+              <Button onClick={() => setWizardPaso(3)} className="flex-1">
                 Continuar
                 <ArrowRight className="w-4 h-4" />
               </Button>
@@ -1776,22 +2011,10 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                   {wizardSocio.apellido}, {wizardSocio.nombre}
                 </span>
               </p>
+              {/* Solo lectura: los datos del socio se editan en el módulo de Socios */}
               <p>
-                <span className="text-neutral-500">Acuerdo para:</span>{' '}
-                <span className="font-medium">
-                  {wizardBeneficiarioId
-                    ? (() => {
-                        const b = wizardBeneficiarios.find((x) => x.id === wizardBeneficiarioId)
-                        return b ? `${b.nombre} ${b.apellido} (${b.parentesco})` : 'Beneficiario'
-                      })()
-                    : 'El titular'}
-                </span>
-              </p>
-              <p>
-                <span className="text-neutral-500">Tipo de acuerdo:</span>{' '}
-                <span className="font-medium">
-                  {tiposAcuerdo.find((t) => t.id === wizardTipoAcuerdoId)?.nombre}
-                </span>
+                <span className="text-neutral-500">Teléfono:</span>{' '}
+                <span className="font-medium">{wizardSocio.telefono || 'Sin dato'}</span>
               </p>
               <p>
                 <span className="text-neutral-500">N° de acuerdo de funeraria:</span>{' '}
@@ -1817,215 +2040,16 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       </Modal>
 
       {/* ============================================ */}
-      {/* MODAL: TRASPASO DE SOCIO */}
+      {/* MODAL: TRASPASO DEL ACUERDO A OTRO SOCIO */}
       {/* ============================================ */}
-      <Modal
+      <ModalTraspasoAcuerdo
         open={traspasoAbierto}
         onClose={cerrarTraspaso}
-        title="Traspaso de Titularidad"
-        description={
-          traspasoPaso === 3
-            ? 'Traspaso completado'
-            : 'Transferir el expediente, el acuerdo y los beneficios a un familiar directo'
-        }
-        size="md"
-      >
-        {traspasoError && (
-          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">
-            {traspasoError}
-          </div>
-        )}
-
-        {traspasoPaso === 1 && (
-          <div className="space-y-4">
-            <Input
-              label="Número de expediente del socio"
-              value={traspasoExpediente}
-              onChange={(e) => setTraspasoExpediente(e.target.value)}
-              placeholder="Ej: 117556"
-              data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void buscarSocioTraspaso()}
-              autoFocus
-            />
-            <Button onClick={() => void buscarSocioTraspaso()} isLoading={traspasoBuscando} className="w-full">
-              <Search className="w-4 h-4" />
-              Buscar Socio
-            </Button>
-
-            {traspasoSocio && (
-              <div className="space-y-3">
-                <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-                  <p className="text-sm font-semibold text-neutral-900">
-                    {traspasoSocio.apellido}, {traspasoSocio.nombre}
-                  </p>
-                  <p className="text-xs text-neutral-500">
-                    {traspasoSocio.codigo_socio} • {traspasoSocio.cedula}
-                    {traspasoEdadSocio !== null && ` • ${traspasoEdadSocio} años`}
-                  </p>
-                </div>
-
-                {!traspasoSocioElegible && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                    {traspasoSocio.estado === 'retirado'
-                      ? 'Este socio está retirado; no se puede traspasar su titularidad.'
-                      : traspasoTieneAcuerdoActivo === false
-                      ? 'El traspaso solo puede realizarse si el socio tiene un acuerdo de funeraria activo (no vale con acuerdos suspendidos o retirados).'
-                      : traspasoTieneAcuerdoActivo === null
-                      ? 'No fue posible verificar el acuerdo de funeraria del socio.'
-                      : `El traspaso solo procede si el titular tiene ${sociosService.EDAD_MINIMA_TRASPASO} años o más (edad actual: ${traspasoEdadSocio ?? 'sin fecha de nacimiento registrada'}).`}
-                  </div>
-                )}
-
-                <Button
-                  onClick={() => setTraspasoPaso(2)}
-                  disabled={!traspasoSocioElegible}
-                  className="w-full"
-                >
-                  Continuar
-                  <ArrowRight className="w-4 h-4" />
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {traspasoPaso === 2 && traspasoSocio && (
-          <div className="space-y-4">
-            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-              <p className="text-xs uppercase tracking-wider text-neutral-500">Titular actual</p>
-              <p className="text-sm font-semibold text-neutral-900">
-                {traspasoSocio.apellido}, {traspasoSocio.nombre}
-              </p>
-              <p className="text-xs text-neutral-500">
-                Expediente {traspasoSocio.codigo_socio} • {traspasoSocio.cedula} • {traspasoEdadSocio} años
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input
-                label="Cédula del nuevo titular"
-                value={traspasoForm.nueva_cedula}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, nueva_cedula: e.target.value }))}
-                required
-              />
-              <label className="block text-sm font-medium text-neutral-700">
-                Parentesco con el titular actual
-                <select
-                  value={traspasoForm.parentesco}
-                  onChange={(e) =>
-                    setTraspasoForm((f) => ({
-                      ...f,
-                      parentesco: e.target.value as sociosService.TraspasoSocioData['parentesco'],
-                    }))
-                  }
-                  className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  {sociosService.PARENTESCOS_TRASPASO_DIRECTO.map((parentesco) => (
-                    <option key={parentesco} value={parentesco}>
-                      {parentesco}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <Input
-                label="Nombre"
-                value={traspasoForm.nuevo_nombre}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, nuevo_nombre: e.target.value }))}
-                required
-              />
-              <Input
-                label="Apellido"
-                value={traspasoForm.nuevo_apellido}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, nuevo_apellido: e.target.value }))}
-                required
-              />
-              <Input
-                label="Fecha de nacimiento"
-                type="date"
-                value={traspasoForm.nueva_fecha_nacimiento}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, nueva_fecha_nacimiento: e.target.value }))}
-                required
-              />
-              <Input
-                label="Teléfono (opcional)"
-                value={traspasoForm.nuevo_telefono}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, nuevo_telefono: e.target.value }))}
-              />
-              <Input
-                label="Correo (opcional)"
-                value={traspasoForm.nuevo_email}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, nuevo_email: e.target.value }))}
-              />
-              <Input
-                label="Dirección (opcional)"
-                value={traspasoForm.nueva_direccion}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, nueva_direccion: e.target.value }))}
-              />
-            </div>
-
-            <label className="block text-sm font-medium text-neutral-700">
-              Motivo del traspaso
-              <textarea
-                value={traspasoForm.motivo}
-                onChange={(e) => setTraspasoForm((f) => ({ ...f, motivo: e.target.value }))}
-                placeholder="Describe brevemente la condición médica y el motivo del traspaso..."
-                rows={3}
-                className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-              />
-            </label>
-
-            <div className="space-y-2 rounded-lg border border-neutral-200 p-3">
-              <label className="flex items-start gap-2 text-sm text-neutral-700">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={traspasoForm.confirma_acuerdo_titular}
-                  onChange={(e) => setTraspasoForm((f) => ({ ...f, confirma_acuerdo_titular: e.target.checked }))}
-                />
-                El titular actual está de acuerdo con este traspaso.
-              </label>
-              <label className="flex items-start gap-2 text-sm text-neutral-700">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={traspasoForm.confirma_problemas_medicos}
-                  onChange={(e) => setTraspasoForm((f) => ({ ...f, confirma_problemas_medicos: e.target.checked }))}
-                />
-                El titular presenta problemas médicos que motivan el traspaso.
-              </label>
-            </div>
-
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setTraspasoPaso(1)} className="flex-1">
-                <ArrowLeft className="w-4 h-4" />
-                Atrás
-              </Button>
-              <Button
-                onClick={() => void confirmarTraspaso()}
-                isLoading={traspasoEnviando}
-                disabled={!traspasoFormularioValido}
-                className="flex-1"
-              >
-                Confirmar Traspaso
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {traspasoPaso === 3 && traspasoResultado && (
-          <div className="space-y-4">
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-              El expediente {traspasoResultado.codigo_socio} ahora pertenece a{' '}
-              <span className="font-semibold">
-                {traspasoResultado.nombre} {traspasoResultado.apellido}
-              </span>
-              . El acuerdo, los beneficiarios y el histórico se mantuvieron sin cambios.
-            </div>
-            <Button onClick={cerrarTraspaso} className="w-full">
-              Cerrar
-            </Button>
-          </div>
-        )}
-      </Modal>
+        modulo="funeraria"
+        acuerdoInicial={traspasoAcuerdoInicial}
+        titularInicial={traspasoTitularInicial}
+        onCompletado={() => void Promise.all([cargarAcuerdos(), cargarEstadisticas()])}
+      />
 
       {/* ============================================ */}
       {/* MODAL: SOCIALES */}
@@ -2072,7 +2096,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             <Input
               label="Cod. Sociales"
               value={socialesCodigo}
-              onChange={(e) => setSocialesCodigo(e.target.value)}
+              onChange={(e) => setSocialesCodigo(valorEnMayusculas(e))}
               placeholder="Ingresa el código de programas sociales"
               data-enter-propio onKeyDown={(e) => e.key === 'Enter' && void guardarCodigoSocial()}
               autoFocus
@@ -2138,32 +2162,14 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               <p className="text-xs text-neutral-500">
                 {acuerdoEditando.socio?.codigo_socio} • {acuerdoEditando.socio?.cedula}
               </p>
-              <p className="mt-1 text-xs text-neutral-500">
-                N° de acuerdo: <span className="font-mono">{acuerdoEditando.numero_acuerdo || 'sin número'}</span>
-              </p>
             </div>
           )}
 
-          <label className="block text-sm font-medium text-neutral-700">
-            Tipo de acuerdo *
-            <select
-              value={editTipoAcuerdoId}
-              onChange={(e) => setEditTipoAcuerdoId(e.target.value ? Number(e.target.value) : '')}
-              className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="">Selecciona un tipo...</option>
-              {tiposAcuerdo.map((tipo) => (
-                <option key={tipo.id} value={tipo.id}>
-                  {tipo.nombre} (${tipo.monto_usd} USD)
-                </option>
-              ))}
-            </select>
-          </label>
-
           <Input
-            label="Número de contrato (opcional)"
-            value={editNumeroContrato}
-            onChange={(e) => setEditNumeroContrato(e.target.value)}
+            label="N° de acuerdo de funeraria"
+            value={editNumeroAcuerdo}
+            onChange={(e) => setEditNumeroAcuerdo(valorEnMayusculas(e))}
+            placeholder={acuerdoEditando?.socio?.codigo_socio ? `${acuerdoEditando.socio.codigo_socio}-0` : undefined}
           />
           <Input
             label="Fecha de ingreso al beneficio *"
@@ -2185,25 +2191,27 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         description={acuerdoDetalle ? `Acuerdo ${acuerdoDetalle.numero_acuerdo || 'sin número'}` : undefined}
         size="xl"
         footer={
-          <>
-            <Button variant="outline" onClick={() => setDrawerAbierto(false)}>
-              Cerrar
-            </Button>
+          // Igual que el detalle de Salud: acciones a la izquierda, Cerrar a la derecha
+          <div className="flex w-full flex-wrap gap-3">
             {acuerdoDetalle && (
               <>
                 <Button variant="outline" onClick={() => void imprimirFicha()} isLoading={imprimiendo}>
-                  <Printer className="w-4 h-4" />
+                  <Printer className="h-4 w-4" />
                   Imprimir Ficha
                 </Button>
                 {puedeEscribir && (
                   <Button variant="outline" onClick={() => void abrirImportarSalud()}>
-                    <HeartPulse className="w-4 h-4" />
+                    <HeartPulse className="h-4 w-4" />
                     Importar a Salud
                   </Button>
                 )}
               </>
             )}
-          </>
+            <div className="flex-1" />
+            <Button variant="secondary" onClick={() => setDrawerAbierto(false)}>
+              Cerrar
+            </Button>
+          </div>
         }
       >
         {drawerCargando ? (
@@ -2250,15 +2258,9 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               <div className="space-y-4 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
                 <p className="text-sm font-semibold text-neutral-800">Datos del acuerdo</p>
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Tipo de acuerdo</dt>
-                    <dd className="mt-1 text-sm text-neutral-700">
-                      {acuerdoDetalle.tipo_acuerdo?.nombre} (${acuerdoDetalle.tipo_acuerdo?.monto_usd} USD)
-                    </dd>
-                  </div>
                   <div>
-                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Número de contrato</dt>
-                    <dd className="mt-1 text-sm text-neutral-700">{acuerdoDetalle.numero_contrato || '—'}</dd>
+                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Número de acuerdo</dt>
+                    <dd className="mt-1 font-mono text-sm text-neutral-700">{acuerdoDetalle.numero_acuerdo || '—'}</dd>
                   </div>
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Fecha de inicio</dt>
@@ -2272,6 +2274,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Semanas sin pago</dt>
                     <dd className="mt-1 text-sm text-neutral-700">{acuerdoDetalle.semanas_sin_pago}</dd>
+                  </div>
+                  {/* Se lee del socio cada vez que se abre el detalle: siempre muestra el último guardado */}
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Código sociales</dt>
+                    <dd className="mt-1 font-mono text-sm text-neutral-700">{acuerdoDetalle.socio?.codigo_social || 'Sin código'}</dd>
                   </div>
                   {acuerdoDetalle.estado === 'retirado' && (
                     <>
@@ -2295,10 +2302,10 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <p className="text-sm font-semibold text-neutral-800">
-                    Beneficiarios registrados ({beneficiariosVisibles.length})
+                    Beneficiarios de este acuerdo ({beneficiariosVisibles.length})
                   </p>
                   <p className="text-xs text-neutral-500">
-                    {beneficiariosActivosCount}/{MAX_BENEFICIARIOS_POR_SOCIO} beneficiarios (+1 titular = máx. {MAX_BENEFICIARIOS_POR_SOCIO + 1} personas)
+                    {beneficiariosActivosCount}/{MAX_BENEFICIARIOS_POR_ACUERDO} beneficiarios (+1 titular = máx. {MAX_BENEFICIARIOS_POR_ACUERDO + 1} personas)
                   </p>
                 </div>
                 {puedeEscribir && (
@@ -2309,7 +2316,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                     disabled={limiteBeneficiariosAlcanzado}
                     title={
                       limiteBeneficiariosAlcanzado
-                        ? `Este socio ya alcanzó el máximo de ${MAX_BENEFICIARIOS_POR_SOCIO} beneficiarios (${MAX_BENEFICIARIOS_POR_SOCIO + 1} personas incluyendo al titular)`
+                        ? `Este acuerdo ya alcanzó el máximo de ${MAX_BENEFICIARIOS_POR_ACUERDO} beneficiarios (${MAX_BENEFICIARIOS_POR_ACUERDO + 1} personas incluyendo al titular)`
                         : undefined
                     }
                   >
@@ -2321,7 +2328,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
               {limiteBeneficiariosAlcanzado && (
                 <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  Este socio ya tiene el máximo de {MAX_BENEFICIARIOS_POR_SOCIO} beneficiarios permitidos ({MAX_BENEFICIARIOS_POR_SOCIO + 1} personas incluyendo al titular). Para agregar uno nuevo, primero retira a alguno de los registrados.
+                  Este acuerdo ya tiene el máximo de {MAX_BENEFICIARIOS_POR_ACUERDO} beneficiarios permitidos ({MAX_BENEFICIARIOS_POR_ACUERDO + 1} personas incluyendo al titular). Para agregar uno nuevo, retira a alguno de los registrados o abre otro acuerdo de funeraria para este socio.
                 </div>
               )}
 
@@ -2344,7 +2351,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                     {beneficiariosVisibles.length === 0 && (
                       <tr>
                         <td colSpan={9} className="px-3 py-6 text-center text-sm text-neutral-500">
-                          Este socio no tiene beneficiarios registrados.
+                          Este acuerdo no tiene beneficiarios registrados.
                         </td>
                       </tr>
                     )}
@@ -2384,7 +2391,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                                     className="rounded-lg p-1.5 text-purple-600 hover:bg-purple-50"
                                     title="Marcar como fallecido"
                                   >
-                                    <Skull className="h-4 w-4" />
+                                    <CruzFallecido className="h-4 w-4" />
                                   </button>
                                   <button
                                     onClick={() => void eliminarBeneficiarioAccion(beneficiario)}
@@ -2392,6 +2399,17 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                                     title="Retirar"
                                   >
                                     <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              )}
+                              {beneficiario.estado === 'fallecido' && (
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() => void revertirFallecido(beneficiario)}
+                                    className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50"
+                                    title="Revertir fallecimiento (volver a activo)"
+                                  >
+                                    <RotateCcw className="h-4 w-4" />
                                   </button>
                                 </div>
                               )}
@@ -2407,6 +2425,16 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           </div>
         ) : null}
       </Modal>
+
+      {revertirNuevoAcuerdo && acuerdoDetalle?.socio && (
+        <ModalRevertirConNuevoAcuerdo
+          open
+          onClose={() => setRevertirNuevoAcuerdo(null)}
+          onCompletado={(numero) => void completarRevertirNuevoAcuerdo(numero)}
+          socio={acuerdoDetalle.socio}
+          beneficiario={revertirNuevoAcuerdo}
+        />
+      )}
 
       {/* ============================================ */}
       {/* MODAL: BENEFICIARIO */}
@@ -2436,18 +2464,23 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           <Input
             label="Cédula *"
             value={beneficiarioForm.cedula}
-            onChange={(e) => setBeneficiarioForm((f) => ({ ...f, cedula: e.target.value }))}
+            onChange={(e) =>
+              setBeneficiarioForm((f) => ({ ...f, cedula: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '') }))
+            }
+            maxLength={20}
+            placeholder="Ej: 12345678 o 12345678-1"
+            helperText="Números, letras y guión (-). Menor sin cédula: escribe MENOR y se le asigna MENOR-1, MENOR-2…"
           />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               label="Nombre *"
               value={beneficiarioForm.nombre}
-              onChange={(e) => setBeneficiarioForm((f) => ({ ...f, nombre: e.target.value }))}
+              onChange={(e) => setBeneficiarioForm((f) => ({ ...f, nombre: valorEnMayusculas(e) }))}
             />
             <Input
               label="Apellido *"
               value={beneficiarioForm.apellido}
-              onChange={(e) => setBeneficiarioForm((f) => ({ ...f, apellido: e.target.value }))}
+              onChange={(e) => setBeneficiarioForm((f) => ({ ...f, apellido: valorEnMayusculas(e) }))}
             />
           </div>
           <label className="block text-sm font-medium text-neutral-700">
@@ -2544,7 +2577,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             Motivo (opcional)
             <textarea
               value={estadoMotivo}
-              onChange={(e) => setEstadoMotivo(e.target.value)}
+              onChange={(e) => setEstadoMotivo(valorEnMayusculas(e))}
               rows={3}
               className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
@@ -2557,30 +2590,65 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       {/* ============================================ */}
       <Modal
         open={importarSaludAbierto}
-        onClose={() => setImportarSaludAbierto(false)}
-        title="Importar Beneficiarios a Salud"
-        description="Crea acuerdos de salud reutilizando los datos ya registrados en funeraria"
+        onClose={cerrarImportarSalud}
+        title={
+          importarSaludResultado
+            ? importarSaludResultado.exito
+              ? 'Importación a Salud completada'
+              : 'No se completó la importación a Salud'
+            : 'Importar a Salud'
+        }
+        description={
+          importarSaludResultado
+            ? undefined
+            : 'Copia los beneficiarios seleccionados (o solo el titular, si el acuerdo no tiene beneficiarios) a un acuerdo de salud del mismo titular. En Funeraria no se borra nada.'
+        }
         size="md"
         footer={
-          !importarSaludResultado && (
+          importarSaludResultado ? (
             <>
-              <Button variant="outline" onClick={() => setImportarSaludAbierto(false)}>
+              {!importarSaludResultado.exito && (
+                <Button variant="outline" onClick={() => setImportarSaludResultado(null)}>
+                  Corregir e intentar de nuevo
+                </Button>
+              )}
+              <Button onClick={cerrarImportarSalud}>Volver al acuerdo de funeraria</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={cerrarImportarSalud}>
                 Cancelar
               </Button>
               <Button
-                onClick={() => void confirmarImportarSalud()}
+                onClick={continuarImportarSalud}
                 isLoading={importarSaludEnviando}
-                disabled={!importarSaludTipoId || importarSaludSeleccionados.length === 0}
+                disabled={
+                  (importarSaludSeleccionados.length === 0 && !(importarSaludCrearAcuerdo && importarSaludCandidatos.length === 0)) ||
+                  importarSaludCargando ||
+                  (importarSaludGrupos.length === 0 && !importarSaludCrearAcuerdo)
+                }
               >
-                Importar Seleccionados
+                {importarSaludCrearAcuerdo
+                  ? importarSaludCandidatos.length === 0
+                    ? 'Crear acuerdo de salud'
+                    : 'Crear acuerdo de salud y copiar'
+                  : importarSaludGrupos.length > 1
+                    ? 'Continuar'
+                    : 'Copiar a Salud'}
               </Button>
             </>
           )
         }
       >
         {importarSaludResultado ? (
-          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
-            {importarSaludResultado}
+          <div
+            className={
+              importarSaludResultado.exito
+                ? 'rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800'
+                : 'rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700'
+            }
+          >
+            {importarSaludResultado.mensaje}
           </div>
         ) : (
           <div className="space-y-4">
@@ -2590,49 +2658,326 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               </div>
             )}
 
-            <label className="block text-sm font-medium text-neutral-700">
-              Tipo de acuerdo de salud
-              <select
-                value={importarSaludTipoId}
-                onChange={(e) => setImportarSaludTipoId(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-lg border border-neutral-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                <option value="">Selecciona un tipo...</option>
-                {tiposSalud.map((tipo) => (
-                  <option key={tipo.id} value={tipo.id}>
-                    {tipo.nombre} (${tipo.monto_usd} USD)
-                  </option>
-                ))}
-              </select>
-            </label>
+            {acuerdoDetalle?.socio && (
+              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                <p className="text-sm font-semibold text-neutral-900">{acuerdoDetalle.socio.nombre_completo}</p>
+                <p className="text-xs text-neutral-500">
+                  Titular • Exp. {acuerdoDetalle.socio.codigo_socio} •{' '}
+                  {importarSaludCrearAcuerdo ? 'será el titular del acuerdo de salud nuevo' : importarSaludGrupos.length > 0 ? 'ya es el dueño de su acuerdo de salud' : ''}
+                </p>
+              </div>
+            )}
 
             <div>
-              <p className="text-sm font-medium text-neutral-700 mb-2">Beneficiarios a importar</p>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {beneficiariosSocio
-                  .filter((b) => b.estado === 'activo')
-                  .map((beneficiario) => (
-                    <label
-                      key={beneficiario.id}
-                      className="flex items-center gap-3 rounded-lg border border-neutral-200 p-2.5 text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={importarSaludSeleccionados.includes(beneficiario.id)}
-                        onChange={(e) => {
-                          setImportarSaludSeleccionados((prev) =>
-                            e.target.checked
-                              ? [...prev, beneficiario.id]
-                              : prev.filter((id) => id !== beneficiario.id)
-                          )
-                        }}
-                      />
-                      <span>
-                        {beneficiario.nombre} {beneficiario.apellido} • {beneficiario.parentesco}
-                      </span>
-                    </label>
-                  ))}
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-neutral-700">
+                  Beneficiarios a copiar ({importarSaludSeleccionados.length} de {importarSaludCandidatos.length})
+                </p>
+                {importarSaludCandidatos.length > 0 && (
+                  <Button variant="outline" size="sm" onClick={alternarTodosImportarSalud}>
+                    {importarSaludTodos ? 'Quitar todos' : 'Seleccionar todos'}
+                  </Button>
+                )}
               </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {importarSaludCandidatos.length === 0 && (
+                  <p className="px-2 py-1.5 text-sm text-neutral-500">
+                    Este acuerdo no tiene beneficiarios vivos para copiar: solo se copiarán los datos del titular.
+                  </p>
+                )}
+                {importarSaludCandidatos.map((beneficiario) => (
+                  <label
+                    key={beneficiario.id}
+                    className="flex items-center gap-3 rounded-lg border border-neutral-200 p-2.5 text-sm cursor-pointer hover:bg-neutral-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={importarSaludSeleccionados.includes(beneficiario.id)}
+                      onChange={(e) => {
+                        setImportarSaludSeleccionados((prev) =>
+                          e.target.checked
+                            ? [...prev, beneficiario.id]
+                            : prev.filter((id) => id !== beneficiario.id)
+                        )
+                      }}
+                    />
+                    <span>
+                      {beneficiario.nombre} {beneficiario.apellido} • {beneficiario.parentesco}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {importarSaludCargando && <p className="text-sm text-neutral-500">Buscando los acuerdos de salud del titular...</p>}
+            {!importarSaludCrearAcuerdo && importarSaludCandidatos.length > 0 && importarSaludGrupos.length === 1 && (
+              <p className="text-sm text-neutral-600">
+                Se copiarán al acuerdo de salud{' '}
+                <span className="font-mono font-medium">{importarSaludGrupos[0]!.numero_acuerdo}</span>.
+              </p>
+            )}
+            {!importarSaludCrearAcuerdo && importarSaludCandidatos.length > 0 && importarSaludGrupos.length > 1 && (
+              <p className="text-sm text-neutral-600">
+                El titular tiene {importarSaludGrupos.length} acuerdos de salud; al continuar se te preguntará a cuál copiarlos.
+              </p>
+            )}
+            {!importarSaludCrearAcuerdo && !importarSaludCargando && importarSaludCandidatos.length === 0 && importarSaludGrupos.length > 0 && (
+              <p className="text-sm text-neutral-600">
+                El socio ya tiene acuerdo de salud ({importarSaludGrupos.map((g) => g.numero_acuerdo).join(', ')}) y no se abrió uno
+                nuevo. No hay nada más que copiar.
+              </p>
+            )}
+            {importarSaludCrearAcuerdo && (
+              <div className="space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                <p className="text-sm text-sky-800">
+                  {importarSaludAbrirOtro ? (
+                    <>
+                      El socio {acuerdoDetalle?.socio?.codigo_socio} ya tiene acuerdo de salud (
+                      {importarSaludGrupos.map((g) => g.numero_acuerdo).join(', ')}). Se le abrirá <strong>un acuerdo nuevo adicional</strong>{' '}
+                      a su nombre
+                    </>
+                  ) : (
+                    <>
+                      El socio {acuerdoDetalle?.socio?.codigo_socio} <strong>no tiene acuerdo de salud</strong>. Se le creará uno nuevo a
+                      su nombre
+                    </>
+                  )}
+                  {importarSaludCandidatos.length > 0
+                    ? ' y los beneficiarios seleccionados se agregarán a ese acuerdo.'
+                    : ', con sus datos como titular.'}
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Input
+                    label="N° del acuerdo de salud que se creará"
+                    value={importarSaludNumeroNuevo ?? ''}
+                    onChange={(e) => setImportarSaludNumeroNuevo(valorEnMayusculas(e))}
+                    maxLength={20}
+                    helperText="Propuesto con el número de expediente; puedes modificarlo"
+                  />
+                  <Input
+                    label="Fecha de inicio"
+                    type="date"
+                    value={importarSaludFechaNueva}
+                    onChange={(e) => setImportarSaludFechaNueva(e.target.value)}
+                    helperText="Por defecto hoy; puedes modificarla"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Ventana adicional: el titular tiene más de un acuerdo de salud */}
+      <Modal
+        open={importarSaludElegirAbierto}
+        onClose={() => setImportarSaludElegirAbierto(false)}
+        title="¿A qué acuerdo de salud?"
+        description={`El titular (exp. ${acuerdoDetalle?.socio?.codigo_socio ?? ''}) tiene varios acuerdos de salud. Elige a cuál copiar los ${importarSaludSeleccionados.length} beneficiario(s).`}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setImportarSaludElegirAbierto(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => importarSaludGrupoElegido && void confirmarImportarSalud(importarSaludGrupoElegido)}
+              disabled={!importarSaludGrupoElegido}
+              isLoading={importarSaludEnviando}
+            >
+              Copiar a este acuerdo
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          {importarSaludGrupos.map((g) => (
+            <label
+              key={g.numero_acuerdo}
+              className="flex items-center gap-3 rounded-lg border border-neutral-200 p-3 text-sm hover:bg-neutral-50 cursor-pointer"
+            >
+              <input
+                type="radio"
+                name="acuerdo-salud-destino"
+                checked={importarSaludGrupoElegido === g.numero_acuerdo}
+                onChange={() => setImportarSaludGrupoElegido(g.numero_acuerdo)}
+              />
+              <span className="font-mono font-medium">{g.numero_acuerdo}</span>
+              <span className="text-neutral-500">
+                • desde {formatearFecha(g.fecha_inicio)} • {g.estado}
+              </span>
+            </label>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Ventana informativa: acuerdo sin beneficiarios y el titular ya tiene acuerdo de salud */}
+      <Modal
+        open={importarSaludPreguntarOtro}
+        onClose={cerrarImportarSalud}
+        title="El socio ya tiene acuerdo de salud"
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={cerrarImportarSalud}>
+              No
+            </Button>
+            <Button onClick={() => void aceptarAbrirOtroSalud()}>Sí, abrir un acuerdo nuevo</Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm text-neutral-700">
+          <p>
+            El socio <strong>{acuerdoDetalle?.socio?.nombre_completo}</strong> (exp. {acuerdoDetalle?.socio?.codigo_socio}) ya tiene{' '}
+            {importarSaludGrupos.length === 1 ? 'un acuerdo de salud abierto' : `${importarSaludGrupos.length} acuerdos de salud abiertos`}:
+          </p>
+          <ul className="space-y-1">
+            {importarSaludGrupos.map((g) => (
+              <li key={g.numero_acuerdo} className="rounded border border-neutral-200 px-3 py-1.5">
+                <span className="font-mono font-medium">{g.numero_acuerdo}</span>
+                <span className="text-neutral-500">
+                  {' '}
+                  • desde {formatearFecha(g.fecha_inicio)} • {g.estado}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="font-medium">¿Desea abrir un nuevo acuerdo para este socio?</p>
+        </div>
+      </Modal>
+
+      {/* ============================================ */}
+      {/* MODAL: ¿QUÉ LISTADO IMPRIMIR? */}
+      {/* ============================================ */}
+      <Modal
+        open={listadoElegirAbierto}
+        onClose={() => setListadoElegirAbierto(false)}
+        title="Imprimir listado"
+        description="Elige qué acuerdos de funeraria quieres imprimir."
+        size="sm"
+        footer={
+          <div className="flex w-full flex-wrap gap-3">
+            <div className="flex-1" />
+            <Button variant="outline" onClick={() => setListadoElegirAbierto(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void generarListado()} isLoading={listadoCargando}>
+              <Printer className="h-4 w-4" />
+              Imprimir
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-2">
+          {listadoError && (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{listadoError}</div>
+          )}
+          {OPCIONES_LISTADO.map((opcion) => (
+            <label
+              key={opcion.valor}
+              className="flex items-center gap-3 rounded-lg border border-neutral-200 p-3 text-sm hover:bg-neutral-50 cursor-pointer"
+            >
+              <input
+                type="radio"
+                name="listado-funeraria"
+                checked={listadoEstado === opcion.valor}
+                onChange={() => setListadoEstado(opcion.valor)}
+              />
+              <span className="font-medium text-neutral-900">{opcion.etiqueta}</span>
+            </label>
+          ))}
+        </div>
+      </Modal>
+
+      {/* ============================================ */}
+      {/* MODAL: REPORTE SUSPENDIDOS (vista previa + descarga en Excel) */}
+      {/* ============================================ */}
+      <Modal
+        open={reporteAbierto}
+        onClose={() => setReporteAbierto(false)}
+        title="Reporte de suspendidos"
+        description="Vista previa del reporte. Descárgalo en Excel solo si lo necesitas."
+        size="xl"
+        footer={
+          <div className="flex w-full flex-wrap gap-3">
+            <Button
+              onClick={() => void descargarReporteSuspendidos()}
+              isLoading={generandoReporte}
+              disabled={reporteCargando || !!(reporteError && reporteFilas.length === 0)}
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Descargar Excel
+            </Button>
+            <div className="flex-1" />
+            <Button variant="secondary" onClick={() => setReporteAbierto(false)}>
+              Cerrar
+            </Button>
+          </div>
+        }
+      >
+        {reporteError && (
+          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{reporteError}</div>
+        )}
+        {/* También arriba: la hoja puede ser muy larga y no hace falta bajar hasta el final */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-neutral-500">
+            {reporteCargando ? 'Generando...' : `${reporteFilas.length} acuerdo(s) suspendido(s)`}
+          </p>
+          <Button
+            onClick={() => void descargarReporteSuspendidos()}
+            isLoading={generandoReporte}
+            disabled={reporteCargando || !!(reporteError && reporteFilas.length === 0)}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Descargar Excel
+          </Button>
+        </div>
+        {reporteCargando ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-neutral-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Generando reporte...</span>
+          </div>
+        ) : (
+          // La "hoja": mismo encabezado y tabla que las impresiones y el Excel
+          <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm sm:p-6">
+            <EncabezadoImpresion
+              titulo="Reporte de Acuerdos de Funeraria Suspendidos"
+              detalles={<div>Total suspendidos: {reporteFilas.length}</div>}
+              generadoEn={reporteGeneradoEn}
+            />
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr className="bg-emerald-700 text-white">
+                    {['N°', 'N° Expediente', 'N° Acuerdo', 'Apellidos y Nombres', 'Cédula', 'Teléfono', 'Semanas de Atraso'].map((col) => (
+                      <th key={col} className="border border-neutral-300 px-2 py-1.5 text-center font-semibold uppercase tracking-wide">
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {reporteFilas.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="border border-neutral-300 px-2 py-6 text-center italic text-neutral-500">
+                        No hay acuerdos suspendidos.
+                      </td>
+                    </tr>
+                  ) : (
+                    reporteFilas.map((f, i) => (
+                      <tr key={`${f.numero_acuerdo}-${i}`} className={i % 2 === 1 ? 'bg-neutral-100' : ''}>
+                        <td className="border border-neutral-300 px-2 py-1 text-center">{i + 1}</td>
+                        <td className="border border-neutral-300 px-2 py-1 text-center">{f.expediente}</td>
+                        <td className="border border-neutral-300 px-2 py-1 text-center">{f.numero_acuerdo}</td>
+                        <td className="border border-neutral-300 px-2 py-1">{nombreEnMayusculas(`${f.apellidos} ${f.nombres}`)}</td>
+                        <td className="border border-neutral-300 px-2 py-1 text-center">{f.cedula}</td>
+                        <td className="border border-neutral-300 px-2 py-1 text-center">{f.telefono}</td>
+                        <td className="border border-neutral-300 px-2 py-1 text-center font-semibold text-rose-700">{f.semanas_atraso}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

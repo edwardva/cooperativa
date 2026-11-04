@@ -17,6 +17,8 @@ import { logger } from '../utils/logger';
 import { ConflictError, BadRequestError } from '../middleware/errorHandler';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio } from '../utils/bloqueos';
+import { normalizarCedula } from '../utils/cedula';
+import { idsSociosPorTexto } from '../services/busquedaSociosService';
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -43,13 +45,42 @@ const movimientoSchema = z.object({
   referencia: z.string().max(50).optional(),
 });
 
+/** Día suelto del calendario, tal como lo entrega un <input type="date"> */
+const DIA = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Fecha de filtro: un día ('YYYY-MM-DD') o un instante ISO. Antes sólo se
+ * aceptaba el instante, y la consulta de movimientos mandaba el día tal cual:
+ * cualquier filtro combinado con una fecha respondía 400 y la pantalla se
+ * quedaba con la lista sin filtrar.
+ */
+const fechaFiltro = z
+  .string()
+  .refine((v) => DIA.test(v) || !Number.isNaN(Date.parse(v)), 'Fecha inválida');
+
+/**
+ * Un día suelto se toma en hora de Venezuela (UTC-4, sin horario de verano).
+ * `new Date('2025-03-01')` es medianoche UTC, que en Caracas son las 8 p.m.
+ * del día anterior: el "desde" arrastraba movimientos de la víspera.
+ */
+function limiteDeDia(valor: string, finDelDia: boolean): Date {
+  if (DIA.test(valor)) {
+    return new Date(`${valor}T${finDelDia ? '23:59:59.999' : '00:00:00.000'}-04:00`);
+  }
+  return new Date(valor);
+}
+
 const consultaMovimientosSchema = z.object({
   cuenta_id: z.coerce.number().int().positive().optional(),
   socio_id: z.coerce.number().int().positive().optional(),
   tipo_cuenta_id: z.coerce.number().int().positive().optional(),
-  tipo_movimiento: z.enum(['deposito', 'retiro']).optional(),
-  fecha_desde: z.string().datetime().optional(),
-  fecha_hasta: z.string().datetime().optional(),
+  // "todos" o vacío es lo que manda un <select> sin filtro: equivale a no filtrar
+  tipo_movimiento: z.preprocess(
+    (v) => (v === '' || v === 'todos' ? undefined : typeof v === 'string' ? v.toLowerCase() : v),
+    z.enum(['deposito', 'retiro']).optional()
+  ),
+  fecha_desde: fechaFiltro.optional(),
+  fecha_hasta: fechaFiltro.optional(),
   page: z.coerce.number().int().positive().optional().default(1),
   limit: z.coerce.number().int().positive().max(100).optional().default(50),
 });
@@ -76,8 +107,10 @@ async function obtenerTasaActual(): Promise<number> {
     orderBy: { created_at: 'desc' },
   });
 
+  // Error de negocio y no genérico: así la pantalla muestra el motivo en vez
+  // de "Error al abrir cuenta de ahorro"
   if (!semanaActual) {
-    throw new Error('No hay semana de colecta activa. Configure la tasa de cambio.');
+    throw new BadRequestError('No hay semana de colecta activa. Configure la tasa de cambio.');
   }
 
   const tasa = Number(semanaActual.tasa_usd_bs);
@@ -487,6 +520,141 @@ export const listarTodosTiposCuenta = async (_req: Request, res: Response): Prom
 };
 
 /**
+ * Por qué un expediente no puede abrir ahorro, o null si puede. Es la misma
+ * regla que aplica `aperturaCuenta`; aquí sirve para que la búsqueda lo diga
+ * antes de que el operador llene el formulario.
+ */
+function motivoSinAhorro(socio: {
+  estado: string;
+  ubicacion: { tipo: string } | null;
+}): string | null {
+  if (socio.estado === 'retirado') return 'Socio retirado';
+  if (socio.ubicacion?.tipo === 'feria') return 'Socio de feria: sólo tiene salud, no ahorro';
+  if (!socio.ubicacion) return 'Sin sector asignado';
+  return null;
+}
+
+/**
+ * GET /api/ahorro/socios-apertura?q=texto
+ * Búsqueda de socios para abrir cuenta, por cédula, expediente o nombre.
+ *
+ * Devuelve TODOS los expedientes que coinciden: una misma cédula puede tener
+ * uno en un sector y otro en una feria, y antes la apertura tomaba la cédula
+ * como si fuera única. Cada resultado dice si puede abrir ahorro y, si no,
+ * por qué (sólo el particular de sector, incluidos los trabajadores).
+ */
+export const buscarSociosApertura = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Espacios al inicio, al final o repetidos no cambian la búsqueda
+    const texto = String(req.query.q ?? '').trim().replace(/\s+/g, ' ');
+
+    if (texto.length < 2) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'BUSQUEDA_CORTA',
+          message: 'Escriba al menos 2 caracteres de la cédula, el expediente o el nombre',
+        },
+      });
+      return;
+    }
+
+    // Sin letras (salvo la V/E de la nacionalidad) es una cédula o un
+    // expediente. Se compara sin espacios, puntos ni guiones: el operador
+    // escribe "12 345 678", "V-12.345.678" o " 01-0023 ".
+    const esIdentificador = /^[VE]?[\s.\-\d]+$/i.test(texto);
+    const compacto = texto.toUpperCase().replace(/[^0-9A-Z]/g, '');
+    const cedula = esIdentificador ? normalizarCedula(texto).cedula : '';
+
+    const exactos = await prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+      SELECT id FROM socios
+      WHERE upper(regexp_replace(codigo_socio, '[^0-9A-Za-z]', '', 'g')) = ${compacto}
+         OR (${cedula} <> '' AND ltrim(regexp_replace(cedula, '[^0-9]', '', 'g'), '0') = ${cedula})
+      LIMIT 100
+    `);
+    const ids = new Set(exactos.map((f) => f.id));
+
+    if (!esIdentificador) {
+      // Cada palabra en cualquiera de los campos: "juan perez" encuentra al
+      // socio aunque el nombre y el apellido estén en columnas distintas
+      const porNombre = await idsSociosPorTexto(prisma, texto, {
+        campos: ['nombre', 'apellido', 'cedula', 'codigo_socio'],
+        limite: 100,
+      });
+      porNombre.forEach((id) => ids.add(id));
+    } else if (ids.size === 0) {
+      // Nada exacto: se prueba como fragmento, sin los espacios intermedios
+      const parcial = await idsSociosPorTexto(prisma, texto.replace(/\s/g, ''), {
+        campos: ['cedula', 'codigo_socio'],
+        limite: 50,
+      });
+      parcial.forEach((id) => ids.add(id));
+    }
+
+    if (ids.size === 0) {
+      res.json({ success: true, data: [] });
+      return;
+    }
+
+    const socios = await prisma.socio.findMany({
+      where: { id: { in: [...ids] } },
+      take: 50,
+      orderBy: [{ apellido: 'asc' }, { nombre: 'asc' }, { codigo_socio: 'asc' }],
+      select: {
+        id: true,
+        codigo_socio: true,
+        cedula: true,
+        nombre: true,
+        apellido: true,
+        estado: true,
+        ubicacion: { select: { id: true, codigo: true, nombre: true, tipo: true } },
+        // El trabajador de El Triunfo también es particular: se marca para
+        // que el operador lo reconozca
+        persona: {
+          select: {
+            trabajadores: { where: { estado: 'activo' }, select: { codigo_trabajador: true }, take: 1 },
+          },
+        },
+        // Para avisar antes de enviar qué tipos de cuenta ya tiene
+        cuentas_ahorro: {
+          select: {
+            id: true,
+            numero_cuenta: true,
+            estado: true,
+            tipo_cuenta_id: true,
+            tipo_cuenta: { select: { nombre: true } },
+          },
+        },
+      },
+    });
+
+    const data = socios
+      .map(({ persona, ...socio }) => {
+        const motivo = motivoSinAhorro(socio);
+        return {
+          ...socio,
+          es_trabajador: (persona?.trabajadores.length ?? 0) > 0,
+          puede_abrir: motivo === null,
+          motivo_no_puede: motivo,
+        };
+      })
+      // Primero los que pueden abrir: son los que el operador busca
+      .sort((a, b) => Number(b.puede_abrir) - Number(a.puede_abrir));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error al buscar socios para apertura:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Error al buscar el socio',
+      },
+    });
+  }
+};
+
+/**
  * POST /api/ahorro/cuentas/apertura
  * Apertura de nueva cuenta de ahorro
  */
@@ -497,6 +665,7 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
     // Validar que el socio existe y está activo
     const socio = await prisma.socio.findUnique({
       where: { id: datos.socio_id },
+      include: { ubicacion: { select: { tipo: true } } },
     });
 
     if (!socio) {
@@ -521,6 +690,20 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
       return;
     }
 
+    // El socio de feria sólo tiene salud; el ahorro es del particular (sector)
+    if (socio.ubicacion?.tipo === 'feria') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'SOCIO_DE_FERIA',
+          message:
+            'El socio está inscrito en una feria y el de feria sólo tiene derecho a salud. ' +
+            'Para tener ahorro debe inscribirse como particular en un sector.',
+        },
+      });
+      return;
+    }
+
     // Validar que el tipo de cuenta existe y está activo
     const tipoCuenta = await prisma.tipoCuentaAhorro.findUnique({
       where: { id: datos.tipo_cuenta_id },
@@ -537,21 +720,28 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Validar que el socio no tenga ya una cuenta de este tipo
+    // Un expediente tiene a lo sumo una cuenta de cada tipo. Se busca también
+    // la inactiva: el número se deriva del expediente, así que una segunda
+    // cuenta chocaría con ella; lo que corresponde es reactivarla.
     const cuentaExistente = await prisma.cuentaAhorro.findFirst({
       where: {
         socio_id: datos.socio_id,
         tipo_cuenta_id: datos.tipo_cuenta_id,
-        estado: true,
       },
+      orderBy: { estado: 'desc' },
     });
 
     if (cuentaExistente) {
-      res.status(400).json({
+      res.status(409).json({
         success: false,
         error: {
           code: 'CUENTA_DUPLICADA',
-          message: 'El socio ya tiene una cuenta activa de este tipo',
+          message: cuentaExistente.estado
+            ? `El socio ${socio.codigo_socio} ya tiene una cuenta ${tipoCuenta.nombre} ` +
+              `(N° ${cuentaExistente.numero_cuenta}). No se puede abrir otra cuenta del mismo tipo.`
+            : `El socio ${socio.codigo_socio} ya tiene una cuenta ${tipoCuenta.nombre} inactiva ` +
+              `(N° ${cuentaExistente.numero_cuenta}). Reactívela en lugar de abrir otra.`,
+          numero_cuenta: cuentaExistente.numero_cuenta,
         },
       });
       return;
@@ -634,7 +824,7 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
     res.status(201).json({
       success: true,
       data: resultado,
-      message: 'Cuenta de ahorro abierta exitosamente',
+      message: `Cuenta de ahorro N° ${resultado.numero_cuenta} abierta exitosamente`,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -654,6 +844,19 @@ export const aperturaCuenta = async (req: Request, res: Response): Promise<void>
       res.status(error.statusCode).json({
         success: false,
         error: { code: error.code ?? 'BAD_REQUEST', message: error.message },
+      });
+      return;
+    }
+
+    // Dos aperturas simultáneas del mismo socio pasan las dos la validación y
+    // la segunda choca con el número único: es la misma cuenta duplicada
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      res.status(409).json({
+        success: false,
+        error: {
+          code: 'CUENTA_DUPLICADA',
+          message: 'El socio ya tiene una cuenta de este tipo. No se puede abrir otra.',
+        },
       });
       return;
     }
@@ -869,8 +1072,9 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
       // así que se movía solo aunque nadie tocara la cuenta.
       const signo = datos.tipo_movimiento === 'deposito' ? 1 : -1;
       const saldoAnteriorUsd = Number(vigente.saldo_usd);
+      const saldoAnteriorBs = Number(vigente.saldo_bs);
       const nuevoSaldoUsd = saldoAnteriorUsd + signo * montoUsd;
-      const nuevoSaldoBs = Number(vigente.saldo_bs) + signo * montoBs;
+      const nuevoSaldoBs = saldoAnteriorBs + signo * montoBs;
 
       // Crear movimiento
       const movimiento = await tx.movimientoAhorro.create({
@@ -900,6 +1104,7 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
           socio: {
             select: {
               codigo_socio: true,
+              cedula: true,
               nombre: true,
               apellido: true,
             },
@@ -921,7 +1126,13 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
         },
       });
 
-      return { movimiento, cuenta: cuentaActualizada };
+      // El saldo anterior en bolívares no se guarda en el movimiento, pero el
+      // recibo de una cuenta en bolívares lo necesita: se devuelve aparte
+      return {
+        movimiento,
+        cuenta: cuentaActualizada,
+        saldo_anterior_bs: Math.round(saldoAnteriorBs * 100) / 100,
+      };
     });
 
     logger.info(
@@ -946,10 +1157,14 @@ export const registrarMovimiento = async (req: Request, res: Response): Promise<
       return;
     }
 
+    // Saldo insuficiente (releído dentro de la transacción) o semana sin tasa
     if (error instanceof BadRequestError) {
       res.status(400).json({
         success: false,
-        error: { code: 'SALDO_INSUFICIENTE', message: error.message },
+        error: {
+          code: error.message.startsWith('Saldo disponible insuficiente') ? 'SALDO_INSUFICIENTE' : error.code,
+          message: error.message,
+        },
       });
       return;
     }
@@ -987,10 +1202,10 @@ export const consultarMovimientos = async (req: Request, res: Response): Promise
     if (filtros.fecha_desde || filtros.fecha_hasta) {
       where.fecha_movimiento = {};
       if (filtros.fecha_desde) {
-        where.fecha_movimiento.gte = new Date(filtros.fecha_desde);
+        where.fecha_movimiento.gte = limiteDeDia(filtros.fecha_desde, false);
       }
       if (filtros.fecha_hasta) {
-        where.fecha_movimiento.lte = new Date(filtros.fecha_hasta);
+        where.fecha_movimiento.lte = limiteDeDia(filtros.fecha_hasta, true);
       }
     }
 
@@ -1017,12 +1232,16 @@ export const consultarMovimientos = async (req: Request, res: Response): Promise
               tipo_cuenta: {
                 select: {
                   nombre: true,
+                  // Cada movimiento se muestra en la moneda de su cuenta: el
+                  // reporte mezcla cuentas en bolívares y en dólares
+                  moneda: true,
                 },
               },
             },
           },
         },
-        orderBy: { fecha_movimiento: 'desc' },
+        // El id desempata movimientos del mismo instante (apertura + depósito)
+        orderBy: [{ fecha_movimiento: 'desc' }, { id: 'desc' }],
       }),
       prisma.movimientoAhorro.count({ where }),
     ]);

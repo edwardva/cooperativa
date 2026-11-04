@@ -39,7 +39,7 @@ import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import * as colectaService from '../services/colectaService'
-import { numeroDeSemana } from '../services/semanasColectaService'
+import { periodoDeFecha } from '../services/semanasColectaService'
 import type {
   AsambleaOpcion,
   Cobrable,
@@ -59,6 +59,7 @@ import { ColectaClasica } from '../components/colecta/ColectaClasica'
 import { SituacionSocio } from '../components/colecta/SituacionSocio'
 import { HistorialSuspensiones } from '../components/colecta/HistorialSuspensiones'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
+import { PrintableLibretaAhorro } from '../components/print/PrintableLibretaAhorro'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all placeholder:text-neutral-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
@@ -162,12 +163,15 @@ export default function ColectaPage() {
 
   // --- Driver del cobro: las semanas multiplican los tres servicios ---
   const [semanas, setSemanas] = useState(1)
-  const [semanaCobro, setSemanaCobro] = useState(() => numeroDeSemana(new Date()))
-  const [anoCobro, setAnoCobro] = useState(() => new Date().getFullYear())
+  // Semana y año del calendario de colecta: del 28 al 31/12/2026 ya es la 1 de 2027
+  const [semanaCobro, setSemanaCobro] = useState(() => periodoDeFecha(new Date()).semana)
+  const [anoCobro, setAnoCobro] = useState(() => periodoDeFecha(new Date()).ano)
   const [referencia, setReferencia] = useState('')
   const [adicionalAhorro, setAdicionalAhorro] = useState('0')
   const [asambleas, setAsambleas] = useState<AsambleaOpcion[]>([])
   const [asambleaId, setAsambleaId] = useState<number | ''>('')
+  // Sí o No sobre esa asamblea: el No queda como inasistencia en su historial
+  const [asistioAsamblea, setAsistioAsamblea] = useState(true)
 
   // --- Reintegros: cargo por reactivar un acuerdo suspendido ---
   const [reintegros, setReintegros] = useState<Record<string, string>>({})
@@ -184,8 +188,19 @@ export default function ColectaPage() {
   const [cobrando, setCobrando] = useState(false)
   const [recibo, setRecibo] = useState<Colecta | null>(null)
 
+  // --- Libreta de ahorro para imprimir ---
+  const [libreta, setLibreta] = useState<{
+    datos: colectaService.LibretaAhorro
+    modo: 'movimientos' | 'encabezado'
+  } | null>(null)
+  const [cargandoLibreta, setCargandoLibreta] = useState(false)
+
   // --- Jornada ---
   const [resumenDia, setResumenDia] = useState<ResumenDia | null>(null)
+  // Supervisora y administración ven además lo de todas las cajas (confirmado
+  // el 23/10). Los cajeros no tienen `update` en colecta; ellos dos sí.
+  const veTodasLasCajas = hasPermission('colecta', 'update')
+  const [resumenTodas, setResumenTodas] = useState<ResumenDia | null>(null)
   const [previoCierre, setPrevioCierre] = useState<PrevioCierre | null>(null)
   const [modalCierre, setModalCierre] = useState(false)
   const [obsCierre, setObsCierre] = useState('')
@@ -193,16 +208,18 @@ export default function ColectaPage() {
 
   const cargarResumen = useCallback(async () => {
     try {
-      const [resp, previo] = await Promise.all([
+      const [resp, previo, todas] = await Promise.all([
         colectaService.listarColectas({ solo_mias: true }),
         colectaService.obtenerPrevioCierre(),
+        veTodasLasCajas ? colectaService.listarColectas({ solo_mias: false }) : Promise.resolve(null),
       ])
       if (resp.success) setResumenDia(resp.data.resumen)
       if (previo.success) setPrevioCierre(previo.data)
+      if (todas?.success) setResumenTodas(todas.data.resumen)
     } catch {
       // El resumen es informativo; su fallo no debe bloquear el cobro
     }
-  }, [])
+  }, [veTodasLasCajas])
 
   useEffect(() => {
     void cargarResumen()
@@ -260,6 +277,7 @@ export default function ColectaPage() {
     setSocio(elegido)
     setCandidatos([])
     setAsambleaId('')
+    setAsistioAsamblea(true)
     setAdicionalAhorro('0')
     setReintegros({})
     // El carrito manual queda solo para lo voluntario: abonos a prestamo
@@ -299,7 +317,7 @@ export default function ColectaPage() {
         const respuesta = await colectaService.calcularPaquete({
           socio_id: socio.id,
           semanas,
-          ahorro_adicional_usd: parseFloat(adicionalAhorro) || 0,
+          ahorro_adicional_bs: parseFloat(adicionalAhorro) || 0,
         })
         if (!respuesta.success) throw new Error('No se pudo calcular el cobro')
         if (vigente) setPaquete(respuesta.data)
@@ -382,7 +400,13 @@ export default function ColectaPage() {
     () => totalPaquete + totalVoluntario + totalReintegros,
     [totalPaquete, totalVoluntario, totalReintegros]
   )
-  const totalBs = useMemo(() => (tasa ? totalUsd * tasa : 0), [totalUsd, tasa])
+  // Bs del paquete tal cual (el ahorro adicional viene en Bs exactos) mas lo
+  // voluntario convertido a la tasa
+  const totalBs = useMemo(
+    () =>
+      (paquete?.totales.total_bs ?? 0) + (tasa ? (totalVoluntario + totalReintegros) * tasa : 0),
+    [paquete, totalVoluntario, totalReintegros, tasa]
+  )
   const cantidadLineas = (paquete?.renglones.length ?? 0) + Object.keys(lineas).length
 
   const cobrar = async () => {
@@ -392,11 +416,16 @@ export default function ColectaPage() {
     // ya sumado) y TODOS los servicios contratados. El backend rechaza un
     // paquete parcial, asi que armarlo aqui a mano no tendria sentido.
     const detalles: DetalleColectaEnvio[] = (paquete?.renglones ?? [])
-      .filter((r) => r.monto_usd > 0)
+      // Los renglones de salud en 0 tambien viajan: salud se cobra una vez por
+      // grupo familiar y las demas personas avanzan su cobertura con ese pago
+      .filter((r) => r.monto_usd > 0 || r.monto_bs > 0 || r.servicio === 'salud')
       .map((r) => ({
         servicio: r.servicio,
         referencia_id: r.referencia_id,
         monto_usd: r.monto_usd,
+        // El ahorro viaja tambien en Bs: el adicional se escribio en Bs y asi
+        // se cobra exacto, sin el redondeo de pasar por los dolares
+        ...(r.servicio === 'ahorro' ? { monto_bs: r.monto_bs } : {}),
         ...(r.servicio !== 'ahorro' ? { semanas: r.semanas } : {}),
       }))
 
@@ -444,6 +473,7 @@ export default function ColectaPage() {
         ano_cobro: anoCobro,
         referencia: referencia || null,
         asamblea_id: asambleaId === '' ? null : Number(asambleaId),
+        asistio_asamblea: asistioAsamblea,
         // Oficina del socio y canal presencial: alimentan el cuadre por
         // oficina y el consolidado (req. 9)
         ubicacion_id: socio.ubicacion?.id ?? null,
@@ -460,6 +490,7 @@ export default function ColectaPage() {
       setReferencia('')
       setAdicionalAhorro('0')
       setAsambleaId('')
+      setAsistioAsamblea(true)
       setReintegros({})
       setObservaciones('')
       setTermino('')
@@ -539,6 +570,39 @@ export default function ColectaPage() {
     [socio]
   )
 
+  /**
+   * Libreta de ahorro: la cuenta que recibe el ahorro obligatorio (la del
+   * paquete) o, si no hay, la primera del socio.
+   */
+  const imprimirLibreta = async (modo: 'movimientos' | 'encabezado') => {
+    const cuentaId =
+      paquete?.renglones.find((r) => r.servicio === 'ahorro')?.referencia_id ??
+      cuentasAhorro[0]?.referencia_id
+    if (!cuentaId) {
+      setError('El socio no tiene cuenta de ahorro para imprimir la libreta')
+      return
+    }
+    setCargandoLibreta(true)
+    try {
+      const respuesta = await colectaService.obtenerLibretaAhorro(cuentaId)
+      if (!respuesta.success) throw new Error('No se pudo cargar la libreta')
+      setLibreta({ datos: respuesta.data, modo })
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Error al cargar la libreta')
+    } finally {
+      setCargandoLibreta(false)
+    }
+  }
+
+  // Se imprime cuando la libreta ya esta montada, y se quita al terminar
+  useEffect(() => {
+    if (!libreta) return
+    window.print()
+    const limpiar = () => setLibreta(null)
+    window.addEventListener('afterprint', limpiar, { once: true })
+    return () => window.removeEventListener('afterprint', limpiar)
+  }, [libreta])
+
   /** Acuerdos suspendidos: son los unicos que admiten un reintegro */
   const suspendidos = useMemo(
     () =>
@@ -548,11 +612,54 @@ export default function ColectaPage() {
     [socio]
   )
 
+  // Recibo del ultimo cobro: va en las dos disposiciones
+  const tarjetaRecibo = recibo && (
+            <Card className="border-emerald-200 bg-emerald-50/50 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0 text-emerald-600" />
+                  <div>
+                    <p className="text-lg font-semibold text-emerald-900">
+                      Colecta #{recibo.id} registrada
+                    </p>
+                    <p className="mt-1 text-sm text-emerald-800 print:uppercase">
+                      {recibo.socio?.apellido}, {recibo.socio?.nombre} ·{' '}
+                      {recibo.socio?.codigo_socio}
+                    </p>
+                    <p className="mt-2 text-sm text-emerald-700">
+                      {recibo.detalles.length} concepto(s) ·{' '}
+                      <strong>Bs {money(Number(recibo.monto_total_bs))}</strong> ·{' '}
+                      ${money(Number(recibo.monto_total_usd))}
+                    </p>
+                    {(recibo.referencia || recibo.observaciones) && (
+                      <p className="mt-1 text-sm text-emerald-800">
+                        {recibo.referencia && <>Referencia: {recibo.referencia}</>}
+                        {recibo.referencia && recibo.observaciones && ' · '}
+                        {recibo.observaciones && <>Notas: {recibo.observaciones}</>}
+                      </p>
+                    )}
+                    {recibo.correo_enviado_a && (
+                      <p className="mt-1 text-xs text-emerald-700 print:hidden">
+                        Se envió el detalle al correo {recibo.correo_enviado_a}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <Button variant="outline" onClick={() => window.print()}>
+                  <Printer className="h-4 w-4" />
+                  Imprimir recibo
+                </Button>
+              </div>
+            </Card>
+  )
+
   // ============================================
   // RENDER
   // ============================================
   return (
     <div className="space-y-5">
+      {libreta && <PrintableLibretaAhorro libreta={libreta.datos} modo={libreta.modo} />}
+
       {/* ENCABEZADO + ESTADO DE LA JORNADA */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -570,13 +677,29 @@ export default function ColectaPage() {
             </div>
           )}
           <div className="rounded-xl border border-neutral-200 bg-white px-4 py-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-              Cobrado hoy
+            {/* Lo de este cajero, sin lo reversado: es lo mismo que cuadra en su cierre */}
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-500" title="Lo cobrado hoy por usted, sin contar lo reversado">
+              Cobrado hoy en su caja
             </p>
+            {/* Bolívares primero, como lo prefiere la cooperativa; el $ de referencia */}
             <p className="text-sm font-semibold text-neutral-900">
-              ${money(resumenDia?.total_usd ?? 0)} · {resumenDia?.cantidad ?? 0} operaciones
+              Bs {money(resumenDia?.total_bs ?? 0)}
+              <span className="ml-1.5 font-medium text-emerald-600">${money(resumenDia?.total_usd ?? 0)}</span>
+              <span className="font-normal text-neutral-500"> · {resumenDia?.cantidad ?? 0} operaciones</span>
             </p>
           </div>
+          {veTodasLasCajas && resumenTodas && (
+            <div className="rounded-xl border border-neutral-200 bg-white px-4 py-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-500" title="Lo cobrado hoy por todos los cajeros, sin contar lo reversado">
+                Hoy, todas las cajas
+              </p>
+              <p className="text-sm font-semibold text-neutral-900">
+                Bs {money(resumenTodas.total_bs)}
+                <span className="ml-1.5 font-medium text-emerald-600">${money(resumenTodas.total_usd)}</span>
+                <span className="font-normal text-neutral-500"> · {resumenTodas.cantidad} operaciones</span>
+              </p>
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => setModalCierre(true)}
@@ -649,6 +772,7 @@ export default function ColectaPage() {
       {/* Disposicion clasica: todo el socio a la vez, como el sistema actual.
           Recibe el mismo estado y los mismos manejadores que la guiada — no
           calcula ni cobra nada por su cuenta. */}
+      {pestana === 'cobrar' && disposicion === 'clasica' && tarjetaRecibo}
       {pestana === 'cobrar' && disposicion === 'clasica' && (
         <ColectaClasica
           termino={termino}
@@ -663,14 +787,23 @@ export default function ColectaPage() {
           ultimaSemanaTexto={socio?.ultima_semana_pagada_texto ?? ''}
           referencia={referencia}
           onReferencia={setReferencia}
+          notas={observaciones}
+          onNotas={setObservaciones}
           asambleas={asambleas}
           asambleaId={asambleaId}
-          onAsamblea={setAsambleaId}
+          onAsamblea={(id, asistio = true) => {
+            setAsambleaId(id)
+            setAsistioAsamblea(asistio)
+          }}
+          asistioAsamblea={asistioAsamblea}
           adicionalAhorro={adicionalAhorro}
           onAdicionalAhorro={setAdicionalAhorro}
           paquete={paquete}
           tasa={tasa}
           totalUsd={totalUsd}
+          totalBs={totalBs}
+          onLibreta={(modo) => void imprimirLibreta(modo)}
+          imprimiendoLibreta={cargandoLibreta}
           onReverso={() => setPestana('movimientos')}
           onCobrar={() => void cobrar()}
           cobrando={cobrando}
@@ -792,33 +925,7 @@ export default function ColectaPage() {
           )}
 
           {/* RECIBO DE LA ULTIMA COLECTA */}
-          {recibo && (
-            <Card className="border-emerald-200 bg-emerald-50/50 p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0 text-emerald-600" />
-                  <div>
-                    <p className="text-lg font-semibold text-emerald-900">
-                      Colecta #{recibo.id} registrada
-                    </p>
-                    <p className="mt-1 text-sm text-emerald-800 print:uppercase">
-                      {recibo.socio?.apellido}, {recibo.socio?.nombre} ·{' '}
-                      {recibo.socio?.codigo_socio}
-                    </p>
-                    <p className="mt-2 text-sm text-emerald-700">
-                      {recibo.detalles.length} concepto(s) ·{' '}
-                      <strong>${money(Number(recibo.monto_total_usd))}</strong> ·{' '}
-                      {money(Number(recibo.monto_total_bs))} Bs
-                    </p>
-                  </div>
-                </div>
-                <Button variant="outline" onClick={() => window.print()}>
-                  <Printer className="h-4 w-4" />
-                  Imprimir recibo
-                </Button>
-              </div>
-            </Card>
-          )}
+          {tarjetaRecibo}
 
           {/* FICHA DEL SOCIO + COBRABLES */}
           {socio && (
@@ -848,7 +955,11 @@ export default function ColectaPage() {
                         </span>
                       )}
                       {socio.alertas.socio_retirado && (
-                        <Badge variant="error">Socio retirado</Badge>
+                        <Badge variant="error">
+                          {/inasistencia/i.test(socio.alertas.motivo_retiro ?? '')
+                            ? 'Retirado por inasistencia a la asamblea'
+                            : 'Socio retirado'}
+                        </Badge>
                       )}
                       {socio.alertas.acuerdos_suspendidos > 0 && (
                         <Badge variant="warning">
@@ -1048,7 +1159,7 @@ export default function ColectaPage() {
                   <OpcionesColecta
                     key={`Ahorro adicional y movimientos-${socio.id}`}
                     titulo="Ahorro adicional y movimientos"
-                    resumen={` ${cuentasAhorro.length} cuenta(s) · ${adicional > 0 ? `$${money(adicional)} adicional incluido` : 'Opcional: agregar ahorro al cobro'}`}
+                    resumen={` ${cuentasAhorro.length} cuenta(s) · ${adicional > 0 ? `${money(adicional)} Bs adicional incluido` : 'Opcional: agregar ahorro al cobro'}`}
                   >
                     <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
                       <Wallet className="h-4 w-4 text-primary-600" />
@@ -1058,7 +1169,7 @@ export default function ColectaPage() {
 
                     <div className="flex flex-wrap items-end gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-3">
                       <label className="text-xs font-medium text-neutral-600">
-                        <span className="mb-1 block">Ahorro adicional (USD)</span>
+                        <span className="mb-1 block">Ahorro adicional (Bs)</span>
                         <input
                           type="number"
                           step="0.01"
@@ -1408,7 +1519,7 @@ export default function ColectaPage() {
                             <p className="mt-0.5 text-xs tabular-nums text-neutral-500">
                               {money(bs)} Bs · {semanas} semana(s)
                               {tipo === 'ahorro' && adicional > 0
-                                ? ` · incluye $${money(adicional)} adicional`
+                                ? ` · incluye ${money(adicional)} Bs adicional`
                                 : ''}
                             </p>
                           </div>

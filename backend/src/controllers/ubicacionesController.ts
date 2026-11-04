@@ -8,6 +8,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma';
 import { z } from 'zod';
+import type { TipoUbicacion } from '@prisma/client';
 import { registrarAuditoria } from '../services/auditoriaService';
 
 /**
@@ -32,6 +33,7 @@ const textoOpcional = (max: number) => z.string().trim().max(max).optional().nul
 const crearUbicacionSchema = z.object({
   codigo: z.string().trim().min(1, 'El código es obligatorio').max(10),
   nombre: z.string().trim().min(1, 'El nombre es obligatorio').max(100),
+  tipo: z.enum(['sector', 'feria'], { required_error: 'Indique si es sector o feria' }),
   ubicacion: textoOpcional(150),
   direccion: textoOpcional(1000),
   responsable: textoOpcional(100),
@@ -45,6 +47,12 @@ const actualizarUbicacionSchema = crearUbicacionSchema.omit({ codigo: true, esta
   estado: z.boolean().optional(),
 });
 
+/** `?tipo=sector` o `?tipo=feria`; cualquier otro valor lista las dos */
+const filtroTipo = (req: Request): { tipo?: TipoUbicacion } => {
+  const tipo = req.query.tipo;
+  return tipo === 'sector' || tipo === 'feria' ? { tipo } : {};
+};
+
 // ============================================
 // CONTROLADORES
 // ============================================
@@ -54,12 +62,13 @@ const actualizarUbicacionSchema = crearUbicacionSchema.omit({ codigo: true, esta
  * Obtener todas las ubicaciones
  */
 export const obtenerUbicaciones = async (
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
     const ubicaciones = await prisma.ubicacion.findMany({
+      where: filtroTipo(req),
       orderBy: { nombre: 'asc' },
       include: conteos,
     });
@@ -81,13 +90,13 @@ export const obtenerUbicaciones = async (
  * Obtener solo ubicaciones activas
  */
 export const obtenerUbicacionesActivas = async (
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
     const ubicaciones = await prisma.ubicacion.findMany({
-      where: { estado: true },
+      where: { estado: true, ...filtroTipo(req) },
       orderBy: { nombre: 'asc' },
     });
 
@@ -273,6 +282,24 @@ export const actualizarUbicacion = async (
         },
       });
       return;
+    }
+
+    // Cambiar el tipo cambiaría los derechos de quienes ya están adentro (ahorro
+    // o sólo salud) sin que nadie lo decida caso por caso
+    if (validacion.data.tipo && validacion.data.tipo !== ubicacionExistente.tipo) {
+      const historial = await prisma.trabajadorFeria.count({ where: { feria_id: ubicacionExistente.id } });
+      if (ubicacionExistente._count.socios > 0 || historial > 0) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'HAS_DEPENDENCIES',
+            message:
+              `No se puede cambiar ${ubicacionExistente.codigo} de ${ubicacionExistente.tipo} a ${validacion.data.tipo}: ` +
+              'ya tiene socios o trabajadores registrados.',
+          },
+        });
+        return;
+      }
     }
 
     const { _count: _conteo, ...antes } = ubicacionExistente;
