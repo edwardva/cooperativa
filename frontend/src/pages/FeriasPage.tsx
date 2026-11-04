@@ -5,6 +5,9 @@
  * HU-05 / RF-FER-01: ficha completa de la feria, codigo unico, activar y
  * desactivar, y cuantos trabajadores activos tiene. Una feria no se borra:
  * se desactiva, y no se puede mientras tenga trabajadores activos.
+ *
+ * La misma tabla guarda los sectores: el socio particular se inscribe en un
+ * sector y tiene ahorro; el de feria, en una feria, y sólo tiene salud.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -15,7 +18,7 @@ import { PrintableListado } from '../components/print/PrintableListado';
 import { SortableHeader } from '../components/ui/SortableHeader';
 import { Edit2, Loader2, MapPin, Plus, Power, X } from 'lucide-react';
 import * as feriasService from '../services/feriasService';
-import type { Ubicacion } from '../services/feriasService';
+import type { TipoUbicacion, Ubicacion } from '../services/feriasService';
 import { getErrorMessage } from '../services/api';
 import { usePermissions } from '../store/authStore';
 import { useEnterNavigation } from '../hooks/useEnterNavigation';
@@ -29,6 +32,7 @@ const labelClass = 'block text-sm font-medium text-neutral-700';
 const formularioVacio = {
   codigo: '',
   nombre: '',
+  tipo: 'feria' as TipoUbicacion,
   ubicacion: '',
   direccion: '',
   responsable: '',
@@ -40,6 +44,11 @@ type Formulario = typeof formularioVacio;
 
 const trabajadoresActivos = (feria: Ubicacion) => feria._count?.trabajadores ?? 0;
 
+const NOMBRE_TIPO: Record<TipoUbicacion, string> = { sector: 'Sector', feria: 'Feria' };
+
+/** Con socios o trabajadores adentro el tipo ya no se cambia: les cambiaría los derechos */
+const tipoFijo = (feria: Ubicacion) => (feria._count?.socios ?? 0) > 0 || trabajadoresActivos(feria) > 0;
+
 export const FeriasPage = () => {
   const { hasPermission } = usePermissions();
   const puedeCrear = hasPermission('ubicaciones', 'create');
@@ -47,6 +56,7 @@ export const FeriasPage = () => {
   const alEnter = useEnterNavigation();
 
   const [busqueda, setBusqueda] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState<TipoUbicacion | ''>('');
   const [ferias, setFerias] = useState<Ubicacion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +110,7 @@ export const FeriasPage = () => {
     };
 
     return ferias
+      .filter((f) => !filtroTipo || f.tipo === filtroTipo)
       .filter((f) =>
         !q ||
         [f.codigo, f.nombre, f.ubicacion, f.direccion, f.responsable]
@@ -112,12 +123,16 @@ export const FeriasPage = () => {
         if (va > vb) return sortOrder === 'asc' ? 1 : -1;
         return 0;
       });
-  }, [ferias, busqueda, sortField, sortOrder]);
+  }, [ferias, busqueda, filtroTipo, sortField, sortOrder]);
 
-  const filtrosImpresion = [{ label: 'Búsqueda', value: busqueda || 'Sin búsqueda' }];
+  const filtrosImpresion = [
+    { label: 'Tipo', value: filtroTipo ? NOMBRE_TIPO[filtroTipo] : 'Sectores y ferias' },
+    { label: 'Búsqueda', value: busqueda || 'Sin búsqueda' },
+  ];
 
   const filasImpresion = feriasFiltradas.map((feria) => [
     feria.codigo,
+    NOMBRE_TIPO[feria.tipo],
     feria.nombre,
     feria.ubicacion || '-',
     feria.responsable || '-',
@@ -136,6 +151,7 @@ export const FeriasPage = () => {
     setForm({
       codigo: feria.codigo,
       nombre: feria.nombre,
+      tipo: feria.tipo,
       ubicacion: feria.ubicacion ?? '',
       direccion: feria.direccion ?? '',
       responsable: feria.responsable ?? '',
@@ -154,6 +170,7 @@ export const FeriasPage = () => {
 
     const datos = {
       nombre: form.nombre.trim(),
+      tipo: form.tipo,
       ubicacion: form.ubicacion.trim() || null,
       direccion: form.direccion.trim() || null,
       responsable: form.responsable.trim() || null,
@@ -172,7 +189,7 @@ export const FeriasPage = () => {
       setEditando(null);
       await cargarFerias();
     } catch (err) {
-      setErrorForm(getErrorMessage(err) || 'No fue posible guardar la feria');
+      setErrorForm(getErrorMessage(err) || `No fue posible guardar ${form.tipo === 'sector' ? 'el sector' : 'la feria'}`);
     } finally {
       setGuardando(false);
     }
@@ -181,9 +198,11 @@ export const FeriasPage = () => {
   const cambiarEstado = async (feria: Ubicacion) => {
     const activar = !feria.estado;
     const socios = feria._count?.socios ?? 0;
+    const cual = feria.tipo === 'sector' ? 'el sector' : 'la feria';
     const mensaje = activar
-      ? `¿Activar la feria ${feria.codigo}?`
-      : `¿Desactivar la feria ${feria.codigo}? Ya no se podrá asignar trabajadores a ella.` +
+      ? `¿Activar ${cual} ${feria.codigo}?`
+      : `¿Desactivar ${cual} ${feria.codigo}?` +
+        (feria.tipo === 'feria' ? ' Ya no se podrá asignar trabajadores a ella.' : '') +
         (socios > 0 ? ` Sus ${socios} socio(s) conservan la feria en su expediente.` : '');
     if (!window.confirm(mensaje)) return;
 
@@ -199,8 +218,10 @@ export const FeriasPage = () => {
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Ferias</h1>
-          <p className="text-sm text-gray-500 mt-1">Ferias, responsables y trabajadores activos</p>
+          <h1 className="text-2xl font-semibold text-gray-900">Sectores y ferias</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            El socio particular va en un sector y tiene ahorro; el de feria, en una feria, y sólo tiene salud
+          </p>
         </div>
         <div className="flex gap-3">
           <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
@@ -210,34 +231,48 @@ export const FeriasPage = () => {
           {puedeCrear && (
             <Button onClick={abrirNueva} className="flex items-center gap-2">
               <Plus className="w-4 h-4" />
-              Nueva feria
+              Nuevo sector o feria
             </Button>
           )}
         </div>
       </div>
 
       <PrintableListado
-        titulo="Ferias"
+        titulo="Sectores y ferias"
         subtitulo="Listado generado con los filtros actuales"
         filtros={filtrosImpresion}
-        columnas={['Código', 'Nombre', 'Ubicación', 'Responsable', 'Teléfono', 'Trabajadores', 'Estado']}
+        columnas={['Código', 'Tipo', 'Nombre', 'Ubicación', 'Responsable', 'Teléfono', 'Trabajadores', 'Estado']}
         filas={filasImpresion}
       />
 
       <Card className="p-4">
-        <Input
-          type="text"
-          placeholder="Buscar por código, nombre, ubicación o responsable..."
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-        />
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <select
+            value={filtroTipo}
+            onChange={(e) => setFiltroTipo(e.target.value as TipoUbicacion | '')}
+            aria-label="Tipo"
+            className={`${controlClass} sm:w-48`}
+          >
+            <option value="">Sectores y ferias</option>
+            <option value="sector">Sólo sectores</option>
+            <option value="feria">Sólo ferias</option>
+          </select>
+          <div className="flex-1">
+            <Input
+              type="text"
+              placeholder="Buscar por código, nombre, ubicación o responsable..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+            />
+          </div>
+        </div>
       </Card>
 
       {loading && (
         <Card className="p-12">
           <div className="text-center">
             <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-primary-500" />
-            <p className="text-gray-500">Cargando ferias...</p>
+            <p className="text-gray-500">Cargando sectores y ferias...</p>
           </div>
         </Card>
       )}
@@ -255,6 +290,7 @@ export const FeriasPage = () => {
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   <SortableHeader label="Código" field="codigo" currentSortField={sortField} currentSortOrder={sortOrder} onSort={handleSort} />
+                  <SortableHeader label="Tipo" field="tipo" currentSortField={sortField} currentSortOrder={sortOrder} onSort={handleSort} />
                   <SortableHeader label="Nombre" field="nombre" currentSortField={sortField} currentSortOrder={sortOrder} onSort={handleSort} />
                   <SortableHeader label="Responsable" field="responsable" currentSortField={sortField} currentSortOrder={sortOrder} onSort={handleSort} />
                   <SortableHeader label="Teléfono" field="telefono" currentSortField={sortField} currentSortOrder={sortOrder} onSort={handleSort} />
@@ -274,6 +310,11 @@ export const FeriasPage = () => {
                           <MapPin className="w-4 h-4 text-gray-400" />
                           <span className="text-sm font-mono text-gray-900">{feria.codigo}</span>
                         </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${feria.tipo === 'feria' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}`}>
+                          {NOMBRE_TIPO[feria.tipo]}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
                         <p className="text-sm font-medium text-gray-900">{feria.nombre}</p>
@@ -322,7 +363,7 @@ export const FeriasPage = () => {
           {feriasFiltradas.length === 0 && (
             <div className="text-center py-12">
               <MapPin className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">No se encontraron ferias</p>
+              <p className="text-gray-500">No se encontraron sectores ni ferias</p>
             </div>
           )}
         </Card>
@@ -331,7 +372,8 @@ export const FeriasPage = () => {
       {!loading && !error && (
         <Card className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
-            <div>Total: <span className="font-medium text-gray-900">{ferias.length}</span> ferias</div>
+            <div>Sectores: <span className="font-medium text-gray-900">{ferias.filter((f) => f.tipo === 'sector').length}</span></div>
+            <div>Ferias: <span className="font-medium text-gray-900">{ferias.filter((f) => f.tipo === 'feria').length}</span></div>
             <div>Activas: <span className="font-medium text-green-600">{ferias.filter((f) => f.estado).length}</span></div>
             <div>Inactivas: <span className="font-medium text-red-600">{ferias.filter((f) => !f.estado).length}</span></div>
             <div>Trabajadores activos: <span className="font-medium text-gray-900">{ferias.reduce((t, f) => t + trabajadoresActivos(f), 0)}</span></div>
@@ -346,7 +388,9 @@ export const FeriasPage = () => {
             <div className="flex items-start justify-between gap-3 border-b border-neutral-200 px-6 py-4">
               <div>
                 <h2 className="text-xl font-semibold text-neutral-900">
-                  {editando === 'nueva' ? 'Nueva feria' : `Editar feria ${editando.codigo}`}
+                  {editando === 'nueva'
+                    ? (form.tipo === 'sector' ? 'Nuevo sector' : 'Nueva feria')
+                    : `Editar ${editando.tipo === 'sector' ? 'sector' : 'feria'} ${editando.codigo}`}
                 </h2>
                 <p className="mt-1 text-sm text-neutral-500">Enter pasa al campo siguiente.</p>
               </div>
@@ -366,6 +410,18 @@ export const FeriasPage = () => {
                   autoFocus={editando === 'nueva'}
                   className={controlClass}
                 />
+              </label>
+              <label className={labelClass}>
+                <span className="mb-1.5 block">Tipo *</span>
+                <select
+                  value={form.tipo}
+                  onChange={(e) => setForm((f) => ({ ...f, tipo: e.target.value as TipoUbicacion }))}
+                  disabled={editando !== 'nueva' && tipoFijo(editando)}
+                  className={controlClass}
+                >
+                  <option value="sector">Sector (socio particular, con ahorro)</option>
+                  <option value="feria">Feria (sólo salud)</option>
+                </select>
               </label>
               <label className={labelClass}>
                 <span className="mb-1.5 block">Nombre *</span>
@@ -394,6 +450,7 @@ export const FeriasPage = () => {
               {editando !== 'nueva' && (
                 <p className="text-xs text-neutral-500 sm:col-span-2">
                   El código no se cambia: identifica a la feria en los pagos y reportes históricos.
+                  {tipoFijo(editando) && ' El tipo tampoco, porque ya tiene socios o trabajadores.'}
                 </p>
               )}
             </div>
@@ -408,7 +465,7 @@ export const FeriasPage = () => {
                 <Button variant="ghost" onClick={() => setEditando(null)} disabled={guardando}>Cancelar</Button>
                 <Button onClick={() => void guardar()} disabled={guardando}>
                   {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {editando === 'nueva' ? 'Crear feria' : 'Guardar cambios'}
+                  {editando === 'nueva' ? (form.tipo === 'sector' ? 'Crear sector' : 'Crear feria') : 'Guardar cambios'}
                 </Button>
               </div>
             </div>

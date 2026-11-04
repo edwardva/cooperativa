@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { nombreEnMayusculas } from '../../utils/formatters';
+import { EncabezadoImpresion } from './EncabezadoImpresion';
 
 interface FiltroResumen {
   label: string;
@@ -112,19 +113,7 @@ export const PrintableListado = ({
 
       <div className="cooperativa-print-root">
         <div className="cooperativa-print-header">
-          <div className="cooperativa-print-no-break flex items-start justify-between gap-4">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-700">
-                Cooperativa el Triunfo, R.L.
-              </div>
-              <h1 className="mt-2 text-2xl font-bold text-neutral-900">{titulo}</h1>
-              <p className="mt-1 text-sm text-neutral-600">{subtitulo}</p>
-            </div>
-            <div className="text-right text-xs text-neutral-500">
-              <div>Generado: {new Date().toLocaleString('es-VE')}</div>
-              <div>Vista lista para guardar como PDF</div>
-            </div>
-          </div>
+          <EncabezadoImpresion titulo={titulo} subtitulo={subtitulo} />
 
           <div className="mt-4">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">

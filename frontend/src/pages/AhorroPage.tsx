@@ -9,13 +9,14 @@
  * - Consulta de movimientos
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useEnterNavigation } from '../hooks/useEnterNavigation';
 import { createPortal } from 'react-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PrintableListado } from '../components/print/PrintableListado';
+import { PrintableReciboAhorro } from '../components/print/PrintableReciboAhorro';
 import { SortableHeader } from '../components/ui/SortableHeader';
 import {
   PlusCircle,
@@ -39,14 +40,67 @@ import {
 import { nombreEnMayusculas } from '../utils/formatters';
 import { getErrorMessage } from '../services/api';
 import * as ahorroService from '../services/ahorroService';
-import { usePermissions } from '../store/authStore';
-import * as sociosService from '../services/sociosService';
-import type { CuentaAhorro, Estadisticas, TipoCuentaAhorro, MovimientoAhorro } from '../services/ahorroService';
+import { usePermissions, useAuthStore } from '../store/authStore';
+import type {
+  CuentaAhorro,
+  Estadisticas,
+  TipoCuentaAhorro,
+  MovimientoAhorro,
+  SocioApertura,
+  MovimientoRegistrado,
+} from '../services/ahorroService';
 
 // ============================================
-// TIPOS
+// TIPOS Y MONEDA
 // ============================================
 // (Importados desde ahorroService)
+
+type Moneda = 'bs' | 'usd';
+
+/**
+ * Importe con el símbolo de la moneda de la cuenta. La cuenta a la vista se
+ * lleva en bolívares: mostrarla en dólares era mostrar un número derivado con
+ * la tasa del día, no lo que el socio tiene.
+ */
+const formatoMonto = (n: number, moneda: Moneda): string =>
+  moneda === 'bs'
+    ? `Bs ${n.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** La otra moneda: la que acompaña como referencia */
+const otraMoneda = (moneda: Moneda): Moneda => (moneda === 'bs' ? 'usd' : 'bs');
+
+/** Monto del movimiento en la moneda indicada */
+const montoMovimiento = (m: MovimientoAhorro, moneda: Moneda): number =>
+  Number(moneda === 'bs' ? m.monto_bs : m.monto_usd);
+
+/**
+ * Saldo tras el movimiento en la moneda indicada. Los movimientos viejos no
+ * guardan el saldo en bolívares: se estima con la tasa de ese día.
+ */
+const saldoMovimiento = (m: MovimientoAhorro, moneda: Moneda): number => {
+  if (moneda === 'usd') return Number(m.saldo_nuevo_usd);
+  if (m.saldo_nuevo_bs !== null && m.saldo_nuevo_bs !== undefined) return Number(m.saldo_nuevo_bs);
+  return Number(m.saldo_nuevo_usd) * Number(m.tasa_cambio);
+};
+
+/** Moneda de la cuenta del movimiento; sin dato, la de la cuenta a la vista */
+const monedaDe = (tipo?: { moneda?: Moneda } | null): Moneda => tipo?.moneda ?? 'bs';
+
+/**
+ * 'YYYY-MM-DD' como DD/MM/AAAA sin pasar por `new Date`: ese parseo lo toma
+ * como medianoche UTC y en Venezuela muestra el día anterior.
+ */
+const diaLegible = (dia: string): string => {
+  const [a, m, d] = dia.split('-');
+  return a && m && d ? `${d}/${m}/${a}` : dia;
+};
+
+/** Hoy en el calendario local, para el tope de los selectores de fecha */
+const hoyISO = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 // ============================================
 // COMPONENTE PRINCIPAL
@@ -96,6 +150,8 @@ export const AhorroPage = () => {
   const [reporteTotalPaginas, setReporteTotalPaginas] = useState(1);
   const [reporteTotal, setReporteTotal] = useState(0);
   const [loadingReporte, setLoadingReporte] = useState(false);
+  const [errorReporte, setErrorReporte] = useState<string | null>(null);
+  const [reporteConsultado, setReporteConsultado] = useState(false);
 
   // Estados de datos
   const [cuentas, setCuentas] = useState<CuentaAhorro[]>([]);
@@ -150,6 +206,7 @@ export const AhorroPage = () => {
       tasa_cambio: Number.isFinite(tasa) ? tasa : 0,
       saldo_anterior_usd: 0,
       saldo_nuevo_usd: montoUsd,
+      saldo_nuevo_bs: montoBs,
       concepto: 'Saldo inicial (migración/apertura sin historial detallado)',
       referencia: 'MIGRACION_INICIAL',
       fecha_movimiento: cuenta.fecha_apertura,
@@ -214,12 +271,30 @@ export const AhorroPage = () => {
     void cargarCuentas();
   }, [paginaActual, busqueda, filtroEstado, filtroTipoCuenta, registrosPorPagina]);
 
-  // Recargar movimientos cuando cambia la paginación
+  // Movimientos de la consulta: este efecto es el ÚNICO que los pide.
+  //
+  // Antes el filtro por tipo "no funcionaba" por tres causas juntas:
+  //  - Buscar o elegir la cuenta pedía además los movimientos SIN filtros, en
+  //    paralelo con este efecto; la respuesta que llegaba última ganaba, y el
+  //    select decía "Retiros" sobre una lista con depósitos.
+  //  - Las fechas se mandaban 'YYYY-MM-DD' y el backend sólo aceptaba un
+  //    instante ISO: con una fecha puesta, todo filtro respondía 400 y la
+  //    lista se quedaba como estaba.
+  //  - Cambiar el tipo no volvía a la página 1: en la página 3 de "todos" no
+  //    hay retiros y se veía "Esta cuenta aún no tiene movimientos".
+  const [recargaMovimientos, setRecargaMovimientos] = useState(0);
+  const [errorMovimientos, setErrorMovimientos] = useState<string | null>(null);
+  const pedidoMovimientos = useRef(0);
+
   useEffect(() => {
+    // Sólo se aplica la respuesta del último pedido; al soltar la cuenta
+    // también se descarta lo que esté en vuelo
+    const pedido = ++pedidoMovimientos.current;
     if (!cuentaMovimientos) return;
 
     const cargarMovimientos = async () => {
       setLoadingMovimientos(true);
+      setErrorMovimientos(null);
       try {
         const respMovs = await ahorroService.consultarMovimientos({
           cuenta_id: cuentaMovimientos,
@@ -230,19 +305,23 @@ export const AhorroPage = () => {
           limit: 20,
         });
 
+        if (pedido !== pedidoMovimientos.current) return;
         if (respMovs.success) {
           setMovimientos(respMovs.data);
           setTotalPaginasMovimientos(respMovs.meta.totalPages);
           setTotalMovimientos(respMovs.meta.total);
         }
       } catch (error) {
+        if (pedido !== pedidoMovimientos.current) return;
         console.error('Error al cargar movimientos:', error);
+        setMovimientos([]);
+        setErrorMovimientos(getErrorMessage(error) || 'Error al cargar movimientos');
       } finally {
-        setLoadingMovimientos(false);
+        if (pedido === pedidoMovimientos.current) setLoadingMovimientos(false);
       }
     };
     void cargarMovimientos();
-  }, [paginaMovimientos, cuentaMovimientos, fechaDesde, fechaHasta, tipoMovimiento]);
+  }, [paginaMovimientos, cuentaMovimientos, fechaDesde, fechaHasta, tipoMovimiento, recargaMovimientos]);
 
   // Cargar movimientos en el modal de detalle de cuenta con paginación
   useEffect(() => {
@@ -297,39 +376,46 @@ export const AhorroPage = () => {
     void cargarMovimientosDetalle();
   }, [modalAbierto, cuentaSeleccionada, paginaMovimientosDetalle]);
 
-  // Recargar reporte de movimientos cuando cambia la paginación
-  useEffect(() => {
-    if (!reporteFechaDesde && !reporteFechaHasta && reporteTipoCuenta === 'todos' && reporteTipoMovimiento === 'todos') return;
-    if (reportePagina === 1) return; // Evitar doble carga inicial
-
-    const cargarReporte = async () => {
-      setLoadingReporte(true);
-      try {
-        const params: any = {
-          page: reportePagina,
-          limit: 20,
-        };
-
-        if (reporteFechaDesde) params.fecha_desde = reporteFechaDesde;
-        if (reporteFechaHasta) params.fecha_hasta = reporteFechaHasta;
-        if (reporteTipoCuenta !== 'todos') params.tipo_cuenta_id = Number(reporteTipoCuenta);
-        if (reporteTipoMovimiento !== 'todos') params.tipo_movimiento = reporteTipoMovimiento;
-
-        const response = await ahorroService.consultarMovimientos(params);
-        
-        if (response.success) {
-          setReporteMovimientos(response.data);
-          setReporteTotalPaginas(response.meta.totalPages);
-          setReporteTotal(response.meta.total);
-        }
-      } catch (error) {
-        console.error('Error al cargar reporte:', error);
-      } finally {
-        setLoadingReporte(false);
+  // Una sola forma de pedir el reporte, para Aceptar y para la paginación.
+  // Antes había tres copias del pedido y un efecto más que, al cambiar de
+  // página, repetía la consulta mandando la fecha cruda y el backend la
+  // rechazaba.
+  const cargarReporte = async (pagina: number) => {
+    if (reporteFechaDesde && reporteFechaHasta && reporteFechaDesde > reporteFechaHasta) {
+      setErrorReporte('La fecha "desde" es posterior a la fecha "hasta"');
+      return;
+    }
+    setErrorReporte(null);
+    setLoadingReporte(true);
+    try {
+      const response = await ahorroService.consultarMovimientos({
+        page: pagina,
+        limit: 20,
+        // El día va tal cual: el backend lo toma en hora de Venezuela
+        fecha_desde: reporteFechaDesde || undefined,
+        fecha_hasta: reporteFechaHasta || undefined,
+        tipo_cuenta_id: reporteTipoCuenta !== 'todos' ? Number(reporteTipoCuenta) : undefined,
+        tipo_movimiento:
+          reporteTipoMovimiento !== 'todos' ? (reporteTipoMovimiento as 'deposito' | 'retiro') : undefined,
+      });
+      if (response.success) {
+        setReporteMovimientos(response.data);
+        setReporteTotalPaginas(response.meta.totalPages);
+        setReporteTotal(response.meta.total);
+        setReportePagina(pagina);
+        setReporteConsultado(true);
       }
-    };
-    void cargarReporte();
-  }, [reportePagina]);
+    } catch (err) {
+      console.error('Error al cargar reporte:', err);
+      setErrorReporte(getErrorMessage(err) || 'Error al cargar movimientos');
+    } finally {
+      setLoadingReporte(false);
+    }
+  };
+
+  // Moneda de las cuentas abiertas en el detalle y en la consulta
+  const monedaDetalle = monedaDe(cuentaSeleccionada?.tipo_cuenta);
+  const monedaConsulta = monedaDe(cuentaEncontrada?.tipo_cuenta);
 
   const saldoDisponibleUsd = estadisticas.total_saldo_usd - estadisticas.total_bloqueado_usd;
   const saldoDisponibleBs = estadisticas.total_saldo_bs - estadisticas.total_bloqueado_bs;
@@ -337,7 +423,12 @@ export const AhorroPage = () => {
   // ============================================
   // MODAL: Reporte de Movimientos
   // ============================================
-  const ModalReporteMovimientos = () => createPortal(
+  // Es una función que devuelve JSX y se llama como función, NO un componente
+  // (<ModalReporte />). Definido dentro de AhorroPage, cada render creaba un
+  // componente nuevo y React desmontaba y volvía a montar el modal entero con
+  // cada tecla: el <input type="date"> perdía el foco al escribir el primer
+  // dígito del año y el "desde" quedaba en el año 0002 o no se dejaba cambiar.
+  const renderModalReporteMovimientos = () => createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={() => setModalAbierto(null)}
@@ -375,6 +466,9 @@ export const AhorroPage = () => {
                 <input
                   type="date"
                   value={reporteFechaDesde}
+                  // El tope deja el año en cuatro cifras
+                  min="2000-01-01"
+                  max={reporteFechaHasta || hoyISO()}
                   onChange={(e) => setReporteFechaDesde(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -387,6 +481,8 @@ export const AhorroPage = () => {
                 <input
                   type="date"
                   value={reporteFechaHasta}
+                  min={reporteFechaDesde || '2000-01-01'}
+                  max={hoyISO()}
                   onChange={(e) => setReporteFechaHasta(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -396,45 +492,7 @@ export const AhorroPage = () => {
                   Acción
                 </label>
                 <Button
-                  onClick={async () => {
-                    setLoadingReporte(true);
-                    try {
-                      const params: any = {
-                        page: 1,
-                        limit: 20,
-                      };
-
-                      // Convertir fechas a formato ISO datetime
-                      if (reporteFechaDesde) {
-                        params.fecha_desde = new Date(reporteFechaDesde + 'T00:00:00').toISOString();
-                      }
-                      if (reporteFechaHasta) {
-                        params.fecha_hasta = new Date(reporteFechaHasta + 'T23:59:59').toISOString();
-                      }
-                      if (reporteTipoCuenta !== 'todos') {
-                        params.tipo_cuenta_id = Number(reporteTipoCuenta);
-                      }
-                      if (reporteTipoMovimiento !== 'todos') {
-                        params.tipo_movimiento = reporteTipoMovimiento;
-                      }
-
-                      const response = await ahorroService.consultarMovimientos(params);
-                      
-                      if (response.success) {
-                        setReporteMovimientos(response.data);
-                        setReporteTotalPaginas(response.meta.totalPages);
-                        setReporteTotal(response.meta.total);
-                        setReportePagina(1);
-                      } else {
-                        alert('Error al cargar movimientos');
-                      }
-                    } catch (error) {
-                      console.error('Error:', error);
-                      alert('Error al cargar movimientos');
-                    } finally {
-                      setLoadingReporte(false);
-                    }
-                  }}
+                  onClick={() => void cargarReporte(1)}
                   disabled={loadingReporte}
                   className="w-full"
                 >
@@ -499,6 +557,13 @@ export const AhorroPage = () => {
             </div>
           </div>
 
+          {errorReporte && (
+            <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {errorReporte}
+            </div>
+          )}
+
           {/* Resultados */}
           {reporteMovimientos.length > 0 ? (
             <>
@@ -506,9 +571,8 @@ export const AhorroPage = () => {
               <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
                 <p className="text-sm text-blue-900">
                   <strong>{reporteTotal}</strong> movimientos encontrados
-                  {reporteFechaDesde && reporteFechaHasta && (
-                    <> desde <strong>{reporteFechaDesde}</strong> hasta <strong>{reporteFechaHasta}</strong></>
-                  )}
+                  {reporteFechaDesde && <> desde <strong>{diaLegible(reporteFechaDesde)}</strong></>}
+                  {reporteFechaHasta && <> hasta <strong>{diaLegible(reporteFechaHasta)}</strong></>}
                 </p>
               </div>
 
@@ -521,15 +585,18 @@ export const AhorroPage = () => {
                       <th className="text-left p-3 font-medium text-sm text-gray-700">N° Cuenta</th>
                       <th className="text-left p-3 font-medium text-sm text-gray-700">Socio</th>
                       <th className="text-left p-3 font-medium text-sm text-gray-700">Tipo</th>
-                      <th className="text-right p-3 font-medium text-sm text-gray-700">Monto USD</th>
-                      <th className="text-right p-3 font-medium text-sm text-gray-700">Monto Bs</th>
+                      {/* Cada fila va en la moneda de su cuenta */}
+                      <th className="text-right p-3 font-medium text-sm text-gray-700">Monto</th>
+                      <th className="text-right p-3 font-medium text-sm text-gray-700">Equivalente</th>
                       <th className="text-right p-3 font-medium text-sm text-gray-700">Tasa</th>
-                      <th className="text-right p-3 font-medium text-sm text-gray-700">Saldo USD</th>
+                      <th className="text-right p-3 font-medium text-sm text-gray-700">Saldo</th>
                       <th className="text-left p-3 font-medium text-sm text-gray-700">Concepto</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {reporteMovimientos.map((mov) => (
+                    {reporteMovimientos.map((mov) => {
+                      const moneda = monedaDe(mov.cuenta?.tipo_cuenta);
+                      return (
                       <tr key={mov.id} className="border-b hover:bg-gray-50">
                         <td className="p-3 text-sm">
                           {new Date(mov.fecha_movimiento).toLocaleDateString('es-VE')}
@@ -552,22 +619,23 @@ export const AhorroPage = () => {
                           </span>
                         </td>
                         <td className="p-3 text-sm text-right font-mono">
-                          ${Number(mov.monto_usd).toFixed(2)}
+                          {formatoMonto(montoMovimiento(mov, moneda), moneda)}
                         </td>
-                        <td className="p-3 text-sm text-right font-mono">
-                          Bs {Number(mov.monto_bs).toFixed(2)}
+                        <td className="p-3 text-sm text-right font-mono text-gray-500">
+                          {formatoMonto(montoMovimiento(mov, otraMoneda(moneda)), otraMoneda(moneda))}
                         </td>
                         <td className="p-3 text-sm text-right font-mono">
                           {Number(mov.tasa_cambio).toFixed(2)}
                         </td>
                         <td className="p-3 text-sm text-right font-mono font-semibold text-blue-600">
-                          ${Number(mov.saldo_nuevo_usd).toFixed(2)}
+                          {formatoMonto(saldoMovimiento(mov, moneda), moneda)}
                         </td>
                         <td className="p-3 text-sm text-gray-600">
                           {mov.concepto || '-'}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -576,32 +644,7 @@ export const AhorroPage = () => {
               {reporteTotalPaginas > 1 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-4 border-t">
                   <Button
-                    onClick={async () => {
-                      if (reportePagina <= 1) return;
-                      setLoadingReporte(true);
-                      try {
-                        const params: any = {
-                          page: reportePagina - 1,
-                          limit: 20,
-                        };
-                        if (reporteFechaDesde) {
-                          params.fecha_desde = new Date(reporteFechaDesde + 'T00:00:00').toISOString();
-                        }
-                        if (reporteFechaHasta) {
-                          params.fecha_hasta = new Date(reporteFechaHasta + 'T23:59:59').toISOString();
-                        }
-                        if (reporteTipoCuenta !== 'todos') params.tipo_cuenta_id = Number(reporteTipoCuenta);
-                        if (reporteTipoMovimiento !== 'todos') params.tipo_movimiento = reporteTipoMovimiento;
-
-                        const response = await ahorroService.consultarMovimientos(params);
-                        if (response.success) {
-                          setReporteMovimientos(response.data);
-                          setReportePagina(reportePagina - 1);
-                        }
-                      } finally {
-                        setLoadingReporte(false);
-                      }
-                    }}
+                    onClick={() => void cargarReporte(reportePagina - 1)}
                     disabled={reportePagina <= 1 || loadingReporte}
                     variant="secondary"
                   >
@@ -614,32 +657,7 @@ export const AhorroPage = () => {
                   </span>
 
                   <Button
-                    onClick={async () => {
-                      if (reportePagina >= reporteTotalPaginas) return;
-                      setLoadingReporte(true);
-                      try {
-                        const params: any = {
-                          page: reportePagina + 1,
-                          limit: 20,
-                        };
-                        if (reporteFechaDesde) {
-                          params.fecha_desde = new Date(reporteFechaDesde + 'T00:00:00').toISOString();
-                        }
-                        if (reporteFechaHasta) {
-                          params.fecha_hasta = new Date(reporteFechaHasta + 'T23:59:59').toISOString();
-                        }
-                        if (reporteTipoCuenta !== 'todos') params.tipo_cuenta_id = Number(reporteTipoCuenta);
-                        if (reporteTipoMovimiento !== 'todos') params.tipo_movimiento = reporteTipoMovimiento;
-
-                        const response = await ahorroService.consultarMovimientos(params);
-                        if (response.success) {
-                          setReporteMovimientos(response.data);
-                          setReportePagina(reportePagina + 1);
-                        }
-                      } finally {
-                        setLoadingReporte(false);
-                      }
-                    }}
+                    onClick={() => void cargarReporte(reportePagina + 1)}
                     disabled={reportePagina >= reporteTotalPaginas || loadingReporte}
                     variant="secondary"
                   >
@@ -656,7 +674,9 @@ export const AhorroPage = () => {
                 No hay movimientos
               </p>
               <p className="text-sm text-gray-400">
-                Selecciona los filtros y haz clic en "Aceptar"
+                {reporteConsultado
+                  ? 'Ningún movimiento cumple los filtros seleccionados'
+                  : 'Selecciona los filtros y haz clic en "Aceptar"'}
               </p>
             </div>
           )}
@@ -719,6 +739,22 @@ export const AhorroPage = () => {
     String(cuenta._count?.movimientos ?? 0),
     cuenta.estado ? 'Activa' : 'Inactiva',
   ]);
+
+  /** Cierra "Consultar movimientos" y deja la búsqueda limpia para la próxima vez */
+  const cerrarConsultaMovimientos = () => {
+    setModalAbierto(null);
+    setBusquedaMovimientos('');
+    setCuentaMovimientos(null);
+    setFechaDesde('');
+    setFechaHasta('');
+    setTipoMovimiento('todos');
+    setErrorMovimientos(null);
+    setMovimientos([]);
+    setCuentaEncontrada(null);
+    setCuentasEncontradas([]);
+    setBusquedaRealizada(false);
+    setPaginaMovimientos(1);
+  };
 
   return (
     // El padding lo pone MainLayout (p-4 sm:p-6). Repetirlo aqui dejaba el
@@ -1233,17 +1269,16 @@ export const AhorroPage = () => {
           onClose={() => setModalAbierto(null)}
           onSuccess={() => {
             setModalAbierto(null);
-            // Recargar cuentas
-            const cargarCuentas = async () => {
-              const response = await ahorroService.obtenerCuentas({
-                page: paginaActual,
-                limit: registrosPorPagina,
-              });
-              if (response.success) {
-                setCuentas(response.data);
-              }
+            // La cuenta nueva cambia el listado y los totales de la cabecera
+            const recargar = async () => {
+              const [resCuentas, resEstadisticas] = await Promise.all([
+                ahorroService.obtenerCuentas({ page: paginaActual, limit: registrosPorPagina }),
+                ahorroService.obtenerEstadisticas(),
+              ]);
+              if (resCuentas.success) setCuentas(resCuentas.data);
+              if (resEstadisticas.success) setEstadisticas(resEstadisticas.data);
             };
-            void cargarCuentas();
+            void recargar();
           }}
         />
       )}
@@ -1288,17 +1323,27 @@ export const AhorroPage = () => {
               </button>
             </div>
 
+            {/* El saldo real va en la moneda de la cuenta; el otro es sólo
+                referencia con la tasa del día */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div>
-                <p className="text-sm text-gray-600">Saldo USD</p>
+                <p className="text-sm text-gray-600">
+                  Saldo ({monedaDetalle === 'bs' ? 'bolívares' : 'dólares'})
+                </p>
                 <p className="text-2xl font-bold text-emerald-600">
-                  ${Number(cuentaSeleccionada.saldo_usd).toFixed(2)}
+                  {formatoMonto(
+                    Number(monedaDetalle === 'bs' ? cuentaSeleccionada.saldo_bs : cuentaSeleccionada.saldo_usd),
+                    monedaDetalle
+                  )}
                 </p>
               </div>
               <div>
-                <p className="text-sm text-gray-600">Saldo Bs</p>
-                <p className="text-2xl font-bold text-emerald-600">
-                  {Number(cuentaSeleccionada.saldo_bs).toFixed(2)} Bs
+                <p className="text-sm text-gray-600">Referencia en {monedaDetalle === 'bs' ? 'dólares' : 'bolívares'}</p>
+                <p className="text-2xl font-bold text-gray-400">
+                  {formatoMonto(
+                    Number(monedaDetalle === 'bs' ? cuentaSeleccionada.saldo_usd : cuentaSeleccionada.saldo_bs),
+                    otraMoneda(monedaDetalle)
+                  )}
                 </p>
               </div>
             </div>
@@ -1363,7 +1408,7 @@ export const AhorroPage = () => {
                                 {mov.tipo_movimiento === 'deposito' ? 'Depósito' : 'Retiro'}
                               </span>
                               <span className="text-sm font-semibold text-gray-900">
-                                ${Number(mov.monto_usd).toFixed(2)}
+                                {formatoMonto(montoMovimiento(mov, monedaDetalle), monedaDetalle)}
                               </span>
                             </div>
                             <div className="mt-1 text-xs text-gray-500">
@@ -1395,15 +1440,18 @@ export const AhorroPage = () => {
                               </p>
                             </div>
                             <div>
-                              <p className="text-gray-500">Monto USD</p>
+                              <p className="text-gray-500">Monto</p>
                               <p className="font-medium text-gray-900">
-                                ${Number(movimientoDetalleSeleccionado.monto_usd).toFixed(2)}
+                                {formatoMonto(montoMovimiento(movimientoDetalleSeleccionado, monedaDetalle), monedaDetalle)}
                               </p>
                             </div>
                             <div>
-                              <p className="text-gray-500">Monto Bs</p>
-                              <p className="font-medium text-gray-900">
-                                {Number(movimientoDetalleSeleccionado.monto_bs).toFixed(2)} Bs
+                              <p className="text-gray-500">Equivalente (referencia)</p>
+                              <p className="font-medium text-gray-500">
+                                {formatoMonto(
+                                  montoMovimiento(movimientoDetalleSeleccionado, otraMoneda(monedaDetalle)),
+                                  otraMoneda(monedaDetalle)
+                                )}
                               </p>
                             </div>
                             <div>
@@ -1413,9 +1461,9 @@ export const AhorroPage = () => {
                               </p>
                             </div>
                             <div>
-                              <p className="text-gray-500">Saldo nuevo USD</p>
+                              <p className="text-gray-500">Saldo nuevo</p>
                               <p className="font-medium text-gray-900">
-                                ${Number(movimientoDetalleSeleccionado.saldo_nuevo_usd).toFixed(2)}
+                                {formatoMonto(saldoMovimiento(movimientoDetalleSeleccionado, monedaDetalle), monedaDetalle)}
                               </p>
                             </div>
                           </div>
@@ -1485,24 +1533,15 @@ export const AhorroPage = () => {
       {modalAbierto === 'consultar_movimientos' && createPortal(
         <div className="fixed top-0 left-0 right-0 bottom-0 m-0 bg-black/50 flex items-center justify-center z-[100] p-4 overflow-y-auto">
           <Card className="max-w-7xl w-full p-6 my-8">
-            <div className="flex justify-between items-center mb-6">
+            {/* El encabezado queda pegado arriba al bajar por la lista, para que
+                la X se vea siempre (pedido del 15/10: "necesito una X de cierre") */}
+            <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-6 flex justify-between items-center rounded-t-xl border-b border-gray-100 bg-white px-6 py-4">
               <h2 className="text-2xl font-bold">Consultar Movimientos</h2>
               <button
-                onClick={() => {
-                  setModalAbierto(null);
-                  // Limpiar todos los estados
-                  setBusquedaMovimientos('');
-                  setCuentaMovimientos(null);
-                  setFechaDesde('');
-                  setFechaHasta('');
-                  setTipoMovimiento('todos');
-                  setMovimientos([]);
-                  setCuentaEncontrada(null);
-                  setCuentasEncontradas([]);
-                  setBusquedaRealizada(false);
-                  setPaginaMovimientos(1);
-                }}
-                className="text-gray-400 hover:text-gray-600"
+                onClick={cerrarConsultaMovimientos}
+                className="rounded-full p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                aria-label="Cerrar"
+                title="Cerrar"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -1569,26 +1608,14 @@ export const AhorroPage = () => {
                         if (response.success && response.data.length > 0) {
                           setCuentasEncontradas(response.data);
                           
-                          // Si hay solo 1 cuenta, seleccionarla automáticamente
+                          // Si hay solo 1 cuenta, seleccionarla automáticamente.
+                          // Los movimientos los trae el efecto, con los filtros
                           if (response.data.length === 1) {
                             const cuenta = response.data[0];
                             if (cuenta) {
                               setCuentaEncontrada(cuenta);
+                              setPaginaMovimientos(1);
                               setCuentaMovimientos(cuenta.id);
-                              
-                              // Cargar movimientos automáticamente
-                              const respMovs = await ahorroService.consultarMovimientos({
-                                cuenta_id: cuenta.id,
-                                page: 1,
-                                limit: 20,
-                              });
-                              
-                              if (respMovs.success) {
-                                setMovimientos(respMovs.data);
-                                setTotalPaginasMovimientos(respMovs.meta.totalPages);
-                                setTotalMovimientos(respMovs.meta.total);
-                                setPaginaMovimientos(1);
-                              }
                             }
                           }
                           // Si hay múltiples cuentas, el usuario debe seleccionar una
@@ -1641,29 +1668,11 @@ export const AhorroPage = () => {
                     {cuentasEncontradas.map((cuenta) => (
                       <button
                         key={cuenta.id}
-                        onClick={async () => {
+                        onClick={() => {
+                          // Los movimientos los trae el efecto, con los filtros
                           setCuentaEncontrada(cuenta);
+                          setPaginaMovimientos(1);
                           setCuentaMovimientos(cuenta.id);
-                          setLoadingMovimientos(true);
-                          
-                          try {
-                            const respMovs = await ahorroService.consultarMovimientos({
-                              cuenta_id: cuenta.id,
-                              page: 1,
-                              limit: 20,
-                            });
-                            
-                            if (respMovs.success) {
-                              setMovimientos(respMovs.data);
-                              setTotalPaginasMovimientos(respMovs.meta.totalPages);
-                              setTotalMovimientos(respMovs.meta.total);
-                              setPaginaMovimientos(1);
-                            }
-                          } catch (error) {
-                            console.error('Error al cargar movimientos:', error);
-                          } finally {
-                            setLoadingMovimientos(false);
-                          }
                         }}
                         className="bg-white hover:bg-blue-100 hover:border-blue-400 border-2 border-blue-200 rounded-lg p-3 transition-all duration-200 text-left group shadow-sm hover:shadow-md"
                       >
@@ -1683,10 +1692,9 @@ export const AhorroPage = () => {
                           </div>
                           <div className="text-right flex-shrink-0">
                             <p className="text-sm font-bold text-gray-900">
-                              ${Number(cuenta.saldo_usd).toFixed(2)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              Bs {Number(cuenta.saldo_bs).toFixed(2)}
+                              {monedaDe(cuenta.tipo_cuenta) === 'bs'
+                                ? formatoMonto(Number(cuenta.saldo_bs), 'bs')
+                                : formatoMonto(Number(cuenta.saldo_usd), 'usd')}
                             </p>
                           </div>
                           <ChevronDown className="w-5 h-5 text-blue-600 transform -rotate-90 group-hover:translate-x-1 transition-transform flex-shrink-0" />
@@ -1714,8 +1722,12 @@ export const AhorroPage = () => {
                         Tipo: {cuentaEncontrada.tipo_cuenta.nombre}
                       </p>
                       <p className="text-sm text-emerald-700 mt-1">
-                        Saldo: ${Number(cuentaEncontrada.saldo_usd).toFixed(2)} USD / 
-                        {Number(cuentaEncontrada.saldo_bs).toFixed(2)} Bs
+                        Saldo:{' '}
+                        {formatoMonto(
+                          Number(monedaConsulta === 'bs' ? cuentaEncontrada.saldo_bs : cuentaEncontrada.saldo_usd),
+                          monedaConsulta
+                        )}
+                        {' '}(cuenta en {monedaConsulta === 'bs' ? 'bolívares' : 'dólares'})
                       </p>
                     </div>
                   </div>
@@ -1734,7 +1746,12 @@ export const AhorroPage = () => {
                       <Input
                         type="date"
                         value={fechaDesde}
-                        onChange={(e) => setFechaDesde(e.target.value)}
+                        min="2000-01-01"
+                        max={fechaHasta || hoyISO()}
+                        onChange={(e) => {
+                          setFechaDesde(e.target.value);
+                          setPaginaMovimientos(1);
+                        }}
                         className="pl-10"
                       />
                     </div>
@@ -1748,7 +1765,12 @@ export const AhorroPage = () => {
                       <Input
                         type="date"
                         value={fechaHasta}
-                        onChange={(e) => setFechaHasta(e.target.value)}
+                        min={fechaDesde || '2000-01-01'}
+                        max={hoyISO()}
+                        onChange={(e) => {
+                          setFechaHasta(e.target.value);
+                          setPaginaMovimientos(1);
+                        }}
                         className="pl-10"
                       />
                     </div>
@@ -1762,7 +1784,10 @@ export const AhorroPage = () => {
                       <TrendingUp className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
                       <select
                         value={tipoMovimiento}
-                        onChange={(e) => setTipoMovimiento(e.target.value)}
+                        onChange={(e) => {
+                          setTipoMovimiento(e.target.value);
+                          setPaginaMovimientos(1);
+                        }}
                         className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white cursor-pointer hover:border-blue-400 transition-colors"
                       >
                         <option value="todos">Todos los movimientos</option>
@@ -1779,30 +1804,11 @@ export const AhorroPage = () => {
               {cuentaMovimientos && (
                 <div className="flex justify-end pt-2">
                   <Button
-                    onClick={async () => {
-                      setLoadingMovimientos(true);
-                      try {
-                        const respMovs = await ahorroService.consultarMovimientos({
-                          cuenta_id: cuentaMovimientos,
-                          fecha_desde: fechaDesde || undefined,
-                          fecha_hasta: fechaHasta || undefined,
-                          tipo_movimiento: tipoMovimiento === 'todos' ? undefined : (tipoMovimiento as 'deposito' | 'retiro'),
-                          page: 1,
-                          limit: 20,
-                        });
-                        
-                        if (respMovs.success) {
-                          setMovimientos(respMovs.data);
-                          setTotalPaginasMovimientos(respMovs.meta.totalPages);
-                          setTotalMovimientos(respMovs.meta.total);
-                          setPaginaMovimientos(1);
-                        }
-                      } catch (error) {
-                        console.error('Error al cargar movimientos:', error);
-                        alert('Error al cargar movimientos');
-                      } finally {
-                        setLoadingMovimientos(false);
-                      }
+                    onClick={() => {
+                      // Los filtros ya se aplican al cambiarlos; esto vuelve a
+                      // consultar desde la página 1 (p. ej. tras un depósito)
+                      setPaginaMovimientos(1);
+                      setRecargaMovimientos((n) => n + 1);
                     }}
                     disabled={loadingMovimientos}
                     className="flex items-center gap-2"
@@ -1813,6 +1819,13 @@ export const AhorroPage = () => {
                 </div>
               )}
             </div>
+
+            {errorMovimientos && (
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {errorMovimientos}
+              </div>
+            )}
 
             {/* Tabla de movimientos */}
             {loadingMovimientos ? (
@@ -1861,16 +1874,16 @@ export const AhorroPage = () => {
                           Tipo
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Monto USD
+                          Monto {monedaConsulta === 'bs' ? 'Bs' : 'USD'}
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Monto Bs
+                          Equiv. {monedaConsulta === 'bs' ? 'USD' : 'Bs'}
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Tasa
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Saldo Nuevo
+                          Saldo {monedaConsulta === 'bs' ? 'Bs' : 'USD'}
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Concepto
@@ -1901,16 +1914,16 @@ export const AhorroPage = () => {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
-                            ${Number(mov.monto_usd).toFixed(2)}
+                            {formatoMonto(montoMovimiento(mov, monedaConsulta), monedaConsulta)}
                           </td>
-                          <td className="px-4 py-3 text-sm text-right text-gray-900">
-                            {Number(mov.monto_bs).toFixed(2)} Bs
+                          <td className="px-4 py-3 text-sm text-right text-gray-500">
+                            {formatoMonto(montoMovimiento(mov, otraMoneda(monedaConsulta)), otraMoneda(monedaConsulta))}
                           </td>
                           <td className="px-4 py-3 text-sm text-right text-gray-600">
                             {Number(mov.tasa_cambio).toFixed(4)}
                           </td>
                           <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
-                            ${Number(mov.saldo_nuevo_usd).toFixed(2)}
+                            {formatoMonto(saldoMovimiento(mov, monedaConsulta), monedaConsulta)}
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-600">
                             {mov.concepto || '-'}
@@ -1956,7 +1969,7 @@ export const AhorroPage = () => {
                 <FileText className="w-12 h-12 mb-3 text-gray-400" />
                 <p className="text-lg font-medium">No hay movimientos</p>
                 <p className="text-sm mt-1">
-                  {fechaDesde || fechaHasta
+                  {fechaDesde || fechaHasta || tipoMovimiento !== 'todos'
                     ? 'No se encontraron movimientos con los filtros aplicados'
                     : 'Esta cuenta aún no tiene movimientos registrados'}
                 </p>
@@ -1974,14 +1987,17 @@ export const AhorroPage = () => {
             {/* Impresion de lo que se esta viendo. El modulo ya imprime el
                 listado de cuentas y el reporte general; faltaba aqui, que es
                 donde se consulta la cuenta de UN socio para entregarsela. */}
-            {movimientos.length > 0 && (
-              <div className="mt-6 flex justify-end">
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="ghost" onClick={cerrarConsultaMovimientos}>
+                Cerrar
+              </Button>
+              {movimientos.length > 0 && (
                 <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
                   <Printer className="w-4 h-4" />
                   Imprimir movimientos
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
           </Card>
         </div>,
         document.body
@@ -1999,8 +2015,8 @@ export const AhorroPage = () => {
               : 'Movimientos consultados'
           }
           filtros={[
-            { label: 'Desde', value: fechaDesde || 'Sin límite' },
-            { label: 'Hasta', value: fechaHasta || 'Sin límite' },
+            { label: 'Desde', value: fechaDesde ? diaLegible(fechaDesde) : 'Sin límite' },
+            { label: 'Hasta', value: fechaHasta ? diaLegible(fechaHasta) : 'Sin límite' },
             {
               label: 'Tipo',
               value:
@@ -2012,21 +2028,33 @@ export const AhorroPage = () => {
             },
           ]}
           resumenes={[
-            { label: 'Movimientos', value: String(movimientos.length) },
+            { label: 'Movimientos', value: `${movimientos.length} de ${totalMovimientos}` },
             {
-              label: 'Saldo actual USD',
+              // En la moneda de la cuenta: la libreta a la vista va en bolívares
+              label: `Saldo actual ${monedaConsulta === 'bs' ? 'Bs' : 'USD'}`,
               value: cuentaEncontrada
-                ? `$${Number(cuentaEncontrada.saldo_usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                ? formatoMonto(
+                    Number(monedaConsulta === 'bs' ? cuentaEncontrada.saldo_bs : cuentaEncontrada.saldo_usd),
+                    monedaConsulta
+                  )
                 : '-',
             },
           ]}
-          columnas={['Fecha', 'Tipo', 'Monto USD', 'Monto Bs', 'Saldo resultante USD', 'Concepto', 'Referencia']}
+          columnas={[
+            'Fecha',
+            'Tipo',
+            `Monto ${monedaConsulta === 'bs' ? 'Bs' : 'USD'}`,
+            `Saldo resultante ${monedaConsulta === 'bs' ? 'Bs' : 'USD'}`,
+            `Equiv. ${monedaConsulta === 'bs' ? 'USD' : 'Bs'}`,
+            'Concepto',
+            'Referencia',
+          ]}
           filas={movimientos.map((m) => [
             new Date(m.fecha_movimiento).toLocaleDateString('es-VE'),
             m.tipo_movimiento === 'deposito' ? 'Depósito' : 'Retiro',
-            Number(m.monto_usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-            Number(m.monto_bs).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-            Number(m.saldo_nuevo_usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+            formatoMonto(montoMovimiento(m, monedaConsulta), monedaConsulta),
+            formatoMonto(saldoMovimiento(m, monedaConsulta), monedaConsulta),
+            formatoMonto(montoMovimiento(m, otraMoneda(monedaConsulta)), otraMoneda(monedaConsulta)),
             m.concepto ?? '',
             m.referencia ?? '',
           ])}
@@ -2034,7 +2062,7 @@ export const AhorroPage = () => {
       )}
 
       {/* Modal Reporte de Movimientos */}
-      {modalAbierto === 'reporte_movimientos' && <ModalReporteMovimientos />}
+      {modalAbierto === 'reporte_movimientos' && renderModalReporteMovimientos()}
     </div>
   );
 };
@@ -2052,21 +2080,22 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
   // Enter pasa de campo y ya no envía el formulario por accidente (RF-USA-03)
   const alEnter = useEnterNavigation();
   // Estados del formulario
-  const [cedula, setCedula] = useState('');
-  const [sociosEncontrados, setSociosEncontrados] = useState<any[]>([]);
-  const [socioSeleccionado, setSocioSeleccionado] = useState<any>(null);
+  const [textoBusqueda, setTextoBusqueda] = useState('');
+  const [sociosEncontrados, setSociosEncontrados] = useState<SocioApertura[]>([]);
+  const [socioSeleccionado, setSocioSeleccionado] = useState<SocioApertura | null>(null);
   const [tiposCuenta, setTiposCuenta] = useState<TipoCuentaAhorro[]>([]);
   const [tipoCuentaId, setTipoCuentaId] = useState<string>('');
   const [montoInicial, setMontoInicial] = useState<string>('');
   // La moneda del tipo de cuenta elegido decide en que se pide el deposito
   const monedaDelTipo = tiposCuenta.find((t) => String(t.id) === tipoCuentaId)?.moneda ?? 'bs';
-  
+
   // Estados de UI
   const [buscandoSocio, setBuscandoSocio] = useState(false);
   const [cargandoTipos, setCargandoTipos] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exito, setExito] = useState(false);
+  // La cuenta recién abierta: el operador necesita ver su número para dárselo al socio
+  const [cuentaCreada, setCuentaCreada] = useState<CuentaAhorro | null>(null);
 
   // Cargar tipos de cuenta al montar
   useEffect(() => {
@@ -2087,10 +2116,19 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
     void cargarTipos();
   }, []);
 
-  // Buscar socio por cédula
+  /** La cuenta que el expediente ya tiene de ese tipo, si la tiene */
+  const cuentaDelTipo = (socio: SocioApertura, tipoId: number) =>
+    socio.cuentas_ahorro.find((c) => c.tipo_cuenta_id === tipoId);
+
+  // Buscar por cédula, expediente o nombre. La cédula NO identifica a un solo
+  // socio: una persona puede tener un expediente en un sector y otro en una
+  // feria, y hay que elegir el expediente que abre la cuenta.
   const buscarSocio = async () => {
-    if (!cedula.trim()) {
-      setError('Ingrese una cédula');
+    // Los espacios sobrantes no cuentan (el backend además los quita dentro
+    // de la cédula y del expediente)
+    const texto = textoBusqueda.trim().replace(/\s+/g, ' ');
+    if (texto.length < 2) {
+      setError('Escriba la cédula, el expediente o el nombre del socio');
       return;
     }
 
@@ -2098,32 +2136,35 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
     setError(null);
     setSociosEncontrados([]);
     setSocioSeleccionado(null);
+    setTipoCuentaId('');
 
     try {
-      const response = await sociosService.buscarSocioPorCedula(cedula);
-      if (response.success && response.data && response.data.length > 0) {
-        const socios = response.data;
-        
-        // Filtrar socios retirados y mostrar advertencia si todos están retirados
-        const sociosActivos = socios.filter((s: any) => s.estado !== 'retirado');
-        
-        if (sociosActivos.length === 0) {
-          setError('Todos los expedientes con esta cédula están retirados');
-          setSociosEncontrados(socios); // Mostrar de todos modos para información
-          return;
-        }
-        
-        setSociosEncontrados(socios);
-        
-        // Si solo hay UN socio activo, seleccionarlo automáticamente
-        if (sociosActivos.length === 1) {
-          setSocioSeleccionado(sociosActivos[0]);
-        }
-      } else {
-        setError('Socio no encontrado');
+      const response = await ahorroService.buscarSociosApertura(texto);
+      const socios = response.success ? response.data : [];
+
+      if (socios.length === 0) {
+        setError('No se encontró ningún socio con esa cédula, expediente o nombre');
+        return;
       }
-    } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Error al buscar socio');
+
+      setSociosEncontrados(socios);
+
+      const habilitados = socios.filter((s) => s.puede_abrir);
+      if (habilitados.length === 0) {
+        setError(
+          socios.length === 1
+            ? `No se puede abrir cuenta a este expediente: ${socios[0]!.motivo_no_puede}`
+            : 'Ninguno de los expedientes encontrados puede abrir cuenta de ahorro'
+        );
+        return;
+      }
+
+      // Sólo se elige solo cuando no hay nada que decidir: un único resultado
+      if (socios.length === 1) {
+        setSocioSeleccionado(socios[0]!);
+      }
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Error al buscar socio');
     } finally {
       setBuscandoSocio(false);
     }
@@ -2132,7 +2173,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
   // Submit del formulario
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!socioSeleccionado) {
       setError('Primero busque y seleccione un socio');
       return;
@@ -2160,18 +2201,67 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
       });
 
       if (response.success) {
-        setExito(true);
-        setTimeout(() => {
-          onSuccess();
-        }, 1500);
+        setCuentaCreada(response.data);
+      } else {
+        setError(response.error?.message || 'No se pudo abrir la cuenta');
       }
-    } catch (err: any) {
-      const errorMsg = err.response?.data?.error?.message || 'Error al abrir cuenta';
-      setError(errorMsg);
+    } catch (err) {
+      // El mensaje del backend dice el motivo (cuenta duplicada, socio de
+      // feria, semana sin tasa...); el genérico sólo si no hay ninguno
+      setError(getErrorMessage(err) || 'Error al abrir cuenta');
     } finally {
       setEnviando(false);
     }
   };
+
+  /** Sector o feria del expediente, como se muestra en la lista */
+  const lugar = (socio: SocioApertura) =>
+    socio.ubicacion
+      ? `${socio.ubicacion.tipo === 'feria' ? 'Feria' : 'Sector'}: ${socio.ubicacion.codigo} · ${socio.ubicacion.nombre}`
+      : 'Sin sector asignado';
+
+  const etiquetaEstado = (estado: string) =>
+    estado === 'activo' ? null : (
+      <span
+        className={`px-2 py-0.5 text-xs font-medium rounded ${
+          estado === 'retirado' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
+        }`}
+      >
+        {estado.charAt(0).toUpperCase() + estado.slice(1)}
+      </span>
+    );
+
+  // Al terminar se muestra el número de la cuenta y se espera al operador:
+  // antes el modal se cerraba solo al segundo y medio y el número no se veía
+  if (cuentaCreada) {
+    return createPortal(
+      <div className="fixed top-0 left-0 right-0 bottom-0 m-0 bg-black/50 flex items-center justify-center z-[100] p-4 overflow-y-auto">
+        <Card className="max-w-lg w-full p-6 my-8">
+          <div className="flex flex-col items-center text-center py-4">
+            <CheckCircle2 className="w-14 h-14 text-emerald-500 mb-4" />
+            <h2 className="text-xl font-bold text-gray-900">Cuenta abierta exitosamente</h2>
+            <p className="mt-4 text-sm text-gray-500">Número de cuenta</p>
+            <p className="mt-1 font-mono text-3xl font-bold tracking-wide text-gray-900">
+              {cuentaCreada.numero_cuenta}
+            </p>
+            <p className="mt-3 text-sm text-gray-600">
+              {cuentaCreada.tipo_cuenta?.nombre} · Expediente {cuentaCreada.socio?.codigo_socio} —{' '}
+              {cuentaCreada.socio?.nombre} {cuentaCreada.socio?.apellido}
+            </p>
+            {Number(montoInicial) > 0 && (
+              <p className="mt-1 text-sm text-gray-600">
+                Depósito inicial: {formatoMonto(Number(montoInicial), monedaDelTipo)}
+              </p>
+            )}
+            <Button onClick={onSuccess} className="mt-6 min-w-[10rem]">
+              Aceptar
+            </Button>
+          </div>
+        </Card>
+      </div>,
+      document.body
+    );
+  }
 
   return createPortal(
     <div className="fixed top-0 left-0 right-0 bottom-0 m-0 bg-black/50 flex items-center justify-center z-[100] p-4 overflow-y-auto">
@@ -2193,20 +2283,10 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
           </button>
         </div>
 
-        {/* Mensaje de éxito */}
-        {exito && (
-          <div className="mb-4 p-4 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-            <p className="text-emerald-700 font-medium">
-              ¡Cuenta abierta exitosamente!
-            </p>
-          </div>
-        )}
-
         {/* Mensaje de error */}
         {error && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600" />
+            <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
             <p className="text-red-700">{error}</p>
           </div>
         )}
@@ -2215,20 +2295,28 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
           {/* Paso 1: Buscar Socio */}
           <div className="space-y-4">
             <h3 className="font-semibold text-gray-900">1. Buscar Socio</h3>
-            
+
             <div className="flex gap-2">
               <Input
-                label="Cédula"
+                label="Cédula, expediente o nombre"
                 type="text"
-                value={cedula}
-                onChange={(e) => setCedula(e.target.value)}
-                placeholder="12345678"
+                value={textoBusqueda}
+                onChange={(e) => setTextoBusqueda(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter aquí busca; en el resto del formulario pasa de campo
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void buscarSocio();
+                  }
+                }}
+                placeholder="12345678, 121753 o Pérez María"
                 disabled={enviando || socioSeleccionado !== null}
                 className="flex-1"
               />
               <Button
                 type="button"
-                onClick={buscarSocio}
+                onClick={() => void buscarSocio()}
                 disabled={buscandoSocio || enviando || socioSeleccionado !== null}
                 variant="secondary"
                 className="mt-6"
@@ -2241,49 +2329,58 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
               </Button>
             </div>
 
-            {/* Lista de socios encontrados (múltiples expedientes) */}
+            {/* Todos los expedientes encontrados: se elige con cuál se abre */}
             {sociosEncontrados.length > 1 && !socioSeleccionado && (
               <div className="space-y-2">
                 <p className="text-sm font-medium text-gray-700">
-                  Se encontraron {sociosEncontrados.length} expedientes con esta cédula:
+                  Se encontraron {sociosEncontrados.length} expedientes. Elija con cuál abrir la cuenta:
                 </p>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {sociosEncontrados.map((socio: any) => (
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {sociosEncontrados.map((socio) => (
                     <div
                       key={socio.id}
-                      className={`p-3 border-2 rounded-lg cursor-pointer transition-all ${
-                        socio.estado === 'retirado'
-                          ? 'bg-gray-50 border-gray-200 opacity-60 cursor-not-allowed'
-                          : 'bg-white border-gray-300 hover:border-indigo-400 hover:shadow-md'
+                      className={`p-3 border-2 rounded-lg transition-all ${
+                        socio.puede_abrir
+                          ? 'bg-white border-gray-300 cursor-pointer hover:border-indigo-400 hover:shadow-md'
+                          : 'bg-gray-50 border-gray-200 opacity-70 cursor-not-allowed'
                       }`}
                       onClick={() => {
-                        if (socio.estado !== 'retirado') {
-                          setSocioSeleccionado(socio);
-                        }
+                        if (socio.puede_abrir) setSocioSeleccionado(socio);
                       }}
                     >
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
                             <p className="font-semibold text-gray-900">
                               {socio.nombre} {socio.apellido}
                             </p>
-                            {socio.estado === 'retirado' && (
-                              <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded">
-                                Retirado
+                            {etiquetaEstado(socio.estado)}
+                            {socio.es_trabajador && (
+                              <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-medium rounded">
+                                Trabajador
                               </span>
                             )}
                           </div>
                           <p className="text-sm text-gray-600 mt-1">
                             Expediente: <span className="font-mono font-semibold">{socio.codigo_socio}</span>
+                            {' • '}Cédula: {socio.cedula}
                           </p>
-                          {socio.ubicacion && (
-                            <p className="text-sm text-gray-500 mt-1">
-                              Feria: {socio.ubicacion.direccion || socio.ubicacion.nombre}
+                          <p className="text-sm text-gray-500 mt-0.5">{lugar(socio)}</p>
+                          {socio.cuentas_ahorro.length > 0 && (
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              Ya tiene:{' '}
+                              {socio.cuentas_ahorro
+                                .map((c) => `${c.tipo_cuenta.nombre} ${c.numero_cuenta}${c.estado ? '' : ' (inactiva)'}`)
+                                .join(', ')}
+                            </p>
+                          )}
+                          {!socio.puede_abrir && (
+                            <p className="text-sm text-red-700 font-medium mt-1">
+                              No puede abrir ahorro: {socio.motivo_no_puede}
                             </p>
                           )}
                         </div>
-                        {socio.estado !== 'retirado' && (
+                        {socio.puede_abrir && (
                           <Button
                             type="button"
                             variant="secondary"
@@ -2303,30 +2400,53 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
               </div>
             )}
 
+            {/* Un único resultado que no puede abrir: se muestra para que se vea por qué */}
+            {sociosEncontrados.length === 1 && !socioSeleccionado && (
+              <div className="p-3 border-2 border-gray-200 bg-gray-50 rounded-lg text-sm">
+                <p className="font-semibold text-gray-900">
+                  {sociosEncontrados[0]!.nombre} {sociosEncontrados[0]!.apellido}
+                </p>
+                <p className="text-gray-600 mt-1">
+                  Expediente {sociosEncontrados[0]!.codigo_socio} • Cédula {sociosEncontrados[0]!.cedula}
+                </p>
+                <p className="text-gray-500 mt-0.5">{lugar(sociosEncontrados[0]!)}</p>
+              </div>
+            )}
+
             {/* Socio seleccionado */}
             {socioSeleccionado && (
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <p className="font-semibold text-gray-900">
-                      {socioSeleccionado.nombre} {socioSeleccionado.apellido}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-gray-900">
+                        {socioSeleccionado.nombre} {socioSeleccionado.apellido}
+                      </p>
+                      {etiquetaEstado(socioSeleccionado.estado)}
+                      {socioSeleccionado.es_trabajador && (
+                        <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-medium rounded">
+                          Trabajador
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm text-gray-600 mt-1">
                       Expediente: {socioSeleccionado.codigo_socio} • Cédula: {socioSeleccionado.cedula}
                     </p>
-                    {socioSeleccionado.ubicacion && (
-                      <p className="text-sm text-emerald-700 font-medium mt-2 flex items-center gap-1">
-                        <span className="inline-block w-1.5 h-1.5 bg-emerald-600 rounded-full"></span>
-                        Feria: {socioSeleccionado.ubicacion.direccion || socioSeleccionado.ubicacion.nombre}
-                      </p>
-                    )}
+                    <p className="text-sm text-emerald-700 font-medium mt-2 flex items-center gap-1">
+                      <span className="inline-block w-1.5 h-1.5 bg-emerald-600 rounded-full"></span>
+                      {lugar(socioSeleccionado)}
+                    </p>
                   </div>
                   <Button
                     type="button"
                     onClick={() => {
                       setSocioSeleccionado(null);
-                      setSociosEncontrados([]);
-                      setCedula('');
+                      setTipoCuentaId('');
+                      // Si había varios expedientes se vuelve a la lista
+                      if (sociosEncontrados.length <= 1) {
+                        setSociosEncontrados([]);
+                        setTextoBusqueda('');
+                      }
                     }}
                     variant="ghost"
                     size="sm"
@@ -2343,7 +2463,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
           {socioSeleccionado && (
             <div className="space-y-4">
               <h3 className="font-semibold text-gray-900">2. Tipo de Cuenta</h3>
-              
+
               {cargandoTipos ? (
                 <div className="flex items-center gap-2 text-gray-500">
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -2363,17 +2483,29 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
                       className="w-full appearance-none pl-12 pr-10 py-3.5 text-base border-2 border-gray-300 rounded-xl bg-white text-gray-900 font-medium shadow-sm hover:border-gray-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
                     >
                       <option value="" className="text-gray-500">Seleccione un tipo de cuenta...</option>
-                      {tiposCuenta.map((tipo) => (
-                        <option key={tipo.id} value={tipo.id} className="py-2">
-                          [{tipo.codigo}] {tipo.nombre}
-                        </option>
-                      ))}
+                      {tiposCuenta.map((tipo) => {
+                        // Un expediente tiene una sola cuenta de cada tipo
+                        const yaTiene = cuentaDelTipo(socioSeleccionado, tipo.id);
+                        return (
+                          <option key={tipo.id} value={tipo.id} disabled={!!yaTiene} className="py-2">
+                            [{tipo.codigo}] {tipo.nombre}
+                            {yaTiene ? ` — ya tiene la cuenta ${yaTiene.numero_cuenta}` : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                     <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
                       <ChevronDown className="h-5 w-5 text-gray-400" />
                     </div>
                   </div>
-                  
+
+                  {tiposCuenta.length > 0 &&
+                    tiposCuenta.every((t) => cuentaDelTipo(socioSeleccionado, t.id)) && (
+                      <p className="text-sm text-amber-700">
+                        Este expediente ya tiene una cuenta de cada tipo disponible. No se puede abrir otra.
+                      </p>
+                    )}
+
                   {/* Mostrar descripción del tipo seleccionado */}
                   {tipoCuentaId && (
                     <div className="p-4 bg-gradient-to-br from-indigo-50 to-indigo-100/50 border-2 border-indigo-200 rounded-xl shadow-sm">
@@ -2403,7 +2535,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
           {socioSeleccionado && tipoCuentaId && (
             <div className="space-y-4">
               <h3 className="font-semibold text-gray-900">3. Depósito Inicial (Opcional)</h3>
-              
+
               {/* El monto va en la moneda del tipo de cuenta elegido: la cuenta
                   a la vista se lleva en bolivares, la de divisas en dolares */}
               <Input
@@ -2433,7 +2565,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
             </Button>
             <Button
               type="submit"
-              disabled={!socioSeleccionado || !tipoCuentaId || enviando || exito}
+              disabled={!socioSeleccionado || !tipoCuentaId || enviando}
               className="flex-1"
             >
               {enviando ? (
@@ -2485,7 +2617,9 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
   const [buscando, setBuscando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exito, setExito] = useState<string | null>(null);
+  // Lo registrado: con esto se arma el recibo que se muestra e imprime
+  const [recibo, setRecibo] = useState<MovimientoRegistrado | null>(null);
+  const operador = useAuthStore((state) => state.user?.nombre ?? null);
 
   // La cuenta a la vista se lleva en bolivares y la de divisas en dolares: se
   // deposita, se retira y se compara el disponible en la moneda de la cuenta.
@@ -2560,10 +2694,9 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
         referencia: referencia.trim() || undefined,
       });
       if (respuesta.success) {
-        setExito(
-          `${tipo === 'deposito' ? 'Depósito' : 'Retiro'} de ${importe(montoNumero)} registrado en la cuenta ${cuenta!.numero_cuenta}`
-        );
-        setTimeout(onSuccess, 1200);
+        // Antes se cerraba solo al segundo: ahora queda el recibo en pantalla
+        // hasta que el operador lo imprima o cierre
+        setRecibo(respuesta.data);
       } else {
         setError(respuesta.error?.message || 'No se pudo registrar el movimiento');
       }
@@ -2574,20 +2707,120 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
     }
   };
 
+  // Datos del recibo, en la moneda de la cuenta
+  const datosRecibo = recibo
+    ? (() => {
+        const mov = recibo.movimiento;
+        const moneda: Moneda = monedaDe(recibo.cuenta.tipo_cuenta);
+        return {
+          numero: mov.id,
+          fecha: mov.fecha_movimiento,
+          tipo: mov.tipo_movimiento,
+          moneda,
+          monto: montoMovimiento(mov, moneda),
+          saldoAnterior: moneda === 'bs' ? Number(recibo.saldo_anterior_bs) : Number(mov.saldo_anterior_usd),
+          saldoNuevo: saldoMovimiento(mov, moneda),
+          tasa: Number(mov.tasa_cambio),
+          equivalente: montoMovimiento(mov, otraMoneda(moneda)),
+          cuenta: { numero: recibo.cuenta.numero_cuenta, tipo: recibo.cuenta.tipo_cuenta.nombre },
+          socio: {
+            codigo: recibo.cuenta.socio.codigo_socio,
+            cedula: recibo.cuenta.socio.cedula ?? cuenta?.socio.cedula ?? '',
+            nombre: `${recibo.cuenta.socio.nombre} ${recibo.cuenta.socio.apellido}`,
+          },
+          concepto: mov.concepto ?? null,
+          referencia: mov.referencia ?? null,
+          operador,
+        };
+      })()
+    : null;
+
   return createPortal(
     <div className="fixed top-0 left-0 right-0 bottom-0 m-0 bg-black/50 flex items-center justify-center z-[100] p-4 overflow-y-auto">
       <Card className="max-w-2xl w-full p-6 my-8">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold">Registrar Movimiento</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <h2 className="text-2xl font-bold">{datosRecibo ? 'Movimiento registrado' : 'Registrar Movimiento'}</h2>
+          {/* Con el movimiento ya hecho, cerrar también refresca el listado */}
+          <button onClick={datosRecibo ? onSuccess : onClose} className="text-gray-400 hover:text-gray-600">
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        {exito ? (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
-            <CheckCircle2 className="w-14 h-14 text-emerald-500 mb-4" />
-            <p className="text-lg font-medium text-gray-900">{exito}</p>
+        {datosRecibo ? (
+          <div>
+            <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+              <CheckCircle2 className="w-8 h-8 text-emerald-500 shrink-0" />
+              <div>
+                <p className="font-semibold text-emerald-900">
+                  {datosRecibo.tipo === 'deposito' ? 'Depósito' : 'Retiro'} de{' '}
+                  {formatoMonto(datosRecibo.monto, datosRecibo.moneda)} registrado
+                </p>
+                <p className="text-sm text-emerald-800">
+                  Recibo N° {String(datosRecibo.numero).padStart(6, '0')} ·{' '}
+                  {new Date(datosRecibo.fecha).toLocaleString('es-VE')}
+                </p>
+              </div>
+            </div>
+
+            {/* Vista en pantalla del mismo recibo que sale impreso */}
+            <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+              <div>
+                <dt className="text-gray-500">Asociado</dt>
+                <dd className="font-medium text-gray-900">{datosRecibo.socio.nombre}</dd>
+              </div>
+              <div>
+                <dt className="text-gray-500">Expediente / Cédula</dt>
+                <dd className="font-medium text-gray-900">
+                  {datosRecibo.socio.codigo} / {datosRecibo.socio.cedula}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-gray-500">Cuenta</dt>
+                <dd className="font-medium text-gray-900">
+                  {datosRecibo.cuenta.numero} · {datosRecibo.cuenta.tipo}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-gray-500">Monto</dt>
+                <dd className="font-semibold text-gray-900">{formatoMonto(datosRecibo.monto, datosRecibo.moneda)}</dd>
+              </div>
+              <div>
+                <dt className="text-gray-500">Saldo anterior</dt>
+                <dd className="font-medium text-gray-900">
+                  {formatoMonto(datosRecibo.saldoAnterior, datosRecibo.moneda)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-gray-500">Saldo nuevo</dt>
+                <dd className="font-semibold text-emerald-700">
+                  {formatoMonto(datosRecibo.saldoNuevo, datosRecibo.moneda)}
+                </dd>
+              </div>
+              {datosRecibo.concepto && (
+                <div>
+                  <dt className="text-gray-500">Concepto</dt>
+                  <dd className="font-medium text-gray-900">{datosRecibo.concepto}</dd>
+                </div>
+              )}
+              {datosRecibo.referencia && (
+                <div>
+                  <dt className="text-gray-500">Referencia</dt>
+                  <dd className="font-medium text-gray-900">{datosRecibo.referencia}</dd>
+                </div>
+              )}
+            </dl>
+
+            <div className="mt-6 flex justify-end gap-3 border-t pt-4">
+              <Button variant="secondary" onClick={onSuccess}>
+                Cerrar
+              </Button>
+              <Button onClick={() => window.print()} className="flex items-center gap-2">
+                <Printer className="w-4 h-4" />
+                Imprimir recibo
+              </Button>
+            </div>
+
+            <PrintableReciboAhorro {...datosRecibo} />
           </div>
         ) : (
           <div className="space-y-5">

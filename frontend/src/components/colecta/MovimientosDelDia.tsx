@@ -131,6 +131,13 @@ export const MovimientosDelDia = ({ onCambio }: Props) => {
                         {colecta.socio?.apellido}, {colecta.socio?.nombre}
                       </p>
                       <p className="text-xs text-neutral-500">{colecta.socio?.codigo_socio}</p>
+                      {(colecta.referencia || colecta.observaciones) && (
+                        <p className="mt-0.5 max-w-xs text-xs text-neutral-600">
+                          {colecta.referencia && <>Ref.: {colecta.referencia}</>}
+                          {colecta.referencia && colecta.observaciones && ' · '}
+                          {colecta.observaciones && <>Notas: {colecta.observaciones}</>}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">

@@ -1,9 +1,13 @@
 import apiClient from './api'
 
+/** Sector: socio particular, con ahorro. Feria: socio de feria, sólo salud */
+export type TipoUbicacion = 'sector' | 'feria'
+
 export interface Ubicacion {
   id: number
   codigo: string
   nombre: string
+  tipo: TipoUbicacion
   direccion: string | null
   descripcion?: string | null
 }
@@ -61,35 +65,9 @@ export interface SocioFormData {
 
 export interface RetiroSocioData {
   fecha_retiro: string
-  motivo_retiro: 'Fallecimiento' | 'Renuncia' | 'Pasividad'
-}
-
-// Parentescos aceptados para traspasar la titularidad de un socio: solo familiar directo
-export const PARENTESCOS_TRASPASO_DIRECTO = [
-  'Esposo',
-  'Esposa',
-  'Hijo',
-  'Hija',
-  'Padre',
-  'Madre',
-  'Hermano',
-  'Hermana',
-] as const
-
-export const EDAD_MINIMA_TRASPASO = 60
-
-export interface TraspasoSocioData {
-  nueva_cedula: string
-  nuevo_nombre: string
-  nuevo_apellido: string
-  nueva_fecha_nacimiento: string
-  parentesco: (typeof PARENTESCOS_TRASPASO_DIRECTO)[number]
-  nuevo_telefono?: string
-  nuevo_email?: string
-  nueva_direccion?: string
-  motivo: string
-  confirma_acuerdo_titular: boolean
-  confirma_problemas_medicos: boolean
+  motivo_retiro: 'Fallecimiento' | 'Renuncia' | 'Pasividad' | 'Inasistencia a asambleas'
+  /** Sólo por inasistencia: descontar del ahorro la multa que deba */
+  descontar_multa?: boolean
 }
 
 export const PARENTESCOS_BENEFICIARIO = [
@@ -161,6 +139,10 @@ export interface Beneficiario {
   telefono: string | null
   estado: 'activo' | 'inactivo' | 'retirado' | 'fallecido'
   fecha_fallecimiento: string | null
+  /** Acuerdo de funeraria en el que figura; nulo si no está en funeraria */
+  acuerdo_funeraria_id: number | null
+  /** Retiro propio de funeraria (no cambia `estado`, que es el de la persona) */
+  fecha_retiro_funeraria: string | null
   created_at: string
   updated_at: string
 }
@@ -211,14 +193,53 @@ export const obtenerSocios = async (params?: {
   search?: string
   estado?: string
   ubicacion_id?: number
+  /** Sólo los delegados */
+  es_delegado?: boolean
 }): Promise<PaginatedResponse<Socio>> => {
   const response = await apiClient.get('/socios', { params })
   return response.data
 }
 
 /**
+ * Todos los socios del filtro, sin paginar y sin foto, para el listado impreso.
+ */
+export const obtenerSociosParaImprimir = async (params: {
+  search?: string
+  estado?: string
+  ubicacion_id?: number
+  es_delegado?: boolean
+}): Promise<PaginatedResponse<Socio>> => {
+  const response = await apiClient.get('/socios', { params: { ...params, impresion: 1 } })
+  return response.data
+}
+
+/**
  * Obtener un socio por ID
  */
+/** Nombres y apellidos del CNE para una cedula (via cedula.com.ve) */
+export interface DatosCne {
+  nacionalidad: 'V' | 'E'
+  cedula: string
+  nombres: string
+  apellidos: string
+  rif: string | null
+  estado: string | null
+  municipio: string | null
+  parroquia: string | null
+  centro_electoral: string | null
+}
+
+/**
+ * `disponible: false` si el servicio no esta configurado; `datos: null` si la
+ * cedula no aparece o el servicio no respondio. Nunca debe trabar el alta.
+ */
+export const consultarCne = async (
+  cedula: string
+): Promise<SingleResponse<{ disponible: boolean; datos: DatosCne | null }>> => {
+  const response = await apiClient.get(`/socios/cne/${encodeURIComponent(cedula)}`)
+  return response.data
+}
+
 export const obtenerSocioPorId = async (id: number): Promise<SingleResponse<Socio>> => {
   const response = await apiClient.get(`/socios/${id}`)
   return response.data
@@ -256,6 +277,12 @@ export const retirarSocio = async (id: number, data: RetiroSocioData): Promise<S
   return response.data
 }
 
+/** Devolver a activo a un retirado, con el motivo que evaluó la oficina. Sólo admin. */
+export const reactivarSocioRetirado = async (id: number, motivo: string): Promise<SingleResponse<Socio>> => {
+  const response = await apiClient.post(`/socios/${id}/reactivar-retirado`, { motivo })
+  return response.data
+}
+
 /**
  * Actualizar únicamente el código de programas sociales de un socio
  */
@@ -272,14 +299,6 @@ export const actualizarCodigoSocial = async (
  */
 export const buscarSocioPorExpediente = async (codigo: string): Promise<SingleResponse<Socio>> => {
   const response = await apiClient.get(`/socios/expediente/${codigo}`)
-  return response.data
-}
-
-/**
- * Traspasar la titularidad de un socio a un familiar directo
- */
-export const traspasarSocio = async (id: number, data: TraspasoSocioData): Promise<SingleResponse<Socio>> => {
-  const response = await apiClient.post(`/socios/${id}/traspaso`, data)
   return response.data
 }
 
@@ -318,7 +337,7 @@ export const obtenerBeneficiarios = async (
  */
 export const crearBeneficiario = async (
   socioId: number,
-  data: BeneficiarioFormData
+  data: BeneficiarioFormData & { acuerdo_funeraria_id?: number }
 ): Promise<SingleResponse<Beneficiario>> => {
   const response = await apiClient.post(`/socios/${socioId}/beneficiarios`, data)
   return response.data

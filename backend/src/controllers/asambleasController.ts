@@ -87,7 +87,8 @@ export const obtenerAsambleas = async (req: Request, res: Response): Promise<voi
       orderBy: { fecha: 'desc' },
       include: {
         ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true } },
-        _count: { select: { asistencias: true } },
+        // Sólo los que fueron: el "No" marcado en caja no es asistencia
+        _count: { select: { asistencias: { where: { asistio: true } } } },
       },
     });
 
@@ -131,6 +132,7 @@ export const obtenerAsambleaPorId = async (req: Request, res: Response): Promise
       include: {
         ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true } },
         asistencias: {
+          where: { asistio: true },
           orderBy: { created_at: 'desc' },
           include: {
             socio: {
@@ -146,7 +148,7 @@ export const obtenerAsambleaPorId = async (req: Request, res: Response): Promise
             },
           },
         },
-        _count: { select: { asistencias: true } },
+        _count: { select: { asistencias: { where: { asistio: true } } } },
       },
     });
 
@@ -347,6 +349,29 @@ export const registrarAsistencia = async (req: Request, res: Response): Promise<
       return;
     }
 
+    // Si la caja había marcado "No" y el socio sí fue, se corrige esa fila
+    const previa = await prisma.asistenciaAsamblea.findUnique({
+      where: { asamblea_id_socio_id: { asamblea_id: asambleaId, socio_id: socio.id } },
+      select: { id: true, asistio: true },
+    });
+    if (previa && !previa.asistio) {
+      const corregida = await prisma.asistenciaAsamblea.update({
+        where: { id: previa.id },
+        data: {
+          asistio: true,
+          observacion: validacion.data.observacion ?? null,
+          registrado_por: req.user?.userId ?? null,
+        },
+        include: {
+          socio: {
+            select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true, estado: true },
+          },
+        },
+      });
+      res.status(201).json({ success: true, data: corregida });
+      return;
+    }
+
     try {
       const asistencia = await prisma.asistenciaAsamblea.create({
         data: {
@@ -412,11 +437,17 @@ export const registrarAsistenciaLote = async (req: Request, res: Response): Prom
       skipDuplicates: true,
     });
 
+    // Los que tenían un "No" marcado en caja pasan a asistentes
+    const corregidos = await prisma.asistenciaAsamblea.updateMany({
+      where: { asamblea_id: asambleaId, socio_id: { in: validacion.data.socio_ids }, asistio: false },
+      data: { asistio: true, registrado_por: req.user?.userId ?? null },
+    });
+
     res.status(201).json({
       success: true,
       data: {
-        registrados: resultado.count,
-        omitidos: validacion.data.socio_ids.length - resultado.count,
+        registrados: resultado.count + corregidos.count,
+        omitidos: validacion.data.socio_ids.length - resultado.count - corregidos.count,
       },
     });
   } catch (error) {
@@ -477,6 +508,9 @@ export const obtenerAsistenciaAnualDeSocio = async (req: Request, res: Response)
         orderBy: { asamblea: { fecha: 'asc' } },
       }),
     ]);
+    // El "No" marcado en caja queda en el historial, pero no es asistencia
+    const inasistencias = asistencias.filter((a) => !a.asistio);
+    asistencias.splice(0, asistencias.length, ...asistencias.filter((a) => a.asistio));
 
     res.json({
       success: true,
@@ -486,6 +520,11 @@ export const obtenerAsistenciaAnualDeSocio = async (req: Request, res: Response)
         total_asistencias: asistencias.length,
         cumple: asistencias.length > 0, // La regla: al menos una asamblea en el año
         asambleas_asistidas: asistencias.map((a) => a.asamblea),
+        inasistencias_registradas: inasistencias.map((a) => ({
+          ...a.asamblea,
+          registrada: a.created_at,
+          observacion: a.observacion,
+        })),
       },
     });
   } catch (error) {
@@ -556,7 +595,7 @@ export const obtenerReporteInasistentes = async (req: Request, res: Response): P
         where: {
           ...whereBase,
           // El corazón de la regla: ninguna asistencia en asambleas del año
-          asistencias_asamblea: { none: { asamblea: { ano, estado: true } } },
+          asistencias_asamblea: { none: { asistio: true, asamblea: { ano, estado: true } } },
         },
         orderBy: [{ apellido: 'asc' }, { nombre: 'asc' }],
         select: {
@@ -612,7 +651,7 @@ export const obtenerResumenAnual = async (req: Request, res: Response): Promise<
       prisma.socio.count({
         where: {
           estado: 'activo',
-          asistencias_asamblea: { some: { asamblea: { ano, estado: true } } },
+          asistencias_asamblea: { some: { asistio: true, asamblea: { ano, estado: true } } },
         },
       }),
     ]);
