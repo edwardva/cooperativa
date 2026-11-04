@@ -234,6 +234,8 @@ export interface DetalleColectaEnvio {
   servicio: 'ahorro' | 'funeraria' | 'salud' | 'prestamo'
   referencia_id: number
   monto_usd: number
+  /** Solo ahorro: bolivares exactos (el adicional se escribe en Bs) */
+  monto_bs?: number
   semanas?: number
   /** Cargo por reactivar un acuerdo suspendido: no cubre semanas */
   es_reintegro?: boolean
@@ -355,6 +357,8 @@ export interface Colecta {
   monto_total_usd: string | number
   monto_total_bs: string | number
   tasa_cambio: string | number
+  /** N° de recibo o comprobante */
+  referencia?: string | null
   observaciones: string | null
   reversada?: boolean
   fecha_reverso?: string | null
@@ -450,9 +454,42 @@ export const registrarColecta = async (datos: {
 export const calcularPaquete = async (params: {
   socio_id: number
   semanas: number
-  ahorro_adicional_usd?: number
+  /** Lo que se escribe en `Adic:`: bolivares, como en el sistema actual */
+  ahorro_adicional_bs?: number
 }): Promise<Respuesta<PaqueteSemanal>> => {
   const response = await apiClient.get('/colecta/calcular', { params })
+  return response.data
+}
+
+/** Libreta de ahorro para imprimir: "Act. Libreta" y "Enc. Libreta" del sistema actual */
+export interface LibretaAhorro {
+  encabezado: {
+    socio: string
+    cuenta: string
+    tipo_cuenta: string
+    fecha_ingreso: string | null
+    apellidos: string
+    nombres: string
+    cedula: string
+  }
+  renglones: {
+    item: number
+    fecha: string
+    /** Ape, Dep, Ret, Rev */
+    tipo: string
+    ahorro_bs: number
+    saldo_bs: number
+    /** Ultima semana cubierta por el cobro, si vino de una colecta */
+    semana: number | null
+    funeraria_bs: number | null
+    salud_bs: number | null
+    /** Domingo de esa semana (YYYY-MM-DD) */
+    hasta: string | null
+  }[]
+}
+
+export const obtenerLibretaAhorro = async (cuentaId: number): Promise<Respuesta<LibretaAhorro>> => {
+  const response = await apiClient.get(`/colecta/libreta/${cuentaId}`)
   return response.data
 }
 
