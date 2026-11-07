@@ -1,3 +1,5 @@
+// Hora de Venezuela para todo el proceso: va antes que cualquier otro import
+import './zonaHoraria';
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';

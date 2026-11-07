@@ -122,6 +122,9 @@ export default function ColectaPage() {
   const puedeCobrar = hasPermission('colecta', 'create')
 
   const [pestana, setPestana] = useState<'cobrar' | 'movimientos'>('cobrar')
+  // El reverso desde la pantalla de cobro filtra por el socio en pantalla; la
+  // pestana "Movimientos de hoy" sigue mostrando todo lo cobrado
+  const [reversoDeSocio, setReversoDeSocio] = useState(false)
 
   // Disposicion de la pantalla. La cooperativa pidio ver la colecta "muy
   // parecido a la vista del sistema actual": horizontal y sin desplazarse. En
@@ -340,6 +343,28 @@ export default function ColectaPage() {
     }
   }, [socio, semanas, adicionalAhorro])
 
+  /**
+   * Vuelve a traer al socio despues de cobrarle: cobertura, saldo y libreta ya
+   * con el cobro aplicado. Si falla, se queda lo que habia; el recibo ya esta.
+   */
+  const refrescarSocio = async (actual: SocioColecta) => {
+    try {
+      for (const termino of [actual.cedula, actual.codigo_socio]) {
+        if (!termino) continue
+        const respuesta = await colectaService.buscarSocio(termino)
+        const mismo = respuesta.success
+          ? respuesta.data.encontrados.find((c) => c.id === actual.id)
+          : undefined
+        if (mismo) {
+          setSocio(mismo)
+          return
+        }
+      }
+    } catch {
+      // Informativo: no tapa el recibo
+    }
+  }
+
   const limpiar = () => {
     setTermino('')
     setSocio(null)
@@ -485,17 +510,21 @@ export default function ColectaPage() {
       if (!respuesta.success) throw new Error('No fue posible registrar la colecta')
 
       setRecibo(respuesta.data)
-      setSocio(null)
       setLineas({})
-      setPaquete(null)
       setReferencia('')
       setAdicionalAhorro('0')
       setAsambleaId('')
       setAsistioAsamblea(true)
       setReintegros({})
       setObservaciones('')
-      setTermino('')
-      await cargarResumen()
+      // El socio SE QUEDA en pantalla, con sus datos ya actualizados: la
+      // cooperativa necesita ver lo cobrado para chequear que quedo bien
+      // (observacion del 07/11). Las semanas quedan en 0 para que un segundo
+      // Enviar no cobre otra vez lo mismo.
+      setSemanas(0)
+      // Sin paquete no se puede volver a enviar hasta que se recalcule en 0
+      setPaquete(null)
+      await Promise.all([cargarResumen(), refrescarSocio(socio)])
     } catch (err) {
       setError(getErrorMessage(err) || 'Error al registrar la colecta')
     } finally {
@@ -613,6 +642,56 @@ export default function ColectaPage() {
     [socio]
   )
 
+  /**
+   * Lo cobrado, por concepto, para que la caja revise el registro sin salir de
+   * la pantalla (observacion del 07/11). Salud viaja con un renglon por
+   * persona del grupo y solo uno lleva el monto: aqui se ve como uno solo.
+   */
+  const conceptosRecibo = useMemo(() => {
+    if (!recibo) return []
+    const filas = new Map<
+      string,
+      {
+        etiqueta: string
+        cantidad: number
+        semanas: number | null
+        hasta: string
+        hastaOrden: number
+        bs: number
+        usd: number
+      }
+    >()
+    for (const d of recibo.detalles) {
+      const clave = d.es_reintegro ? `${d.servicio}-reintegro` : d.servicio
+      const etiqueta = d.es_reintegro
+        ? `Reintegro ${etiquetaServicio(d.servicio).toLowerCase()}`
+        : etiquetaServicio(d.servicio)
+      const fila = filas.get(clave) ?? {
+        etiqueta,
+        cantidad: 0,
+        semanas: null,
+        hasta: '',
+        hastaOrden: 0,
+        bs: 0,
+        usd: 0,
+      }
+      fila.bs += Number(d.monto_bs)
+      fila.usd += Number(d.monto_usd)
+      if (Number(d.monto_usd) > 0 || d.servicio !== 'salud') fila.cantidad += 1
+      if (d.semanas) fila.semanas = Math.max(fila.semanas ?? 0, d.semanas)
+      if (d.cobertura_ano_despues && d.cobertura_semana_despues) {
+        // La cobertura mas lejana del concepto
+        const orden = d.cobertura_ano_despues * 100 + d.cobertura_semana_despues
+        if (orden > fila.hastaOrden) {
+          fila.hastaOrden = orden
+          fila.hasta = `S${String(d.cobertura_semana_despues).padStart(2, '0')}/${d.cobertura_ano_despues}`
+        }
+      }
+      filas.set(clave, fila)
+    }
+    return [...filas.values()]
+  }, [recibo])
+
   // Recibo del ultimo cobro: va en las dos disposiciones
   const tarjetaRecibo = recibo && (
             <Card className="border-emerald-200 bg-emerald-50/50 p-5">
@@ -638,6 +717,33 @@ export default function ColectaPage() {
                         {recibo.referencia && recibo.observaciones && ' · '}
                         {recibo.observaciones && <>Notas: {recibo.observaciones}</>}
                       </p>
+                    )}
+                    {conceptosRecibo.length > 0 && (
+                      <table className="mt-3 min-w-[22rem] border-collapse text-sm">
+                        <thead>
+                          <tr className="text-xs text-emerald-700">
+                            <th className="py-1 pr-4 text-left font-medium">Concepto</th>
+                            <th className="py-1 pr-4 text-right font-medium">Semanas</th>
+                            <th className="py-1 pr-4 text-left font-medium">Cubierto hasta</th>
+                            <th className="py-1 pr-4 text-right font-medium">Bs</th>
+                            <th className="py-1 text-right font-medium">$</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-emerald-900">
+                          {conceptosRecibo.map((c) => (
+                            <tr key={c.etiqueta} className="border-t border-emerald-200/70">
+                              <td className="py-1 pr-4">
+                                {c.etiqueta}
+                                {c.cantidad > 1 && <span className="text-emerald-700"> ({c.cantidad})</span>}
+                              </td>
+                              <td className="py-1 pr-4 text-right tabular-nums">{c.semanas ?? '—'}</td>
+                              <td className="py-1 pr-4">{c.hasta || '—'}</td>
+                              <td className="py-1 pr-4 text-right font-semibold tabular-nums">{money(c.bs)}</td>
+                              <td className="py-1 text-right tabular-nums">{money(c.usd)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     )}
                     {recibo.correo_enviado_a && (
                       <p className="mt-1 text-xs text-emerald-700 print:hidden">
@@ -731,7 +837,10 @@ export default function ColectaPage() {
           return (
             <button
               key={item.id}
-              onClick={() => setPestana(item.id)}
+              onClick={() => {
+                setPestana(item.id)
+                setReversoDeSocio(false)
+              }}
               className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition ${
                 activa
                   ? 'border-primary-600 text-primary-700'
@@ -768,7 +877,17 @@ export default function ColectaPage() {
         )}
       </div>
 
-      {pestana === 'movimientos' && <MovimientosDelDia onCambio={() => void cargarResumen()} />}
+      {pestana === 'movimientos' && (
+        <MovimientosDelDia
+          socio={reversoDeSocio ? socio : null}
+          onVerTodos={() => setReversoDeSocio(false)}
+          onCambio={() => {
+            void cargarResumen()
+            // El socio en pantalla vuelve a como estaba antes del cobro
+            if (socio) void refrescarSocio(socio)
+          }}
+        />
+      )}
 
       {/* Disposicion clasica: todo el socio a la vez, como el sistema actual.
           Recibe el mismo estado y los mismos manejadores que la guiada — no
@@ -805,7 +924,10 @@ export default function ColectaPage() {
           totalBs={totalBs}
           onLibreta={(modo) => void imprimirLibreta(modo)}
           imprimiendoLibreta={cargandoLibreta}
-          onReverso={() => setPestana('movimientos')}
+          onReverso={() => {
+            setReversoDeSocio(true)
+            setPestana('movimientos')
+          }}
           onCobrar={() => void cobrar()}
           cobrando={cobrando}
           puedeCobrar={puedeCobrar && !!paquete && !calculandoPaquete}
@@ -1022,11 +1144,12 @@ export default function ColectaPage() {
                       <span className="mb-1.5 block">Semanas a cobrar *</span>
                       <input
                         type="number"
-                        min={1}
+                        min={0}
                         max={104}
                         ref={campoSemanas}
                         value={semanas}
-                        onChange={(e) => setSemanas(Math.max(1, Number(e.target.value) || 1))}
+                        // 0 = solo ahorro adicional, sin cobrar servicios (07/11)
+                        onChange={(e) => setSemanas(Math.max(0, Number(e.target.value) || 0))}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault()

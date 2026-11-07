@@ -151,7 +151,12 @@ export function armarPaquete(opciones: {
     renglones.push({
       servicio: 'ahorro',
       referencia_id: cuentaAhorroId,
-      titulo: ahorroAdicional > 0 || adicionalBs > 0 ? 'Ahorro obligatorio + adicional' : 'Ahorro obligatorio',
+      titulo:
+        semanas === 0
+          ? 'Ahorro adicional'
+          : ahorroAdicional > 0 || adicionalBs > 0
+            ? 'Ahorro obligatorio + adicional'
+            : 'Ahorro obligatorio',
       semanas,
       tarifa_unitaria_usd: tarifas.ahorro_usd,
       monto_usd: montoAhorro,
@@ -163,17 +168,27 @@ export function armarPaquete(opciones: {
 
   // --- Servicios contratados: todos, no una selección ---
   //
-  // Salud se cobra POR GRUPO FAMILIAR, no por persona (observación de la
-  // cooperativa al probar, 03/11: "el cobro de salud sale por persona y es
-  // 0,96 $ por el grupo familiar"). Con 8 personas y 3 semanas son 0,96 x 3,
-  // no 8 x 0,96 x 3. La tarifa va en el primer acuerdo de salud; los demás
-  // siguen en el paquete con monto 0 para que su cobertura avance igual.
-  // Funeraria sigue siendo por acuerdo.
-  let saludCobrada = false;
-  for (const acuerdo of acuerdos) {
+  // Salud se cobra POR CONTRATO (número de acuerdo), no por persona
+  // (observación de la cooperativa, 03/11: "es 0,96 $ por el grupo
+  // familiar"). En la base hay una fila por persona del contrato: con 8
+  // personas y 3 semanas son 0,96 x 3, no 8 x 0,96 x 3. La tarifa va en la
+  // primera persona de cada contrato; las demás siguen en el paquete con
+  // monto 0 para que su cobertura avance igual.
+  //
+  // Quien tiene DOS contratos de salud paga 0,96 por cada uno, como funeraria
+  // paga 0,75 por cada contrato (confirmado el 08/11: "tienes que multiplicar
+  // el 0,96 de cada contrato y el 0,75 de cada contrato").
+  //
+  // Con 0 semanas no va ningún servicio: es un depósito de ahorro adicional en
+  // Bs sin cobro de semanas (observación de la cooperativa, 07/11).
+  const contratosSaludCobrados = new Set<string>();
+  for (const acuerdo of semanas > 0 ? acuerdos : []) {
     const tarifaBase = tarifaDeAcuerdo(acuerdo, tarifas);
-    const tarifa = acuerdo.servicio === 'salud' && saludCobrada ? 0 : tarifaBase;
-    if (acuerdo.servicio === 'salud') saludCobrada = true;
+    // Sin número de acuerdo no se puede saber con quién comparte: va solo
+    const contrato = acuerdo.numero_acuerdo ?? `sin-numero-${acuerdo.referencia_id}`;
+    const yaCobrado = acuerdo.servicio === 'salud' && contratosSaludCobrados.has(contrato);
+    const tarifa = yaCobrado ? 0 : tarifaBase;
+    if (acuerdo.servicio === 'salud') contratosSaludCobrados.add(contrato);
     const monto = redondear(tarifa * semanas);
     const antes = acuerdo.situacion.cobertura;
 

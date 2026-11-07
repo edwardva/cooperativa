@@ -19,6 +19,7 @@ import { AlertTriangle, CalendarCheck, HeartPulse, Shield } from 'lucide-react'
 import { Badge } from '../ui/Badge'
 import { Card } from '../ui/Card'
 import type { ResumenServicio } from '../../services/colectaService'
+import { agruparPorAcuerdo, fechaCorta } from './presentacion'
 
 interface Props {
   servicios: ResumenServicio[]
@@ -27,8 +28,8 @@ interface Props {
   tasa: number | null
 }
 
-const fecha = (valor: string | null): string =>
-  valor ? new Date(valor).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Sin pagos'
+// El domingo "hasta" viene sin hora y se muestra tal cual (ver fechaCorta)
+const fecha = (valor: string | null): string => (valor ? fechaCorta(valor, true) : 'Sin pagos')
 
 const money = (valor: number, decimales = 2): string =>
   valor.toLocaleString('es-VE', { minimumFractionDigits: decimales, maximumFractionDigits: decimales })
@@ -75,7 +76,8 @@ export function SituacionSocio({ servicios, semanaActualTexto, tasa }: Props) {
       </div>
 
       <div className="divide-y divide-neutral-100">
-        {servicios.map((servicio) => (
+        {/* Salud: un renglon por acuerdo, no por persona del grupo (07/11) */}
+        {agruparPorAcuerdo(servicios).map((servicio) => (
           <div key={`${servicio.servicio}-${servicio.referencia_id}`} className="px-5 py-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-[200px]">
@@ -88,7 +90,9 @@ export function SituacionSocio({ servicios, semanaActualTexto, tasa }: Props) {
                   {servicio.titulo}
                 </p>
                 <p className="mt-0.5 text-xs text-neutral-500">
-                  {servicio.detalle}
+                  {servicio.servicio === 'salud' && servicio.personas > 1
+                    ? `Grupo familiar · ${servicio.personas} personas`
+                    : servicio.detalle}
                   {servicio.numero_acuerdo && ` · Acuerdo ${servicio.numero_acuerdo}`}
                 </p>
               </div>

@@ -35,7 +35,7 @@ const TASA = 100;
 
 const crearAcuerdo = (
   servicio: 'funeraria' | 'salud',
-  opciones: { id?: number; pagadoHasta?: number; ano?: number; estado?: string; plan?: number } = {}
+  opciones: { id?: number; pagadoHasta?: number; ano?: number; estado?: string; plan?: number; numero?: string } = {}
 ): AcuerdoCobrable => {
   const base: AcuerdoConCobertura = {
     ano_pagado_hasta: opciones.ano ?? 2026,
@@ -50,7 +50,7 @@ const crearAcuerdo = (
     referencia_id: opciones.id ?? (servicio === 'funeraria' ? 1 : 2),
     titulo: servicio === 'funeraria' ? 'Plan funerario' : 'Plan de salud',
     detalle: 'Juan Pérez',
-    numero_acuerdo: 'A-1',
+    numero_acuerdo: opciones.numero ?? 'A-1',
     monto_plan_usd: opciones.plan ?? 0,
     situacion: calcularSituacion(base, 6, HOY),
   };
@@ -331,5 +331,54 @@ describe('resumirServicio', () => {
     const r = resumirServicio(crearAcuerdo('salud', { pagadoHasta: 33 }), TARIFAS);
     expect(r.semanas_pendientes).toBe(3);
     expect(r.monto_al_dia_usd).toBe(2.88);
+  });
+});
+
+describe('armarPaquete — ahorro adicional sin semanas', () => {
+  // Observación de la cooperativa (07/11): "debe permitir el ahorro en Bs.
+  // adicional sin hacer el cobro de semanas por esta vía"
+  const acuerdos = [crearAcuerdo('funeraria'), crearAcuerdo('salud')];
+
+  it('con 0 semanas cobra solo el adicional, sin servicios', () => {
+    const p = armarPaquete({
+      semanas: 0,
+      acuerdos,
+      tarifas: TARIFAS,
+      tasa: TASA,
+      cuentaAhorroId: 10,
+      ahorroAdicionalBs: 500,
+    });
+    expect(p.renglones).toHaveLength(1);
+    expect(p.renglones[0]).toMatchObject({ servicio: 'ahorro', titulo: 'Ahorro adicional', monto_bs: 500, monto_usd: 5 });
+    expect(p.totales.total_bs).toBe(500);
+  });
+
+  it('con 0 semanas y sin adicional no hay nada que cobrar', () => {
+    const p = armarPaquete({ semanas: 0, acuerdos, tarifas: TARIFAS, tasa: TASA, cuentaAhorroId: 10 });
+    expect(p.renglones).toHaveLength(0);
+    expect(p.totales.total_usd).toBe(0);
+  });
+});
+
+describe('armarPaquete — varios contratos', () => {
+  // Confirmado el 08/11: con dos contratos de salud y dos de funeraria, cada
+  // contrato paga su cuota: 2 x 0,96 y 2 x 0,75 por semana
+  it('cobra 0,96 por cada contrato de salud y 0,75 por cada uno de funeraria', () => {
+    const acuerdos = [
+      crearAcuerdo('funeraria', { id: 1, numero: 'F-1' }),
+      crearAcuerdo('funeraria', { id: 2, numero: 'F-2' }),
+      // Contrato S-1 con tres personas y S-2 con dos
+      crearAcuerdo('salud', { id: 10, numero: 'S-1' }),
+      crearAcuerdo('salud', { id: 11, numero: 'S-1' }),
+      crearAcuerdo('salud', { id: 12, numero: 'S-1' }),
+      crearAcuerdo('salud', { id: 20, numero: 'S-2' }),
+      crearAcuerdo('salud', { id: 21, numero: 'S-2' }),
+    ];
+    const p = armarPaquete({ semanas: 1, acuerdos, tarifas: TARIFAS, tasa: TASA, cuentaAhorroId: null });
+    expect(p.totales.funeraria_usd).toBe(1.5);
+    expect(p.totales.salud_usd).toBe(1.92);
+    const dosSemanas = armarPaquete({ semanas: 2, acuerdos, tarifas: TARIFAS, tasa: TASA, cuentaAhorroId: null });
+    expect(dosSemanas.totales.salud_usd).toBe(3.84);
+    expect(dosSemanas.totales.funeraria_usd).toBe(3);
   });
 });

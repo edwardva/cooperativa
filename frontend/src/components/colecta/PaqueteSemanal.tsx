@@ -67,7 +67,11 @@ export function PaqueteSemanalCard({ paquete, cargando, semanas }: Props) {
       {!cargando && paquete && paquete.renglones.length > 0 && (
         <>
           <div className="divide-y divide-neutral-100">
-            {paquete.renglones.map((renglon) => (
+            {/* Salud se cobra una vez por grupo: las demas personas viajan en
+                0 solo para avanzar su cobertura y no se listan (07/11) */}
+            {paquete.renglones
+              .filter((r) => r.servicio !== 'salud' || r.monto_usd > 0 || r.tarifa_unitaria_usd > 0)
+              .map((renglon) => (
               <div
                 key={`${renglon.servicio}-${renglon.referencia_id}`}
                 className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"

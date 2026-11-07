@@ -32,9 +32,17 @@ const etiquetaServicio: Record<string, string> = {
 interface Props {
   /** Se dispara tras un reverso para que la pantalla padre refresque sus totales */
   onCambio?: () => void
+  /**
+   * Socio que se esta atendiendo. Con el, el listado muestra solo sus cobros
+   * de hoy: la cooperativa pidio que el reverso por error no muestre a todos
+   * los socios cobrados en el dia (07/11).
+   */
+  socio?: { id: number; nombre: string; apellido: string } | null
+  /** Quitar el filtro del socio y ver todo lo cobrado hoy */
+  onVerTodos?: () => void
 }
 
-export const MovimientosDelDia = ({ onCambio }: Props) => {
+export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
   const { hasPermission } = usePermissions()
   const puedeReversar = hasPermission('colecta', 'delete')
 
@@ -50,14 +58,17 @@ export const MovimientosDelDia = ({ onCambio }: Props) => {
   const cargar = useCallback(async () => {
     setCargando(true)
     try {
-      const respuesta = await colectaService.listarColectas({ solo_mias: true })
+      const respuesta = await colectaService.listarColectas({
+        solo_mias: true,
+        ...(socio ? { socio_id: socio.id } : {}),
+      })
       if (respuesta.success) setColectas(respuesta.data.colectas)
     } catch (err) {
       setError(getErrorMessage(err) || 'Error al cargar los movimientos')
     } finally {
       setCargando(false)
     }
-  }, [])
+  }, [socio])
 
   useEffect(() => {
     void cargar()
@@ -88,6 +99,18 @@ export const MovimientosDelDia = ({ onCambio }: Props) => {
 
   return (
     <>
+      {socio && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-sm text-primary-800">
+          <span>
+            Cobros de hoy de <strong>{socio.apellido}, {socio.nombre}</strong>
+          </span>
+          {onVerTodos && (
+            <button onClick={onVerTodos} className="text-xs font-medium underline hover:no-underline">
+              Ver todos los cobros de hoy
+            </button>
+          )}
+        </div>
+      )}
       <Card padding="none" className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-neutral-200">
@@ -114,7 +137,9 @@ export const MovimientosDelDia = ({ onCambio }: Props) => {
               ) : colectas.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-neutral-500">
-                    Todavia no hay cobros registrados hoy
+                    {socio
+                      ? 'No hay cobros de este socio registrados hoy en su caja'
+                      : 'Todavia no hay cobros registrados hoy'}
                   </td>
                 </tr>
               ) : (
