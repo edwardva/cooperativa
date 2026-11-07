@@ -9,7 +9,7 @@
  * - Consulta de movimientos
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useEnterNavigation } from '../hooks/useEnterNavigation';
 import { createPortal } from 'react-dom';
 import { Card } from '../components/ui/Card';
@@ -17,6 +17,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PrintableListado } from '../components/print/PrintableListado';
 import { PrintableReciboAhorro } from '../components/print/PrintableReciboAhorro';
+import { nombreUbicacion } from '../utils/ubicacion';
 import { SortableHeader } from '../components/ui/SortableHeader';
 import {
   PlusCircle,
@@ -152,6 +153,16 @@ export const AhorroPage = () => {
   const [loadingReporte, setLoadingReporte] = useState(false);
   const [errorReporte, setErrorReporte] = useState<string | null>(null);
   const [reporteConsultado, setReporteConsultado] = useState(false);
+
+  // Vista previa antes de imprimir (observacion de la cooperativa, 07/11):
+  // ningun reporte de ahorro manda directo a la impresora
+  const [vistaPrevia, setVistaPrevia] = useState<'listado' | 'movimientos' | 'reporte' | null>(null);
+  const cerrarVistaPrevia = useCallback(() => setVistaPrevia(null), []);
+  // Al abrir o cerrar un modal no queda una vista previa de otro reporte colgada
+  useEffect(() => setVistaPrevia(null), [modalAbierto]);
+  // El reporte en pantalla va paginado de a 20: para imprimir se trae completo
+  const [reporteParaImprimir, setReporteParaImprimir] = useState<MovimientoAhorro[]>([]);
+  const [preparandoImpresion, setPreparandoImpresion] = useState(false);
 
   // Estados de datos
   const [cuentas, setCuentas] = useState<CuentaAhorro[]>([]);
@@ -413,6 +424,37 @@ export const AhorroPage = () => {
     }
   };
 
+  /** Hasta 5.000 movimientos: mas que eso no es un listado para papel */
+  const MAXIMO_IMPRESION = 5000;
+
+  const prepararImpresionReporte = async () => {
+    setErrorReporte(null);
+    setPreparandoImpresion(true);
+    try {
+      const todos: MovimientoAhorro[] = [];
+      for (let pagina = 1; todos.length < MAXIMO_IMPRESION; pagina++) {
+        const response = await ahorroService.consultarMovimientos({
+          page: pagina,
+          limit: 100,
+          fecha_desde: reporteFechaDesde || undefined,
+          fecha_hasta: reporteFechaHasta || undefined,
+          tipo_cuenta_id: reporteTipoCuenta !== 'todos' ? Number(reporteTipoCuenta) : undefined,
+          tipo_movimiento:
+            reporteTipoMovimiento !== 'todos' ? (reporteTipoMovimiento as 'deposito' | 'retiro') : undefined,
+        });
+        if (!response.success) break;
+        todos.push(...response.data);
+        if (pagina >= response.meta.totalPages) break;
+      }
+      setReporteParaImprimir(todos.slice(0, MAXIMO_IMPRESION));
+      setVistaPrevia('reporte');
+    } catch (err) {
+      setErrorReporte(getErrorMessage(err) || 'No se pudo preparar la impresión');
+    } finally {
+      setPreparandoImpresion(false);
+    }
+  };
+
   // Moneda de las cuentas abiertas en el detalle y en la consulta
   const monedaDetalle = monedaDe(cuentaSeleccionada?.tipo_cuenta);
   const monedaConsulta = monedaDe(cuentaEncontrada?.tipo_cuenta);
@@ -568,12 +610,21 @@ export const AhorroPage = () => {
           {reporteMovimientos.length > 0 ? (
             <>
               {/* Resumen */}
-              <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
                 <p className="text-sm text-blue-900">
                   <strong>{reporteTotal}</strong> movimientos encontrados
                   {reporteFechaDesde && <> desde <strong>{diaLegible(reporteFechaDesde)}</strong></>}
                   {reporteFechaHasta && <> hasta <strong>{diaLegible(reporteFechaHasta)}</strong></>}
                 </p>
+                <Button
+                  variant="secondary"
+                  onClick={() => void prepararImpresionReporte()}
+                  disabled={preparandoImpresion || loadingReporte}
+                  className="flex items-center gap-2"
+                >
+                  {preparandoImpresion ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+                  Vista previa e imprimir
+                </Button>
               </div>
 
               {/* Tabla de movimientos */}
@@ -778,7 +829,7 @@ export const AhorroPage = () => {
         <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:gap-3">
           <Button
             variant="secondary"
-            onClick={() => window.print()}
+            onClick={() => setVistaPrevia('listado')}
             className="flex items-center gap-2"
           >
             <FileText className="w-4 h-4" />
@@ -838,6 +889,8 @@ export const AhorroPage = () => {
         columnas={['Cuenta', 'Socio', 'Tipo', 'Saldo USD', 'Saldo Bs', 'Bloqueado USD', 'Movimientos', 'Estado']}
         columnasMayusculas={['Socio']}
         filas={filasImpresion}
+        vistaPrevia={vistaPrevia === 'listado'}
+        onCerrarVistaPrevia={cerrarVistaPrevia}
       />
       )}
 
@@ -1992,7 +2045,7 @@ export const AhorroPage = () => {
                 Cerrar
               </Button>
               {movimientos.length > 0 && (
-                <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => setVistaPrevia('movimientos')} className="flex items-center gap-2">
                   <Printer className="w-4 h-4" />
                   Imprimir movimientos
                 </Button>
@@ -2058,11 +2111,67 @@ export const AhorroPage = () => {
             m.concepto ?? '',
             m.referencia ?? '',
           ])}
+          vistaPrevia={vistaPrevia === 'movimientos'}
+          onCerrarVistaPrevia={cerrarVistaPrevia}
         />
       )}
 
       {/* Modal Reporte de Movimientos */}
       {modalAbierto === 'reporte_movimientos' && renderModalReporteMovimientos()}
+
+      {/* Lo que sale por la impresora desde el Reporte de Movimientos: todas
+          las paginas, no solo la que se ve en el modal */}
+      {modalAbierto === 'reporte_movimientos' && vistaPrevia === 'reporte' && (
+        <PrintableListado
+          titulo="Reporte de Movimientos de Ahorro"
+          subtitulo={
+            reporteParaImprimir.length < reporteTotal
+              ? `Se imprimen los primeros ${reporteParaImprimir.length} de ${reporteTotal} movimientos`
+              : `${reporteTotal} movimientos`
+          }
+          filtros={[
+            { label: 'Desde', value: reporteFechaDesde ? diaLegible(reporteFechaDesde) : 'Sin límite' },
+            { label: 'Hasta', value: reporteFechaHasta ? diaLegible(reporteFechaHasta) : 'Sin límite' },
+            {
+              label: 'Tipo de cuenta',
+              value:
+                reporteTipoCuenta === 'todos'
+                  ? 'Todos'
+                  : (() => {
+                      const t = tiposCuentaFiltro.find((x) => String(x.id) === reporteTipoCuenta);
+                      return t ? `${t.codigo} - ${t.nombre}` : reporteTipoCuenta;
+                    })(),
+            },
+            {
+              label: 'Movimiento',
+              value:
+                reporteTipoMovimiento === 'todos'
+                  ? 'Todos'
+                  : reporteTipoMovimiento === 'deposito'
+                    ? 'Depósitos'
+                    : 'Retiros',
+            },
+          ]}
+          columnas={['Fecha', 'N° Cuenta', 'Socio', 'Tipo', 'Monto', 'Equivalente', 'Tasa', 'Saldo', 'Concepto']}
+          columnasMayusculas={['Socio']}
+          filas={reporteParaImprimir.map((mov) => {
+            const moneda = monedaDe(mov.cuenta?.tipo_cuenta);
+            return [
+              new Date(mov.fecha_movimiento).toLocaleDateString('es-VE'),
+              mov.cuenta?.numero_cuenta ?? '',
+              `${mov.cuenta?.socio?.nombre ?? ''} ${mov.cuenta?.socio?.apellido ?? ''}`.trim(),
+              mov.tipo_movimiento === 'deposito' ? 'Depósito' : 'Retiro',
+              formatoMonto(montoMovimiento(mov, moneda), moneda),
+              formatoMonto(montoMovimiento(mov, otraMoneda(moneda)), otraMoneda(moneda)),
+              Number(mov.tasa_cambio).toFixed(2),
+              formatoMonto(saldoMovimiento(mov, moneda), moneda),
+              mov.concepto || '-',
+            ];
+          })}
+          vistaPrevia
+          onCerrarVistaPrevia={cerrarVistaPrevia}
+        />
+      )}
     </div>
   );
 };
@@ -2217,7 +2326,7 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
   /** Sector o feria del expediente, como se muestra en la lista */
   const lugar = (socio: SocioApertura) =>
     socio.ubicacion
-      ? `${socio.ubicacion.tipo === 'feria' ? 'Feria' : 'Sector'}: ${socio.ubicacion.codigo} · ${socio.ubicacion.nombre}`
+      ? `${socio.ubicacion.tipo === 'feria' ? 'Feria' : 'Sector'}: ${socio.ubicacion.codigo} · ${nombreUbicacion(socio.ubicacion)}`
       : 'Sin sector asignado';
 
   const etiquetaEstado = (estado: string) =>
