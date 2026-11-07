@@ -272,6 +272,12 @@ export interface DetalleColecta {
   monto_usd: string | number
   monto_bs: string | number
   concepto: string | null
+  /** Semanas que cubrio el renglon (null en ahorro y prestamo) */
+  semanas?: number | null
+  es_reintegro?: boolean
+  /** Hasta donde quedo cubierto el acuerdo con este cobro */
+  cobertura_ano_despues?: number | null
+  cobertura_semana_despues?: number | null
 }
 
 export interface FilaReporte {
@@ -524,6 +530,8 @@ export const obtenerColecta = async (id: number): Promise<Respuesta<Colecta>> =>
 export const listarColectas = async (params?: {
   fecha?: string
   solo_mias?: boolean
+  /** Solo los cobros de este socio: el reverso desde la pantalla de cobro */
+  socio_id?: number
 }): Promise<Respuesta<{ colectas: Colecta[]; resumen: ResumenDia }>> => {
   const response = await apiClient.get('/colecta', { params })
   return response.data

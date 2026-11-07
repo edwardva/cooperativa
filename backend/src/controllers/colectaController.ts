@@ -131,8 +131,12 @@ const registrarColectaSchema = z.object({
   /**
    * Semanas a cobrar: el driver de todo el cobro. En el sistema viejo es el
    * campo `sem`, que multiplica por igual ahorro, funeraria y salud.
+   *
+   * Puede ser 0: el socio deposita solo ahorro adicional en Bs, sin pagar
+   * semanas (observación de la cooperativa, 07/11). Entonces no se cubre
+   * ningún servicio.
    */
-  semanas: z.number().int().min(1).max(104).default(1),
+  semanas: z.number().int().min(0).max(104).default(1),
 
   /** Periodo cobrado (campos sem_cob / ano_cob del formulario original) */
   semana_cobro: z.number().int().min(1).max(53).optional(),
@@ -373,10 +377,15 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
           include: {
             tipo_cuenta: { select: { id: true, codigo: true, nombre: true } },
             // Movimientos recientes en la pantalla principal: el cliente pidió
-            // no tener que abrir otra ventana para verlos (req. 4)
+            // no tener que abrir otra ventana para verlos (req. 4). Son 5: con 8
+            // el panel crecía y había que bajar para ver el monto (07/11)
+            // Total de movimientos: el item que se muestra es el de la
+            // libreta (1 = el primero de la cuenta), no un contador de pantalla
+            _count: { select: { movimientos: true } },
             movimientos: {
-              orderBy: { fecha_movimiento: 'desc' },
-              take: 8,
+              // Mismo orden que la libreta impresa, al reves
+              orderBy: [{ fecha_movimiento: 'desc' }, { id: 'desc' }],
+              take: 5,
               select: {
                 id: true,
                 tipo_movimiento: true,
@@ -511,9 +520,11 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         // La libreta se lee de arriba hacia abajo: fecha, documento, importe y
         // el saldo con el que quedo la cuenta. El sistema actual marca el
         // cajero digital con el documento CAJ_DIG; aqui es un campo propio.
-        movimientos_recientes: cuenta.movimientos.map((m, indice, todos) => ({
-          // Item correlativo dentro de lo que se muestra, como en la libreta
-          item: todos.length - indice,
+        // De arriba hacia abajo, del más viejo al más reciente, como se lee la
+        // libreta: la cooperativa pidió que los items suban hacia abajo (07/11)
+        movimientos_recientes: [...cuenta.movimientos].reverse().map((m, indice, todos) => ({
+          // El mismo numero de item que trae la libreta impresa
+          item: cuenta._count.movimientos - (todos.length - 1 - indice),
           id: m.id,
           tipo: m.tipo_movimiento,
           monto_usd: Number(m.monto_usd),
@@ -708,7 +719,11 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         // Cantidad de acuerdos por servicio: en el sistema viejo son nu_fun y
         // nu_sal, los multiplicadores del subtotal
         cantidad_funeraria: acuerdosFuneraria.length,
-        cantidad_salud: acuerdosSalud.length,
+        // Salud cuenta ACUERDOS, no personas: un acuerdo lo comparten el
+        // titular y sus beneficiarios (observacion del 07/11)
+        cantidad_salud: new Set(
+          acuerdosSalud.map((a) => a.numero_acuerdo ?? `sin-numero-${a.referencia_id}`)
+        ).size,
         cuota_funeraria_usd: Math.max(
           0,
           ...acuerdosFuneraria.map((a) => tarifaDeAcuerdo(a, tarifas))
@@ -816,7 +831,8 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
 
 const calcularPaqueteSchema = z.object({
   socio_id: z.coerce.number().int().positive(),
-  semanas: z.coerce.number().int().min(1).max(104).default(1),
+  // 0 = solo ahorro adicional, sin semanas (ver registrarColectaSchema)
+  semanas: z.coerce.number().int().min(0).max(104).default(1),
   ahorro_adicional_usd: z.coerce.number().min(0).default(0),
   /** Lo que escribe el cajero en `Adic:`: bolívares. Si viene, manda sobre el de USD */
   ahorro_adicional_bs: z.coerce.number().min(0).default(0),
@@ -944,6 +960,14 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
         referencia_id: d.referencia_id,
         semanas: d.semanas ?? datos.semanas,
       }));
+
+    // Con 0 semanas solo entra dinero voluntario (ahorro adicional, abonos a
+    // préstamo, reintegros): un servicio cobrado sin semanas no cubriría nada
+    if (datos.semanas === 0 && cobrados.length > 0) {
+      throw new BadRequestError(
+        'Con 0 semanas a cobrar solo se registra ahorro adicional: indique las semanas para cobrar los servicios'
+      );
+    }
 
     const problemas = validarIntegridadDelPaquete({
       acuerdosDelSocio,
@@ -1348,7 +1372,7 @@ export const obtenerColecta = async (req: Request, res: Response): Promise<void>
 };
 
 /**
- * GET /api/colecta?fecha=YYYY-MM-DD&solo_mias=true
+ * GET /api/colecta?fecha=YYYY-MM-DD&solo_mias=true&socio_id=
  * Colectas del día; por defecto las del cajero autenticado.
  */
 export const listarColectas = async (req: Request, res: Response): Promise<void> => {
@@ -1362,12 +1386,19 @@ export const listarColectas = async (req: Request, res: Response): Promise<void>
     hasta.setHours(23, 59, 59, 999);
 
     const soloMias = String(req.query.solo_mias ?? 'true') === 'true';
+    // El reverso desde la pantalla de cobro muestra solo al socio que se esta
+    // atendiendo, no todo lo cobrado en el dia (observacion del 07/11)
+    const socioId = req.query.socio_id ? Number(req.query.socio_id) : null;
+    if (socioId !== null && (!Number.isInteger(socioId) || socioId <= 0)) {
+      throw new BadRequestError('Socio inválido');
+    }
 
     const where: Prisma.ColectaWhereInput = {
       fecha_colecta: { gte: desde, lte: hasta },
       // Las reversadas no suman: su efecto ya fue deshecho
       reversada: false,
       ...(soloMias ? { usuario_id: req.user!.userId } : {}),
+      ...(socioId ? { socio_id: socioId } : {}),
     };
 
     const [colectas, agregado] = await Promise.all([
@@ -1870,7 +1901,7 @@ export const reportePorServicio = async (req: Request, res: Response): Promise<v
         detalles: true,
         socio: { select: { codigo_socio: true, cedula: true, nombre: true, apellido: true } },
         usuario: { select: { username: true, nombre_completo: true } },
-        ubicacion: { select: { id: true, codigo: true, nombre: true } },
+        ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true } },
       },
     });
 
@@ -1937,7 +1968,7 @@ export const reportePorServicio = async (req: Request, res: Response): Promise<v
             monto_bs: Number(d.monto_bs),
             cajero: colecta.usuario.username,
             cajero_nombre: colecta.usuario.nombre_completo,
-            oficina: colecta.ubicacion?.nombre ?? null,
+            oficina: colecta.ubicacion ? etiquetaFeria(colecta.ubicacion) : null,
             canal: colecta.canal,
           };
         })
@@ -2050,7 +2081,7 @@ export const reporteCaja = async (req: Request, res: Response): Promise<void> =>
         detalles: true,
         socio: { select: { codigo_socio: true, nombre: true, apellido: true } },
         usuario: { select: { id: true, username: true, nombre_completo: true } },
-        ubicacion: { select: { id: true, codigo: true, nombre: true } },
+        ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true } },
       },
     });
 
@@ -2089,7 +2120,7 @@ export const reporteCaja = async (req: Request, res: Response): Promise<void> =>
 
     for (const colecta of colectas) {
       acumular(porOficina, String(colecta.ubicacion_id ?? 'sin-oficina'),
-        colecta.ubicacion?.nombre ?? 'Sin oficina asignada', colecta);
+        colecta.ubicacion ? etiquetaFeria(colecta.ubicacion) : 'Sin oficina asignada', colecta);
       acumular(porColector, String(colecta.usuario.id),
         colecta.usuario.nombre_completo || colecta.usuario.username, colecta);
       acumular(porCanal, colecta.canal,
@@ -2117,7 +2148,7 @@ export const reporteCaja = async (req: Request, res: Response): Promise<void> =>
       fecha: c.fecha_colecta,
       codigo_socio: c.socio.codigo_socio,
       socio: nombreEnMayusculas(`${c.socio.apellido}, ${c.socio.nombre}`),
-      oficina: c.ubicacion?.nombre ?? null,
+      oficina: c.ubicacion ? etiquetaFeria(c.ubicacion) : null,
       colector: c.usuario.nombre_completo || c.usuario.username,
       canal: c.canal,
       semanas: c.semanas_cobradas,

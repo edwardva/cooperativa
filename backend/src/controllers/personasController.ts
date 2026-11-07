@@ -66,7 +66,9 @@ const includeExpedientes = {
       codigo_socio: true,
       estado: true,
       fecha_inscripcion: true,
-      ubicacion: { select: { codigo: true, nombre: true } },
+      // Tipo y direccion: el alta avisa si ya hay un expediente vigente en un
+      // sector o en una feria, y con el nombre real del lugar
+      ubicacion: { select: { codigo: true, nombre: true, direccion: true, tipo: true } },
     },
     orderBy: { fecha_inscripcion: 'desc' },
   },
@@ -160,6 +162,7 @@ export const buscarPorIdentificacion = async (req: Request, res: Response): Prom
           direccion: true,
           estado: true,
           fecha_inscripcion: true,
+          ubicacion: { select: { codigo: true, nombre: true, direccion: true, tipo: true } },
         },
         orderBy: { fecha_inscripcion: 'desc' },
       }),

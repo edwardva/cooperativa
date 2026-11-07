@@ -416,18 +416,33 @@ export const obtenerSocioPorId = async (req: Request, res: Response): Promise<vo
         parentesco: true,
         acuerdos_funeraria: { where: { estado: { not: 'retirado' } }, select: { estado: true } },
         acuerdos_salud: { where: { estado: { not: 'retirado' } }, select: { estado: true } },
+        // En funeraria los beneficiarios cuelgan del acuerdo por
+        // `acuerdo_funeraria_id`; `acuerdos_funeraria` es solo el del titular.
+        // Mirar solo esa relacion dejaba fuera a todos los beneficiarios de
+        // funeraria (observacion del 07/11)
+        fecha_retiro_funeraria: true,
+        acuerdo_funeraria: { select: { estado: true } },
       },
     });
-    const agrupar = (servicio: 'acuerdos_funeraria' | 'acuerdos_salud') => {
+    /** Estados de los acuerdos en que figura la persona, por servicio */
+    const acuerdosDe = (b: (typeof conAcuerdos)[number], servicio: 'funeraria' | 'salud') => {
+      if (servicio === 'salud') return b.acuerdos_salud.map((a) => a.estado);
+      const estados = b.acuerdos_funeraria.map((a) => a.estado);
+      if (b.acuerdo_funeraria && !b.fecha_retiro_funeraria && b.acuerdo_funeraria.estado !== 'retirado') {
+        estados.push(b.acuerdo_funeraria.estado);
+      }
+      return estados;
+    };
+    const agrupar = (servicio: 'funeraria' | 'salud') => {
       const lista = conAcuerdos
-        .filter((b) => b[servicio].length > 0)
+        .filter((b) => acuerdosDe(b, servicio).length > 0)
         .map((b) => ({
           id: b.id,
           cedula: b.cedula,
           nombre: `${b.apellido}, ${b.nombre}`,
           parentesco: b.parentesco,
           // Con un acuerdo activo ya tiene el servicio
-          estado: b[servicio].some((a) => a.estado === 'activo') ? 'activo' : 'suspendido',
+          estado: acuerdosDe(b, servicio).some((e) => e === 'activo') ? 'activo' : 'suspendido',
         }));
       return {
         total: lista.length,
@@ -441,7 +456,7 @@ export const obtenerSocioPorId = async (req: Request, res: Response): Promise<vo
       success: true,
       data: {
         ...prepararSocioParaRespuesta(socio),
-        beneficiarios_por_servicio: { funeraria: agrupar('acuerdos_funeraria'), salud: agrupar('acuerdos_salud') },
+        beneficiarios_por_servicio: { funeraria: agrupar('funeraria'), salud: agrupar('salud') },
       },
     });
   } catch (error) {
@@ -1066,8 +1081,8 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const notaRetiro = `[RETIRO] Fecha: ${datos.fecha_retiro} | Motivo: ${datos.motivo_retiro} | Usuario: ${req.user!.userId}`;
-    const notasActualizadas = [socio.notas?.trim(), notaRetiro].filter(Boolean).join('\n');
+    // El retiro queda en el historial de estados, no en las notas del socio:
+    // la cooperativa pidio que Notas lleve solo lo que escribe la oficina (07/11)
 
     const multasDescontadas: { ano: number; cuenta: string }[] = [];
     const multasPendientes: number[] = [];
@@ -1103,7 +1118,6 @@ export const retirarSocio = async (req: Request, res: Response): Promise<void> =
         where: { id: socioId },
         data: {
           estado: 'retirado',
-          notas: notasActualizadas,
         },
       });
 
@@ -1237,14 +1251,13 @@ export const reactivarSocioRetirado = async (req: Request, res: Response): Promi
         excluirSocioId: socio.id,
       });
 
-      const nota = `[REACTIVADO] Fecha: ${new Date().toISOString().slice(0, 10)} | Motivo: ${motivo} | Usuario: ${req.user!.userId}`;
       const guardado = await tx.socio.update({
         where: { id: socioId },
         data: {
           estado: 'activo',
           suspendido_desde: null,
           suspendido_hasta: null,
-          notas: [socio.notas?.trim(), nota].filter(Boolean).join('\n'),
+          // La reactivacion queda en el historial de estados, no en las notas
         },
       });
 
@@ -1307,7 +1320,7 @@ export const buscarSocioPorExpediente = async (req: Request, res: Response): Pro
     const socio = await prisma.socio.findUnique({
       where: { codigo_socio: codigo },
       include: {
-        ubicacion: { select: { nombre: true } },
+        ubicacion: { select: { codigo: true, nombre: true, direccion: true } },
       },
     });
 

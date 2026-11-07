@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
@@ -28,6 +28,7 @@ import * as fondoService from '../services/fondoService'
 import type { BeneficiarioFondo } from '../services/fondoService'
 import { formatearFecha, normalizarFechaParaInput } from '../utils/formatters'
 import { validarCedula } from '../utils/cedula'
+import { nombreUbicacion } from '../utils/ubicacion'
 import { valorEnMayusculas } from '../utils/mayusculas'
 import { getErrorMessage } from '../services/api'
 import * as personasService from '../services/personasService'
@@ -82,6 +83,9 @@ interface Socio {
   persona_id?: number | null
 }
 
+/** Campos que se llenan solos al consultar la cedula */
+type CampoAutollenado = 'nombre' | 'apellido' | 'sexo' | 'fecha_nacimiento' | 'telefono' | 'email' | 'direccion'
+
 interface SocioFormData {
   codigo_socio: string
   cedula: string
@@ -108,6 +112,18 @@ interface BeneficiariosDeServicio {
   suspendidos: number
   lista: { id: number; cedula: string; nombre: string; parentesco: string; estado: 'activo' | 'suspendido' }[]
 }
+
+/**
+ * Notas que escribio la oficina. Antes el sistema agregaba aqui una linea por
+ * cada retiro o reactivacion ("[RETIRO] Fecha: ..."); eso ya esta en el
+ * historial de estados y la cooperativa pidio no verlo en Notas (07/11).
+ */
+const notasDeOficina = (notas: string | null | undefined): string =>
+  (notas ?? '')
+    .split('\n')
+    .filter((linea) => !/^\s*\[(RETIRO|REACTIVADO)\]/.test(linea))
+    .join('\n')
+    .trim()
 
 type MotivoRetiro = 'Fallecimiento' | 'Renuncia' | 'Pasividad' | 'Inasistencia a asambleas'
 
@@ -225,7 +241,12 @@ export const SociosPage = () => {
   const [socioSeleccionado, setSocioSeleccionado] = useState<Socio | null>(null)
   const [socioDetalle, setSocioDetalle] = useState<Socio | null>(null)
   // Familiares en el fondo de los trabajadores, sólo para consulta (se editan en Fondo)
-  const [familiaresFondo, setFamiliaresFondo] = useState<{ socioId: number; lista: BeneficiarioFondo[] } | null>(null)
+  const [familiaresFondo, setFamiliaresFondo] = useState<{
+    socioId: number
+    lista: BeneficiarioFondo[]
+    /** Esta en un sector de trabajadores de El Triunfo: la seccion se ve aunque este vacia */
+    esTrabajador: boolean
+  } | null>(null)
   const [beneficiariosPorServicio, setBeneficiariosPorServicio] = useState<{
     socioId: number
     funeraria: BeneficiariosDeServicio
@@ -275,6 +296,14 @@ export const SociosPage = () => {
   // Resultado de la consulta al CNE al salir del campo cedula (solo en altas)
   const [avisoCne, setAvisoCne] = useState<{ encontrado: boolean; texto: string } | null>(null)
   const [consultandoCne, setConsultandoCne] = useState(false)
+  // Lo que se lleno solo (CNE o ficha de la persona) y con que cedula. Si el
+  // operador corrige la cedula, eso se borra y se vuelve a consultar: antes se
+  // quedaban los nombres de la primera cedula (observacion del 07/11). Lo que
+  // el operador escribio a mano no se toca.
+  const autollenado = useRef<{ cedula: string; campos: Partial<Record<CampoAutollenado, string>> }>({
+    cedula: '',
+    campos: {},
+  })
   const [searchParams, setSearchParams] = useSearchParams()
   const alEnter = useEnterNavigation()
   const navigate = useNavigate()
@@ -523,6 +552,7 @@ export const SociosPage = () => {
   }
 
   const abrirModalNuevo = (cedula = '') => {
+    autollenado.current = { cedula: '', campos: {} }
     setModoEdicion(false)
     setSocioSeleccionado(null)
     setFormData({ ...emptyForm(), cedula })
@@ -552,7 +582,8 @@ export const SociosPage = () => {
       autorizado_nombre: socio.autorizado_nombre ?? '',
       autorizado_cedula: socio.autorizado_cedula ?? '',
       es_delegado: socio.es_delegado ?? false,
-      notas: socio.notas ?? '',
+      // Sin las lineas de retiro y reactivacion que antes escribia el sistema
+      notas: notasDeOficina(socio.notas),
       foto: socio.foto ?? undefined,
     })
     setTipoSocio(ubicaciones.find((u) => u.id === socio.ubicacion_id)?.tipo ?? 'sector')
@@ -568,9 +599,14 @@ export const SociosPage = () => {
     setFamiliaresFondo(null)
     setModalDetalleAbierto(true)
     if (hasPermission('fondo', 'read')) {
-      fondoService
-        .obtenerBeneficiarios(socio.id)
-        .then((lista) => setFamiliaresFondo({ socioId: socio.id, lista }))
+      Promise.all([fondoService.obtenerBeneficiarios(socio.id), fondoService.obtenerResumen()])
+        .then(([lista, resumen]) =>
+          setFamiliaresFondo({
+            socioId: socio.id,
+            lista,
+            esTrabajador: resumen.sectores_trabajadores.includes((socio.ubicacion?.codigo ?? '').toUpperCase()),
+          })
+        )
         .catch(() => {
           // Sin fondo visible no se muestra la sección
         })
@@ -601,8 +637,57 @@ export const SociosPage = () => {
     setModalRetiroAbierto(true)
   }
 
+  // Expedientes de la cedula consultada en el alta
+  const expedientesDeCedula = identificacion
+    ? identificacion.persona?.socios ?? identificacion.socios_sin_persona
+    : []
+  /** Expediente vigente en el mismo tipo de lugar: con el, el alta se rechaza */
+  const expedienteQueOcupa = expedientesDeCedula.find(
+    (e) => (e.estado === 'activo' || e.estado === 'suspendido') && (e.ubicacion?.tipo ?? 'sector') === tipoSocio
+  )
+  const soloRetirados =
+    expedientesDeCedula.length > 0 &&
+    expedientesDeCedula.every((e) => e.estado === 'retirado' || e.estado === 'invalido') &&
+    (identificacion?.persona?.trabajadores ?? []).every((t) => t.estado === 'retirado')
+
   const actualizarCampo = (campo: keyof SocioFormData, valor: string | boolean | number | null) => {
     setFormData((prev) => ({ ...prev, [campo]: valor }))
+  }
+
+  /**
+   * Llena con datos de la cedula consultada. Pisa lo vacio y lo que se habia
+   * llenado solo con otra cedula; nunca lo que escribio el operador.
+   */
+  const autollenar = (cedula: string, valores: Partial<Record<CampoAutollenado, string>>) => {
+    setFormData((prev) => {
+      // Si la cedula cambio mientras se consultaba, no se pisa nada
+      if (validarCedula(prev.cedula).cedula !== cedula) return prev
+      const previo = autollenado.current.cedula === cedula ? autollenado.current.campos : {}
+      const campos: Partial<Record<CampoAutollenado, string>> = { ...previo }
+      const siguiente = { ...prev }
+      for (const [campo, valor] of Object.entries(valores) as [CampoAutollenado, string][]) {
+        if (!valor) continue
+        if (!prev[campo] || prev[campo] === previo[campo]) {
+          siguiente[campo] = valor
+          campos[campo] = valor
+        }
+      }
+      autollenado.current = { cedula, campos }
+      return siguiente
+    })
+  }
+
+  /** Al corregir la cedula se quita lo que habia llenado la anterior */
+  const cambiarCedula = (valor: string) => {
+    const { campos } = autollenado.current
+    autollenado.current = { cedula: '', campos: {} }
+    setFormData((prev) => {
+      const siguiente = { ...prev, cedula: valor }
+      for (const [campo, puesto] of Object.entries(campos) as [CampoAutollenado, string][]) {
+        if (prev[campo] === puesto) siguiente[campo] = ''
+      }
+      return siguiente
+    })
   }
 
   /**
@@ -625,16 +710,15 @@ export const SociosPage = () => {
       const persona = r.data.persona
       yaRegistrada = !!persona
       if (persona) {
-        setFormData((prev) => ({
-          ...prev,
-          nombre: prev.nombre || persona.nombres,
-          apellido: prev.apellido || persona.apellidos,
-          sexo: prev.sexo || persona.sexo || '',
-          fecha_nacimiento: prev.fecha_nacimiento || (persona.fecha_nacimiento?.slice(0, 10) ?? ''),
-          telefono: prev.telefono || persona.telefono || '',
-          email: prev.email || persona.email || '',
-          direccion: prev.direccion || persona.direccion || '',
-        }))
+        autollenar(revision.cedula, {
+          nombre: persona.nombres,
+          apellido: persona.apellidos,
+          sexo: persona.sexo ?? '',
+          fecha_nacimiento: persona.fecha_nacimiento?.slice(0, 10) ?? '',
+          telefono: persona.telefono ?? '',
+          email: persona.email ?? '',
+          direccion: persona.direccion ?? '',
+        })
       }
     } catch {
       setIdentificacion(null)
@@ -656,12 +740,7 @@ export const SociosPage = () => {
         setAvisoCne({ encontrado: false, texto: 'La cédula no aparece en el CNE: escriba los datos a mano.' })
         return
       }
-      setFormData((prev) =>
-        // Si el operador cambio la cedula mientras tanto, no se pisa nada
-        validarCedula(prev.cedula).cedula !== cedula
-          ? prev
-          : { ...prev, nombre: prev.nombre || datos.nombres, apellido: prev.apellido || datos.apellidos }
-      )
+      autollenar(cedula, { nombre: datos.nombres, apellido: datos.apellidos })
       setAvisoCne({
         encontrado: true,
         texto: `Datos del CNE: ${datos.nombres} ${datos.apellidos}${datos.estado ? ` · ${datos.estado}` : ''}. Revíselos antes de guardar.`,
@@ -1375,7 +1454,7 @@ export const SociosPage = () => {
                     <input
                       value={formData.cedula}
                       onChange={(e) => {
-                        actualizarCampo('cedula', e.target.value.replace(/\D/g, ''))
+                        cambiarCedula(e.target.value.replace(/\D/g, ''))
                         setIdentificacion(null)
                         setAvisoCne(null)
                       }}
@@ -1479,14 +1558,36 @@ export const SociosPage = () => {
                   )}
 
                   {identificacion && !modoEdicion && (identificacion.persona || identificacion.socios_sin_persona.length > 0) && (
-                    <div className="space-y-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
-                      <p className="font-medium">
-                        {identificacion.persona
-                          ? `Persona ya registrada: ${identificacion.persona.nombres} ${identificacion.persona.apellidos}. Se completan sus datos.`
-                          : 'Esta cedula ya tiene expedientes de socio.'}
-                      </p>
-                      <p>{resumenExpedientes(identificacion)}</p>
-                    </div>
+                    expedienteQueOcupa ? (
+                      // Lo que hace fallar el alta, dicho antes de guardar y con
+                      // la salida: un expediente que sigue vigente en el mismo
+                      // tipo de lugar. Retirado, no estorba (observacion del 07/11)
+                      <div role="alert" className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+                        <p className="font-medium">
+                          Esta cédula ya tiene el expediente {expedienteQueOcupa.codigo_socio}{' '}
+                          <strong>{expedienteQueOcupa.estado}</strong> en{' '}
+                          {tipoSocio === 'feria' ? 'la feria' : 'el sector'}
+                          {expedienteQueOcupa.ubicacion ? ` ${nombreUbicacion(expedienteQueOcupa.ubicacion)}` : ''}.
+                        </p>
+                        <p>
+                          Una cédula solo puede estar en {tipoSocio === 'feria' ? 'una feria' : 'un sector'}. Si la
+                          persona se fue, primero retire ese expediente (menú del socio → Retirar socio) y después
+                          inscríbala con un expediente nuevo.
+                        </p>
+                        <p className="text-xs">{resumenExpedientes(identificacion)}</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+                        <p className="font-medium">
+                          {soloRetirados
+                            ? 'Esta persona estuvo inscrita y se retiró. Puede inscribirla de nuevo con un expediente nuevo; sus datos anteriores se cargan para revisarlos.'
+                            : identificacion.persona
+                              ? `Persona ya registrada: ${identificacion.persona.nombres} ${identificacion.persona.apellidos}. Se completan sus datos.`
+                              : 'Esta cedula ya tiene expedientes de socio.'}
+                        </p>
+                        <p>{resumenExpedientes(identificacion)}</p>
+                      </div>
+                    )
                   )}
                 </div>
 
@@ -1592,7 +1693,7 @@ export const SociosPage = () => {
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className={labelClass}>
-                    <span>Persona autorizada</span>
+                    <span>Autorizado</span>
                     <input
                       value={formData.autorizado_nombre}
                       onChange={(e) => actualizarCampo('autorizado_nombre', valorEnMayusculas(e))}
@@ -1626,7 +1727,7 @@ export const SociosPage = () => {
                 </label>
 
                 <label className={labelClass}>
-                  <span>Historial / notas</span>
+                  <span>Notas</span>
                   <textarea
                     value={formData.notas}
                     onChange={(e) => actualizarCampo('notas', valorEnMayusculas(e))}
@@ -1835,10 +1936,10 @@ export const SociosPage = () => {
                   </div>
                   <div className="sm:col-span-2">
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">
-                      {socioDetalle.ubicacion?.tipo === 'feria' ? 'Feria (sólo salud)' : 'Sector (particular)'}
+                      {socioDetalle.ubicacion?.tipo === 'feria' ? 'Feria' : 'Sector'}
                     </dt>
                     <dd className="mt-1 text-sm text-neutral-700">
-                      {socioDetalle.ubicacion ? `${socioDetalle.ubicacion.codigo} - ${socioDetalle.ubicacion.nombre}` : 'Sin sector'}
+                      {socioDetalle.ubicacion ? `${socioDetalle.ubicacion.codigo} - ${nombreUbicacion(socioDetalle.ubicacion)}` : 'Sin sector'}
                     </dd>
                   </div>
                   <div className="sm:col-span-2">
@@ -1862,7 +1963,7 @@ export const SociosPage = () => {
                 <p className={tituloSeccionClass}>Autorización y notas</p>
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Autorizado por</dt>
+                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Autorizado</dt>
                     <dd className="mt-1 text-sm text-neutral-700">{socioDetalle.autorizado_nombre || 'Sin dato'}</dd>
                   </div>
                   <div>
@@ -1871,7 +1972,7 @@ export const SociosPage = () => {
                   </div>
                   <div className="sm:col-span-2">
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Notas</dt>
-                    <dd className="mt-1 whitespace-pre-line text-sm text-neutral-700">{socioDetalle.notas || 'Sin notas'}</dd>
+                    <dd className="mt-1 whitespace-pre-line text-sm text-neutral-700">{notasDeOficina(socioDetalle.notas) || 'Sin notas'}</dd>
                   </div>
                 </dl>
               </div>
@@ -1909,9 +2010,18 @@ export const SociosPage = () => {
               </div>
             </div>
 
-            {familiaresFondo?.socioId === socioDetalle.id && familiaresFondo.lista.length > 0 && (
+            {/* Beneficiarios del fondo de trabajadores de El Triunfo: se ve
+                siempre para el trabajador, aunque no tenga ninguno cargado,
+                para que se sepa donde van (observacion del 07/11) */}
+            {familiaresFondo?.socioId === socioDetalle.id &&
+              (familiaresFondo.lista.length > 0 || familiaresFondo.esTrabajador) && (
               <div className={`mt-4 ${seccionClass}`}>
-                <p className={tituloSeccionClass}>Familiares en el fondo de trabajadores ({familiaresFondo.lista.length})</p>
+                <p className={tituloSeccionClass}>
+                  Beneficiarios del fondo de trabajadores ({familiaresFondo.lista.length})
+                </p>
+                {familiaresFondo.lista.length === 0 && (
+                  <p className="text-sm text-neutral-500">Sin beneficiarios registrados en el fondo.</p>
+                )}
                 <ul className="divide-y divide-neutral-100">
                   {familiaresFondo.lista.map((f) => (
                     <li key={f.id} className="flex justify-between gap-2 py-1.5 text-sm">

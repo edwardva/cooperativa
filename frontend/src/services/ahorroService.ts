@@ -98,7 +98,13 @@ export interface SocioApertura {
   nombre: string;
   apellido: string;
   estado: string;
-  ubicacion: { id: number; codigo: string; nombre: string; tipo: 'sector' | 'feria' } | null;
+  ubicacion: {
+    id: number;
+    codigo: string;
+    nombre: string;
+    direccion: string | null;
+    tipo: 'sector' | 'feria';
+  } | null;
   es_trabajador: boolean;
   cuentas_ahorro: {
     id: number;

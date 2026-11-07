@@ -17,6 +17,7 @@ import { atrasoPorSocio } from '../services/atrasoSociosService';
 import { responderError } from '../utils/responderError';
 import { BadRequestError, NotFoundError } from '../middleware/errorHandler';
 import { hoyDia } from '../utils/fechaDia';
+import { etiquetaFeria } from '../services/trabajadoresService';
 
 /** dd/mm/aaaa, que es como la lee el cajero */
 const comoFecha = (d: Date) => d.toISOString().slice(0, 10).split('-').reverse().join('/');
@@ -160,7 +161,7 @@ export const historialMorosidad = async (req: Request, res: Response): Promise<v
       orderBy: { fecha: 'desc' },
       take: limit,
       include: {
-        socio: { select: { codigo_socio: true, nombre: true, apellido: true, ubicacion: { select: { nombre: true } } } },
+        socio: { select: { codigo_socio: true, nombre: true, apellido: true, ubicacion: { select: { codigo: true, nombre: true, direccion: true } } } },
       },
     });
 
@@ -180,7 +181,7 @@ export const historialMorosidad = async (req: Request, res: Response): Promise<v
         socio_id: f.socio_id,
         codigo_socio: f.socio.codigo_socio,
         socio: `${f.socio.apellido}, ${f.socio.nombre}`,
-        feria: f.socio.ubicacion?.nombre ?? null,
+        feria: f.socio.ubicacion ? etiquetaFeria(f.socio.ubicacion) : null,
         estado_anterior: f.estado_anterior,
         estado_nuevo: f.estado_nuevo,
         motivo: f.motivo,

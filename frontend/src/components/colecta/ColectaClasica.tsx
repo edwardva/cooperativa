@@ -32,6 +32,7 @@
 
 import { Printer, RotateCcw, Search } from 'lucide-react'
 import { AvisoAbono } from './AvisoAbono'
+import { agruparPorAcuerdo, fechaCorta } from './presentacion'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import type {
@@ -89,8 +90,8 @@ interface Props {
 const money = (v: number | null | undefined, d = 2): string =>
   (v ?? 0).toLocaleString('es-VE', { minimumFractionDigits: d, maximumFractionDigits: d })
 
-const dia = (v: string | null | undefined): string =>
-  v ? new Date(v).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' }) : ''
+// Las fechas sin hora (el domingo "Hasta") van tal cual: ver fechaCorta
+const dia = (v: string | null | undefined): string => fechaCorta(v)
 
 /** Encabezado de tabla en el estilo denso de la pantalla vieja */
 const Th = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
@@ -157,7 +158,8 @@ export const ColectaClasica = ({
   const prestamos = socio?.prestamos ?? []
   const servicios = socio?.servicios ?? []
   const funeraria = servicios.filter((s) => s.servicio === 'funeraria')
-  const salud = servicios.filter((s) => s.servicio === 'salud')
+  // Un renglon por ACUERDO de salud, no por persona del grupo (07/11)
+  const salud = agruparPorAcuerdo(servicios.filter((s) => s.servicio === 'salud'))
 
   // Los movimientos de la libreta van todos juntos, como en la pantalla vieja:
   // alli la tabla es de la LIBRETA del socio, no de una cuenta en concreto
@@ -165,17 +167,19 @@ export const ColectaClasica = ({
     (c.movimientos_recientes ?? []).map((m) => ({ ...m, cuenta: c }))
   )
 
-  const subtotalDe = (tipo: string): number =>
-    (paquete?.renglones ?? [])
-      .filter((r) => r.servicio === tipo)
-      .reduce((t, r) => t + r.monto_usd, 0)
+  const renglonesDe = (tipo: string) => (paquete?.renglones ?? []).filter((r) => r.servicio === tipo)
+  const redondear = (v: number) => Math.round(v * 100) / 100
 
-  // El renglon de ahorro ya trae el adicional; el sub-total es solo el
-  // obligatorio (tarifa x semanas)
-  const renglonAhorro = paquete?.renglones.find((r) => r.servicio === 'ahorro')
-  const ahorroObligatorio = renglonAhorro
-    ? Math.round(renglonAhorro.tarifa_unitaria_usd * renglonAhorro.semanas * 100) / 100
-    : 0
+  /**
+   * Sub-total: lo de UNA semana, por todos los contratos del servicio
+   * (2 de funeraria = 1,50; 2 de salud = 1,92). Totales: lo que se cobra por
+   * todas las semanas (pedido del 08/11). En salud solo la primera persona de
+   * cada contrato lleva tarifa, asi que sumar las tarifas da una por contrato.
+   */
+  const porSemanaDe = (tipo: string): number =>
+    redondear(renglonesDe(tipo).reduce((t, r) => t + r.tarifa_unitaria_usd, 0))
+  const totalDe = (tipo: string): number =>
+    redondear(renglonesDe(tipo).reduce((t, r) => t + r.monto_usd, 0))
 
   // Sí/No sobre la última asamblea ya hecha. Confirmado el 23/10: son en
   // marzo, así que antes de marzo el servidor manda las del año anterior y
@@ -216,7 +220,8 @@ export const ColectaClasica = ({
           </Button>
           {/* Siempre visible: en la pantalla nueva estaba dentro de otra
               pestaña, y por eso la cooperativa lo daba por escondido */}
-          <Button variant="outline" onClick={onReverso}>
+          {/* Lleva a lo cobrado hoy a ESTE socio: no a todo el dia (07/11) */}
+          <Button variant="outline" onClick={onReverso} disabled={!socio}>
             <RotateCcw className="h-4 w-4" />
             Reverso
           </Button>
@@ -425,9 +430,13 @@ export const ColectaClasica = ({
               {salud.length === 0 ? (
                 <Vacio columnas={7} />
               ) : (
-                salud.map((s: ResumenServicio) => (
+                salud.map((s) => (
                   <tr key={s.referencia_id} className="odd:bg-neutral-50/60">
-                    <Td>{s.numero_acuerdo ?? s.titulo}</Td>
+                    <Td>
+                      <span title={`${s.personas} persona(s) en el acuerdo`}>
+                        {s.numero_acuerdo ?? s.titulo}
+                      </span>
+                    </Td>
                     <Td>{s.pagado_hasta?.ano ?? ''}</Td>
                     <Td>{s.pagado_hasta?.semana ?? ''}</Td>
                     <Td>{dia(s.fecha_ultimo_pago)}</Td>
@@ -478,8 +487,8 @@ export const ColectaClasica = ({
               <Th> </Th>
               <Th> </Th>
               {/* Montos en dolares: el total en Bs va abajo, en "Total a Cobrar" */}
-              <Th right>sub-total ($)</Th>
-              <Th right>Totales ($)</Th>
+              <Th right>sub-total 1 semana ($)</Th>
+              <Th right>Totales ({semanas} sem.) ($)</Th>
             </tr>
           </thead>
           <tbody>
@@ -500,9 +509,16 @@ export const ColectaClasica = ({
                     className="w-28"
                   />
                 </Campo>
+                {/* Ahorro suelto: con 0 semanas solo entra el adicional (07/11) */}
+                {semanas === 0 && (
+                  <span className="mt-0.5 block text-[11px] text-neutral-500">
+                    0 semanas: solo se registra el adicional, sin cobrar servicios
+                  </span>
+                )}
               </Td>
-              <Td right>{money(ahorroObligatorio)}</Td>
-              <Td right>{money(subtotalDe('ahorro'))}</Td>
+              {/* El adicional no es por semana: va solo en Totales */}
+              <Td right>{money(porSemanaDe('ahorro'))}</Td>
+              <Td right>{money(totalDe('ahorro'))}</Td>
             </tr>
             <tr>
               <Td>
@@ -513,8 +529,8 @@ export const ColectaClasica = ({
                   Cant: {socio?.cantidad_funeraria ?? 0}
                 </span>
               </Td>
-              <Td right>{money(subtotalDe('funeraria'))}</Td>
-              <Td right>{money(subtotalDe('funeraria'))}</Td>
+              <Td right>{money(porSemanaDe('funeraria'))}</Td>
+              <Td right>{money(totalDe('funeraria'))}</Td>
             </tr>
             <tr>
               <Td>
@@ -523,8 +539,8 @@ export const ColectaClasica = ({
               <Td>
                 <span className="text-xs text-neutral-500">Cant: {socio?.cantidad_salud ?? 0}</span>
               </Td>
-              <Td right>{money(subtotalDe('salud'))}</Td>
-              <Td right>{money(subtotalDe('salud'))}</Td>
+              <Td right>{money(porSemanaDe('salud'))}</Td>
+              <Td right>{money(totalDe('salud'))}</Td>
             </tr>
           </tbody>
         </table>

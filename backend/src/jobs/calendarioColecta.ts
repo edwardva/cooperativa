@@ -8,6 +8,7 @@
  */
 
 import cron from 'node-cron';
+import { ZONA_HORARIA } from '../zonaHoraria';
 import { mantenerCalendario } from '../services/semanasColectaService';
 import { logger } from '../utils/logger';
 
@@ -18,6 +19,6 @@ import { logger } from '../utils/logger';
 export function iniciarJobCalendarioColecta(): void {
   cron.schedule('1 0 * * 1', () => {
     void mantenerCalendario();
-  });
+  }, { timezone: ZONA_HORARIA });
   logger.info('Job de calendario de colecta programado (lunes 00:01)');
 }

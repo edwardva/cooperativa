@@ -16,6 +16,7 @@
  */
 
 import cron from 'node-cron';
+import { ZONA_HORARIA } from '../zonaHoraria';
 import { recalcularEstados } from '../services/estadoServiciosService';
 import { logger } from '../utils/logger';
 
@@ -34,7 +35,7 @@ async function ejecutarJobSemanal(): Promise<void> {
 export function iniciarJobSemanalSalud(): void {
   cron.schedule('5 0 * * 1', () => {
     void ejecutarJobSemanal();
-  });
+  }, { timezone: ZONA_HORARIA });
   logger.info('Job semanal de estado de servicios programado (lunes 00:05)');
 }
 

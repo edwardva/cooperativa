@@ -19,6 +19,7 @@ import { registrarAuditoria } from '../services/auditoriaService';
 import { bloquearSocio } from '../utils/bloqueos';
 import { normalizarCedula } from '../utils/cedula';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
+import { etiquetaFeria } from '../services/trabajadoresService';
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -607,7 +608,8 @@ export const buscarSociosApertura = async (req: Request, res: Response): Promise
         nombre: true,
         apellido: true,
         estado: true,
-        ubicacion: { select: { id: true, codigo: true, nombre: true, tipo: true } },
+        // La direccion es el nombre real del sector o feria (ver nombreUbicacion)
+        ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true, tipo: true } },
         // El trabajador de El Triunfo también es particular: se marca para
         // que el operador lo reconozca
         persona: {
@@ -1502,7 +1504,8 @@ export const obtenerEstadisticasPorFeria = async (req: Request, res: Response): 
           ubicacion: {
             id: ubicacion.id,
             codigo: ubicacion.codigo,
-            nombre: ubicacion.nombre,
+            // El nombre real va en la direccion (ver etiquetaFeria)
+            nombre: etiquetaFeria(ubicacion),
           },
           socios_activos: totalSocios,
           cuentas: {
@@ -1572,6 +1575,7 @@ export const obtenerResumenPorFeria = async (_req: Request, res: Response): Prom
         id: true,
         codigo: true,
         nombre: true,
+        direccion: true,
         _count: {
           select: { socios: true },
         },
@@ -1600,7 +1604,8 @@ export const obtenerResumenPorFeria = async (_req: Request, res: Response): Prom
           ubicacion: {
             id: ubicacion.id,
             codigo: ubicacion.codigo,
-            nombre: ubicacion.nombre,
+            // El nombre real va en la direccion (ver etiquetaFeria)
+            nombre: etiquetaFeria(ubicacion),
           },
           total_socios: ubicacion._count.socios,
           total_cuentas: resultado._count,
