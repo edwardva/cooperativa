@@ -35,12 +35,20 @@ export interface Persona extends DatosPersona {
   created_at: string
 }
 
+/** Sector o feria de un expediente */
+export interface UbicacionExpediente {
+  codigo: string
+  nombre: string
+  direccion?: string | null
+  tipo?: 'sector' | 'feria'
+}
+
 export interface ExpedienteAhorrista {
   id: number
   codigo_socio: string
-  estado: 'activo' | 'retirado' | 'invalido'
+  estado: 'activo' | 'suspendido' | 'retirado' | 'invalido'
   fecha_inscripcion: string
-  ubicacion?: { codigo: string; nombre: string } | null
+  ubicacion?: UbicacionExpediente | null
 }
 
 export interface ExpedienteTrabajador {
@@ -71,6 +79,7 @@ export interface SocioSinPersona {
   direccion: string | null
   estado: string
   fecha_inscripcion: string
+  ubicacion?: UbicacionExpediente | null
 }
 
 export interface ResultadoIdentificacion {

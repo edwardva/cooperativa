@@ -25,7 +25,7 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { atrasoPorSocio } from './atrasoSociosService';
-import { hoyDia, textoDia } from '../utils/fechaDia';
+import { hoyDia } from '../utils/fechaDia';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -211,17 +211,13 @@ export const revisarMorosidad = async (
   if (aplicar) {
     for (const cambio of cambios) {
       if (cambio.accion === 'retirar') {
-        const socio = datos.get(cambio.socio_id)!;
-        const nota =
-          `[RETIRO] Fecha: ${textoDia(hasta)} | Motivo: ${cambio.motivo} | Automático` +
-          (cambio.prestamos_abiertos ? ' | Debe préstamo: llevar a la reunión de delegados' : '');
+        // El retiro queda en el historial de estados, no en las notas (07/11)
         await db.socio.update({
           where: { id: cambio.socio_id },
           data: {
             estado: 'retirado',
             suspendido_desde: null,
             suspendido_hasta: null,
-            notas: [socio.notas?.trim(), nota].filter(Boolean).join('\n'),
           },
         });
         // Pierde sus acuerdos de salud y funeraria
@@ -244,7 +240,10 @@ export const revisarMorosidad = async (
           socio_id: cambio.socio_id,
           estado_anterior: cambio.estado_anterior,
           estado_nuevo: cambio.estado_nuevo,
-          motivo: cambio.motivo,
+          // Lo que antes iba en las notas del socio: si debe un prestamo
+          motivo: cambio.prestamos_abiertos
+            ? `${cambio.motivo} · Debe préstamo: llevar a la reunión de delegados`
+            : cambio.motivo,
           origen: 'automatico',
           semanas_atraso: cambio.semanas_atraso,
           suspendido_hasta: cambio.suspendido_hasta,
