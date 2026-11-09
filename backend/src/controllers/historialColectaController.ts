@@ -27,6 +27,7 @@ export interface MovimientoHistorial {
   monto_bs: number;
   /** Saldo después del movimiento (ahorro) */
   saldo_bs: number | null;
+  saldo_usd: number | null;
   /** Semana hasta la que quedó cubierto (funeraria y salud) */
   cubre_hasta: string | null;
   /** Funeraria y salud: si el acuerdo quedó suspendido, desde qué fecha (AAAA-MM-DD) */
@@ -50,6 +51,7 @@ export const historialRapido = async (req: Request, res: Response): Promise<void
     let titulo = '';
     let resumen = '';
     let movimientos: MovimientoHistorial[] = [];
+    let moneda: 'bs' | 'usd' = 'bs';
 
     if (servicio === 'prestamo') {
       const prestamo = await prisma.prestamo.findUnique({
@@ -73,6 +75,7 @@ export const historialRapido = async (req: Request, res: Response): Promise<void
         monto_usd: n(a.monto_usd),
         monto_bs: n(a.monto_bs),
         saldo_bs: null,
+        saldo_usd: null,
         cubre_hasta: null,
         suspension: null,
         reversado: a.reversado,
@@ -85,12 +88,19 @@ export const historialRapido = async (req: Request, res: Response): Promise<void
         select: {
           numero_cuenta: true,
           saldo_bs: true,
+          saldo_usd: true,
+          tipo_cuenta: { select: { moneda: true } },
           movimientos: { orderBy: [{ fecha_movimiento: 'desc' }, { id: 'desc' }], take: LIMITE },
         },
       });
       if (!cuenta) throw new NotFoundError('Cuenta no encontrada');
-      titulo = `Cuenta de ahorro ${cuenta.numero_cuenta}`;
-      resumen = `Saldo: Bs ${n(cuenta.saldo_bs).toFixed(2)}`;
+      // La cuenta en divisas se lleva en dólares: su saldo es el de $ (10/11)
+      moneda = cuenta.tipo_cuenta.moneda === 'usd' ? 'usd' : 'bs';
+      titulo = `Cuenta de ahorro ${cuenta.numero_cuenta}${moneda === 'usd' ? ' (divisas)' : ''}`;
+      resumen =
+        moneda === 'usd'
+          ? `Saldo: $${n(cuenta.saldo_usd).toFixed(2)}`
+          : `Saldo: Bs ${n(cuenta.saldo_bs).toFixed(2)}`;
       movimientos = cuenta.movimientos.map((m) => ({
         fecha: m.fecha_movimiento.toISOString(),
         tipo: m.tipo_movimiento === 'retiro' ? 'Retiro' : 'Depósito',
@@ -98,6 +108,7 @@ export const historialRapido = async (req: Request, res: Response): Promise<void
         monto_usd: n(m.monto_usd),
         monto_bs: n(m.monto_bs),
         saldo_bs: m.saldo_nuevo_bs === null ? null : n(m.saldo_nuevo_bs),
+        saldo_usd: n(m.saldo_nuevo_usd),
         cubre_hasta: null,
         suspension: null,
         reversado: false,
@@ -190,7 +201,7 @@ export const historialRapido = async (req: Request, res: Response): Promise<void
       movimientos = conSuspensionActual([...porCobro.values()], acuerdo).slice(0, LIMITE);
     }
 
-    res.json({ success: true, data: { servicio, titulo, resumen, movimientos } });
+    res.json({ success: true, data: { servicio, titulo, resumen, moneda, movimientos } });
   } catch (error) {
     responderError(res, error, 'Error al consultar el historial');
   }
@@ -228,6 +239,7 @@ const conSuspensionActual = (
     monto_usd: 0,
     monto_bs: 0,
     saldo_bs: null,
+    saldo_usd: null,
     cubre_hasta: null,
     suspension: fecha,
     reversado: false,
@@ -257,6 +269,7 @@ const movimientoDeServicio = (m: {
   monto_usd: n(m.monto_usd),
   monto_bs: n(m.monto_bs),
   saldo_bs: null,
+  saldo_usd: null,
   cubre_hasta:
     m.ano_cobertura && m.semana_cobertura
       ? formatearPeriodo({ ano: m.ano_cobertura, semana: m.semana_cobertura })

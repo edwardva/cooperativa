@@ -53,6 +53,8 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
   }, [consulta])
 
   const conSaldo = historial?.servicio === 'ahorro'
+  // Cuenta en divisas: el saldo que importa es el de $ (10/11)
+  const enDivisas = historial?.moneda === 'usd'
   const conCobertura = historial?.servicio === 'funeraria' || historial?.servicio === 'salud'
 
   return (
@@ -85,7 +87,7 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
                   {conCobertura && <th className="px-3 py-2 text-left">Suspensión</th>}
                   <th className="px-3 py-2 text-right">Bs</th>
                   <th className="px-3 py-2 text-right">$</th>
-                  {conSaldo && <th className="px-3 py-2 text-right">Saldo Bs</th>}
+                  {conSaldo && <th className="px-3 py-2 text-right">{enDivisas ? 'Saldo $' : 'Saldo Bs'}</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
@@ -108,7 +110,9 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
                     <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{money(m.monto_usd)}</td>
                     {conSaldo && (
                       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
-                        {m.saldo_bs === null ? '' : money(m.saldo_bs)}
+                        {enDivisas
+                          ? m.saldo_usd === null ? '' : money(m.saldo_usd)
+                          : m.saldo_bs === null ? '' : money(m.saldo_bs)}
                       </td>
                     )}
                   </tr>
