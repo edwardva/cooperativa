@@ -2,15 +2,17 @@
  * Movimientos de colecta del dia, con reverso.
  *
  * En el sistema viejo el reverso era una pantalla aparte del menu
- * (`colecta/rev_prestamos`). Aca vive junto al listado del dia: el cajero ve lo
- * que cobro y deshace desde la misma fila, sin buscar de nuevo.
+ * (`colecta/rev_prestamos`). Aca vive junto al listado del dia.
+ *
+ * Para no reversar el cobro de otra persona por error (09/11): arriba va solo
+ * el ultimo cobro registrado, y el resto del dia aparece al buscarlo por
+ * nombre, cedula, expediente o N°, o al pedir la lista completa a proposito.
  */
 
-import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Undo2, AlertTriangle, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Loader2, Undo2, AlertTriangle, X, Search, Clock } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
-import { Badge } from '../ui/Badge'
 import * as colectaService from '../../services/colectaService'
 import type { Colecta } from '../../services/colectaService'
 import { getErrorMessage } from '../../services/api'
@@ -21,6 +23,25 @@ const money = (valor: number): string =>
 
 const hora = (iso: string): string =>
   new Date(iso).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })
+
+/** Texto sin acentos ni mayusculas, para buscar "Peña" escribiendo "pena" */
+const normalizar = (texto: string): string =>
+  texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+
+const coincide = (colecta: Colecta, consulta: string): boolean => {
+  const q = normalizar(consulta).replace(/^#/, '')
+  if (!q) return true
+  const socio = colecta.socio
+  const campos = [
+    String(colecta.id),
+    socio?.codigo_socio ?? '',
+    socio?.cedula ?? '',
+    `${socio?.apellido ?? ''} ${socio?.nombre ?? ''}`,
+    `${socio?.nombre ?? ''} ${socio?.apellido ?? ''}`,
+    colecta.referencia ?? '',
+  ].map(normalizar)
+  return campos.some((c) => c.includes(q))
+}
 
 const etiquetaServicio: Record<string, string> = {
   ahorro: 'Ahorro',
@@ -50,6 +71,10 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
 
+  const [busqueda, setBusqueda] = useState('')
+  // La lista completa del dia solo se ve si el cajero la pide
+  const [verTodos, setVerTodos] = useState(false)
+
   const [aReversar, setAReversar] = useState<Colecta | null>(null)
   const [motivo, setMotivo] = useState('')
   const [reversando, setReversando] = useState(false)
@@ -73,6 +98,24 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
   useEffect(() => {
     void cargar()
   }, [cargar])
+
+  useEffect(() => {
+    setBusqueda('')
+    setVerTodos(false)
+  }, [socio])
+
+  // El backend los devuelve del mas reciente al mas viejo
+  const ultimo = colectas[0] ?? null
+  const resto = colectas.slice(1)
+  // Con un socio en pantalla sus cobros del dia son pocos: se muestran todos
+  const mostrarLista = Boolean(socio) || verTodos || busqueda.trim() !== ''
+  const filtradas = useMemo(() => resto.filter((c) => coincide(c, busqueda)), [resto, busqueda])
+
+  const abrirReverso = (colecta: Colecta) => {
+    setAReversar(colecta)
+    setMotivo('')
+    setErrorReverso('')
+  }
 
   const confirmarReverso = async () => {
     if (!aReversar) return
@@ -111,6 +154,80 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
           )}
         </div>
       )}
+      {/* ULTIMO COBRO: el caso comun, reversar lo que se acaba de cobrar */}
+      {!cargando && ultimo && (
+        <Card className="mb-4 border-primary-200 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-primary-700">
+                <Clock className="h-3.5 w-3.5" />
+                Último cobro registrado · {hora(ultimo.fecha_colecta)}
+              </p>
+              <p className="mt-1 text-base font-semibold text-neutral-900">
+                {ultimo.socio?.apellido}, {ultimo.socio?.nombre}
+              </p>
+              <p className="text-xs text-neutral-500">
+                Exp. {ultimo.socio?.codigo_socio} · C.I. {ultimo.socio?.cedula} · N° #{ultimo.id}
+                {ultimo.numero_del_dia != null && <> · Mov. {ultimo.numero_del_dia} del socio hoy</>}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {ultimo.detalles.map((d) => (
+                  <span
+                    key={d.id}
+                    className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700"
+                  >
+                    {etiquetaServicio[d.servicio] ?? d.servicio} ${money(Number(d.monto_usd))}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-bold tabular-nums text-neutral-900">
+                ${money(Number(ultimo.monto_total_usd))}
+              </p>
+              <p className="text-xs tabular-nums text-neutral-500">
+                {money(Number(ultimo.monto_total_bs))} Bs
+              </p>
+              {puedeReversar && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => abrirReverso(ultimo)}
+                >
+                  <Undo2 className="h-4 w-4" />
+                  Reversar último cobro
+                </Button>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* OTROS COBROS DEL DIA: se buscan, no se listan de entrada */}
+      {!cargando && resto.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <div className="relative min-w-[16rem] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar otro cobro de hoy: nombre, cédula, expediente o N°"
+              className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+          {!socio && (
+            <button
+              onClick={() => setVerTodos((v) => !v)}
+              className="text-xs font-medium text-primary-700 underline hover:no-underline"
+            >
+              {verTodos ? 'Ocultar la lista' : `Ver los ${resto.length} cobros anteriores de hoy`}
+            </button>
+          )}
+        </div>
+      )}
+
+      {(cargando || colectas.length === 0 || (mostrarLista && resto.length > 0)) && (
       <Card padding="none" className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-neutral-200">
@@ -142,20 +259,33 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
                       : 'Todavia no hay cobros registrados hoy'}
                   </td>
                 </tr>
+              ) : filtradas.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-sm text-neutral-500">
+                    Ningún otro cobro de hoy coincide con «{busqueda}»
+                  </td>
+                </tr>
               ) : (
-                colectas.map((colecta) => (
+                filtradas.map((colecta) => (
                   <tr key={colecta.id} className="transition-colors hover:bg-neutral-50">
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-neutral-600">
                       {hora(colecta.fecha_colecta)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 font-mono text-sm font-semibold text-neutral-900">
                       #{colecta.id}
+                      {colecta.numero_del_dia != null && (
+                        <span className="block text-xs font-normal text-neutral-500">
+                          Mov. {colecta.numero_del_dia} del socio
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <p className="text-sm font-medium text-neutral-900">
                         {colecta.socio?.apellido}, {colecta.socio?.nombre}
                       </p>
-                      <p className="text-xs text-neutral-500">{colecta.socio?.codigo_socio}</p>
+                      <p className="text-xs text-neutral-500">
+                        Exp. {colecta.socio?.codigo_socio} · C.I. {colecta.socio?.cedula}
+                      </p>
                       {(colecta.referencia || colecta.observaciones) && (
                         <p className="mt-0.5 max-w-xs text-xs text-neutral-600">
                           {colecta.referencia && <>Ref.: {colecta.referencia}</>}
@@ -185,23 +315,11 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
                       </p>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right">
-                      {colecta.reversada ? (
-                        <Badge variant="neutral">Reversada</Badge>
-                      ) : (
-                        puedeReversar && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setAReversar(colecta)
-                              setMotivo('')
-                              setErrorReverso('')
-                            }}
-                          >
-                            <Undo2 className="h-4 w-4" />
-                            Reversar
-                          </Button>
-                        )
+                      {puedeReversar && (
+                        <Button variant="ghost" size="sm" onClick={() => abrirReverso(colecta)}>
+                          <Undo2 className="h-4 w-4" />
+                          Reversar
+                        </Button>
                       )}
                     </td>
                   </tr>
@@ -211,6 +329,7 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
           </table>
         </div>
       </Card>
+      )}
 
       {error && (
         <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -228,7 +347,8 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
                   Reversar colecta #{aReversar.id}
                 </h2>
                 <p className="mt-1 text-sm text-neutral-500">
-                  {aReversar.socio?.apellido}, {aReversar.socio?.nombre} · $
+                  {aReversar.socio?.apellido}, {aReversar.socio?.nombre} · C.I.{' '}
+                  {aReversar.socio?.cedula} · {hora(aReversar.fecha_colecta)} · $
                   {money(Number(aReversar.monto_total_usd))}
                 </p>
               </div>

@@ -22,6 +22,7 @@ import { History, ChevronDown, ChevronUp, ShieldAlert } from 'lucide-react'
 import { Badge } from '../ui/Badge'
 import { Card } from '../ui/Card'
 import type { HistorialEstado } from '../../services/colectaService'
+import { fechaCorta } from './presentacion'
 
 interface Props {
   historial: HistorialEstado[]
@@ -29,8 +30,8 @@ interface Props {
   vecesSuspendido: number
 }
 
-const fecha = (valor: string): string =>
-  new Date(valor).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+// "Suspendido hasta" es una fecha sin hora: con new Date salia el dia anterior
+const fecha = (valor: string): string => fechaCorta(valor, true)
 
 /** El color dice de un vistazo si el movimiento fue a peor o a mejor */
 const insignia = (h: HistorialEstado) => {

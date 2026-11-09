@@ -28,6 +28,7 @@ import * as fondoService from '../services/fondoService'
 import type { BeneficiarioFondo } from '../services/fondoService'
 import { formatearFecha, normalizarFechaParaInput } from '../utils/formatters'
 import { validarCedula } from '../utils/cedula'
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 import { nombreUbicacion } from '../utils/ubicacion'
 import { valorEnMayusculas } from '../utils/mayusculas'
 import { getErrorMessage } from '../services/api'
@@ -65,6 +66,8 @@ interface Socio {
   suspendido_desde?: string | null
   suspendido_hasta?: string | null
   es_delegado: boolean
+  /** Empleado de la cooperativa El Triunfo (no el trabajador de feria) */
+  es_trabajador_triunfo?: boolean
   ubicacion_id: number | null
   autorizado_nombre: string | null
   autorizado_cedula: string | null
@@ -101,6 +104,7 @@ interface SocioFormData {
   autorizado_nombre: string
   autorizado_cedula: string
   es_delegado: boolean
+  es_trabajador_triunfo: boolean
   notas: string
   foto?: string // Base64 de la foto
 }
@@ -192,6 +196,7 @@ const emptyForm = (): SocioFormData => ({
   autorizado_nombre: '',
   autorizado_cedula: '',
   es_delegado: false,
+  es_trabajador_triunfo: false,
   notas: '',
 })
 
@@ -230,6 +235,8 @@ export const SociosPage = () => {
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroUbicacion, setFiltroUbicacion] = useState('')
   const [filtroDelegado, setFiltroDelegado] = useState(false)
+  // Sólo los trabajadores de El Triunfo (pedido del 09/11)
+  const [filtroTriunfo, setFiltroTriunfo] = useState(false)
   // Lo que se manda a la impresora: todos los socios del filtro, no sólo la página
   const [impresion, setImpresion] = useState<{ soloDelegados: boolean; socios: sociosService.Socio[] } | null>(null)
   const [preparandoImpresion, setPreparandoImpresion] = useState<'listado' | 'delegados' | null>(null)
@@ -367,6 +374,7 @@ export const SociosPage = () => {
           estado: filtroEstado || undefined,
           ubicacion_id: filtroUbicacion ? Number(filtroUbicacion) : undefined,
           es_delegado: filtroDelegado || undefined,
+          es_trabajador_triunfo: filtroTriunfo || undefined,
         })
 
         if (sociosResponse.success) {
@@ -382,7 +390,7 @@ export const SociosPage = () => {
     }
 
     void cargarSocios()
-  }, [paginaActual, busqueda, filtroEstado, filtroUbicacion, filtroDelegado, registrosPorPagina])
+  }, [paginaActual, busqueda, filtroEstado, filtroUbicacion, filtroDelegado, filtroTriunfo, registrosPorPagina])
 
   // Con los datos ya en pantalla se abre el diálogo de impresión, y al cerrarlo
   // se descarta el listado
@@ -406,6 +414,7 @@ export const SociosPage = () => {
         estado: filtroEstado || undefined,
         ubicacion_id: filtroUbicacion ? Number(filtroUbicacion) : undefined,
         es_delegado: soloDelegados || filtroDelegado || undefined,
+        es_trabajador_triunfo: filtroTriunfo || undefined,
       })
       if (respuesta.data.length === 0) {
         setErrorImpresion(soloDelegados ? 'No hay delegados con los filtros actuales.' : 'No hay socios con los filtros actuales.')
@@ -447,8 +456,9 @@ export const SociosPage = () => {
       const matchEstado = !filtroEstado || socio.estado === filtroEstado
       const matchUbicacion = !filtroUbicacion || socio.ubicacion_id === Number(filtroUbicacion)
       const matchDelegado = !filtroDelegado || socio.es_delegado
+      const matchTriunfo = !filtroTriunfo || Boolean(socio.es_trabajador_triunfo)
 
-      return matchBusqueda && matchEstado && matchUbicacion && matchDelegado
+      return matchBusqueda && matchEstado && matchUbicacion && matchDelegado && matchTriunfo
     })
 
     // Aplicar ordenamiento
@@ -478,7 +488,7 @@ export const SociosPage = () => {
     })
 
     return resultado
-  }, [socios, busqueda, filtroEstado, filtroUbicacion, filtroDelegado, sortField, sortOrder])
+  }, [socios, busqueda, filtroEstado, filtroUbicacion, filtroDelegado, filtroTriunfo, sortField, sortOrder])
 
   // Función para manejar el ordenamiento
   const handleSort = (field: string) => {
@@ -503,6 +513,7 @@ export const SociosPage = () => {
         estado: filtroEstado || undefined,
         ubicacion_id: filtroUbicacion ? Number(filtroUbicacion) : undefined,
         es_delegado: filtroDelegado || undefined,
+        es_trabajador_triunfo: filtroTriunfo || undefined,
       })
 
       if (sociosResponse.success) {
@@ -582,6 +593,7 @@ export const SociosPage = () => {
       autorizado_nombre: socio.autorizado_nombre ?? '',
       autorizado_cedula: socio.autorizado_cedula ?? '',
       es_delegado: socio.es_delegado ?? false,
+      es_trabajador_triunfo: socio.es_trabajador_triunfo ?? false,
       // Sin las lineas de retiro y reactivacion que antes escribia el sistema
       notas: notasDeOficina(socio.notas),
       foto: socio.foto ?? undefined,
@@ -592,6 +604,23 @@ export const SociosPage = () => {
     setModalAbierto(true)
   }
 
+  // Marcar o desmarcar al trabajador de El Triunfo sin abrir el formulario
+  const [guardandoTriunfo, setGuardandoTriunfo] = useState(false)
+  const cambiarTrabajadorTriunfo = async (socio: Socio, valor: boolean) => {
+    setGuardandoTriunfo(true)
+    try {
+      await sociosService.actualizarSocio(socio.id, { es_trabajador_triunfo: valor })
+      const marcar = (s: Socio) => (s.id === socio.id ? { ...s, es_trabajador_triunfo: valor } : s)
+      setSocios((lista) => lista.map(marcar))
+      setSocioDetalle((actual) => (actual ? marcar(actual) : actual))
+      setFamiliaresFondo((f) => (f && f.socioId === socio.id ? { ...f, esTrabajador: valor } : f))
+    } catch (err) {
+      window.alert(getErrorMessage(err) || 'No se pudo guardar el cambio')
+    } finally {
+      setGuardandoTriunfo(false)
+    }
+  }
+
   const abrirModalDetalle = (socio: Socio) => {
     setMenuAbiertoId(null)
     setSocioDetalle(socio)
@@ -599,12 +628,13 @@ export const SociosPage = () => {
     setFamiliaresFondo(null)
     setModalDetalleAbierto(true)
     if (hasPermission('fondo', 'read')) {
-      Promise.all([fondoService.obtenerBeneficiarios(socio.id), fondoService.obtenerResumen()])
-        .then(([lista, resumen]) =>
+      fondoService
+        .obtenerBeneficiarios(socio.id)
+        .then((lista) =>
           setFamiliaresFondo({
             socioId: socio.id,
             lista,
-            esTrabajador: resumen.sectores_trabajadores.includes((socio.ubicacion?.codigo ?? '').toUpperCase()),
+            esTrabajador: Boolean(socio.es_trabajador_triunfo),
           })
         )
         .catch(() => {
@@ -924,6 +954,7 @@ export const SociosPage = () => {
       label: 'Delegados',
       value: impresion?.soloDelegados || filtroDelegado ? 'Sólo delegados' : 'Todos',
     },
+    ...(filtroTriunfo ? [{ label: 'Trabajadores', value: 'Sólo trabajadores de El Triunfo' }] : []),
   ]
 
   // Se imprime lo que trajo `imprimir` (todos los del filtro); la página en
@@ -938,6 +969,7 @@ export const SociosPage = () => {
     socio.estado,
     socio.ubicacion ? nombreFeria(socio.ubicacion as Ubicacion) : 'Sin sector ni feria',
     socio.es_delegado ? 'Sí' : 'No',
+    socio.es_trabajador_triunfo ? 'Sí' : 'No',
   ])
 
   return (
@@ -952,7 +984,7 @@ export const SociosPage = () => {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => { setBusqueda(''); setFiltroEstado(''); setFiltroUbicacion(''); setFiltroDelegado(false); setPaginaActual(1) }}>
+            <Button variant="outline" onClick={() => { setBusqueda(''); setFiltroEstado(''); setFiltroUbicacion(''); setFiltroDelegado(false); setFiltroTriunfo(false); setPaginaActual(1) }}>
               Limpiar filtros
             </Button>
             <Button variant="secondary" onClick={() => void imprimir(false)} disabled={preparandoImpresion !== null}>
@@ -990,7 +1022,7 @@ export const SociosPage = () => {
           { label: 'Activos', value: String(estadisticas.sociosActivos) },
           { label: 'Retirados', value: String(estadisticas.sociosRetirados) },
         ]}
-        columnas={['Expediente', 'Cédula', 'Socio', 'Teléfono', 'Fecha ingreso', 'Estado', 'Sector o feria', 'Delegado']}
+        columnas={['Expediente', 'Cédula', 'Socio', 'Teléfono', 'Fecha ingreso', 'Estado', 'Sector o feria', 'Delegado', 'Trab. El Triunfo']}
         columnasMayusculas={['Socio']}
         filas={filasImpresion}
       />
@@ -1018,7 +1050,7 @@ export const SociosPage = () => {
       <section className="grid grid-cols-1 gap-5">
         <div className="space-y-4">
           <Card className="border-neutral-200">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-6">
               <div className="relative md:col-span-2">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                 <input
@@ -1072,6 +1104,16 @@ export const SociosPage = () => {
                   className="h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-200"
                 />
                 Sólo delegados
+              </label>
+
+              <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-sm text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={filtroTriunfo}
+                  onChange={(e) => { setFiltroTriunfo(e.target.checked); setPaginaActual(1) }}
+                  className="h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-200"
+                />
+                Sólo trabajadores El Triunfo
               </label>
             </div>
           </Card>
@@ -1169,7 +1211,7 @@ export const SociosPage = () => {
                               className="mt-1 ml-1 inline-flex rounded-full bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700"
                               title={`Trabajador de feria ${socio.trabajador.codigo}${socio.trabajador.feria ? `: ${socio.trabajador.feria}` : ''}`}
                             >
-                              Trabajador
+                              Trabajador de feria
                             </span>
                           )}
                         </td>
@@ -1178,6 +1220,7 @@ export const SociosPage = () => {
                           <p className="font-medium text-neutral-900">
                             {socio.apellido}, {socio.nombre}
                           </p>
+                          {socio.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto className="my-0.5" />}
                           <p className="text-xs text-neutral-500">{socio.ubicacion?.direccion ?? 'Sin feria'}</p>
                         </td>
                         <td className="px-4 py-3">
@@ -1726,6 +1769,22 @@ export const SociosPage = () => {
                   </span>
                 </label>
 
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/50 px-4 py-3 transition hover:border-amber-300">
+                  <input
+                    type="checkbox"
+                    checked={formData.es_trabajador_triunfo}
+                    onChange={(e) => actualizarCampo('es_trabajador_triunfo', e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block text-sm font-medium text-neutral-800">Trabajador de El Triunfo</span>
+                    <span className="block text-xs text-neutral-500">
+                      Empleado de la cooperativa. Se ve en todas las pantallas del socio y le corresponde el Fondo de
+                      Trabajadores. No es lo mismo que trabajador de feria.
+                    </span>
+                  </span>
+                </label>
+
                 <label className={labelClass}>
                   <span>Notas</span>
                   <textarea
@@ -1853,7 +1912,10 @@ export const SociosPage = () => {
           <Card className="max-h-[92vh] w-full max-w-4xl overflow-y-auto border-neutral-200">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-2xl font-semibold text-neutral-900">Detalle del socio</h2>
+                <h2 className="flex flex-wrap items-center gap-2 text-2xl font-semibold text-neutral-900">
+                  Detalle del socio
+                  {socioDetalle.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo />}
+                </h2>
                 <p className="mt-1 text-sm text-neutral-500">
                   Vista de solo lectura sin posibilidad de edición.
                 </p>
@@ -1919,6 +1981,22 @@ export const SociosPage = () => {
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Delegado</dt>
                     <dd className="mt-1 text-sm text-neutral-700">{socioDetalle.es_delegado ? 'Sí' : 'No'}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Trabajador de El Triunfo</dt>
+                    <dd className="mt-1 flex flex-wrap items-center gap-2 text-sm text-neutral-700">
+                      {socioDetalle.es_trabajador_triunfo ? <DistintivoTrabajadorTriunfo /> : 'No'}
+                      {puedeModificar && (
+                        <button
+                          type="button"
+                          disabled={guardandoTriunfo}
+                          onClick={() => void cambiarTrabajadorTriunfo(socioDetalle, !socioDetalle.es_trabajador_triunfo)}
+                          className="text-xs font-medium text-primary-700 underline hover:no-underline disabled:opacity-50"
+                        >
+                          {socioDetalle.es_trabajador_triunfo ? 'Quitar la marca' : 'Marcar como trabajador'}
+                        </button>
+                      )}
+                    </dd>
                   </div>
                 </dl>
               </div>

@@ -16,6 +16,8 @@ import {
   semanaDeFecha,
   semanasEnAno,
   sumarSemanas,
+  fijarLargosDeAno,
+  semanasEnAnoPorRegla,
 } from '../calendarioSemanal';
 
 describe('semanaDeFecha', () => {
@@ -151,5 +153,53 @@ describe('periodosEntre', () => {
 
   it('devuelve vacío si el rango está invertido', () => {
     expect(periodosEntre({ ano: 2027, semana: 2 }, { ano: 2026, semana: 52 })).toEqual([]);
+  });
+});
+
+describe('año confirmado por la funeraria (10/11)', () => {
+  afterEach(() => fijarLargosDeAno(new Map()));
+
+  it('sin confirmar, 2026 cierra en 52 el 27/12 y la 1 de 2027 arranca el 28/12', () => {
+    expect(semanasEnAno(2026)).toBe(52);
+    expect(rangoDeSemana({ ano: 2026, semana: 52 }).fin).toBe('2026-12-27');
+    expect(rangoDeSemana({ ano: 2027, semana: 1 }).inicio).toBe('2026-12-28');
+  });
+
+  it('con 2026 confirmado en 53, la semana que cruza el año es la 53', () => {
+    fijarLargosDeAno(new Map([[2026, 53]]));
+    expect(semanasEnAno(2026)).toBe(53);
+    expect(semanaDeFecha(new Date(2026, 11, 28))).toEqual({ ano: 2026, semana: 53 });
+    expect(semanaDeFecha(new Date(2027, 0, 3))).toEqual({ ano: 2026, semana: 53 });
+    expect(semanaDeFecha(new Date(2027, 0, 4))).toEqual({ ano: 2027, semana: 1 });
+    expect(sumarSemanas({ ano: 2026, semana: 52 }, 2)).toEqual({ ano: 2027, semana: 1 });
+  });
+
+  it('después de una 53 el calendario vuelve solo a la regla, sin años de 51', () => {
+    fijarLargosDeAno(new Map([[2026, 53]]));
+    expect(semanasEnAno(2027)).toBe(52);
+    // 2027 arranca el 04/01 y dura 52: 2028 arranca el 03/01/2028
+    expect(rangoDeSemana({ ano: 2028, semana: 1 }).inicio).toBe('2028-01-03');
+    // 2029 ya coincide con la regla del 1 de enero
+    expect(rangoDeSemana({ ano: 2029, semana: 1 }).inicio).toBe('2029-01-01');
+  });
+
+  it('un año que por regla tendría 53 se puede cerrar en 52', () => {
+    // Por regla, 2028 tiene 53 (el 1/1/2029 es lunes)
+    expect(semanasEnAnoPorRegla(2028)).toBe(53);
+    fijarLargosDeAno(new Map([[2028, 52]]));
+    expect(semanasEnAno(2028)).toBe(52);
+    expect(semanaDeFecha(new Date(2028, 11, 25))).toEqual({ ano: 2029, semana: 1 });
+  });
+
+  it('ida y vuelta del ordinal sigue funcionando con años confirmados', () => {
+    fijarLargosDeAno(new Map([[2026, 53]]));
+    for (const p of [
+      { ano: 2026, semana: 53 },
+      { ano: 2027, semana: 1 },
+      { ano: 2027, semana: 52 },
+      { ano: 2028, semana: 1 },
+    ]) {
+      expect(deOrdinal(aOrdinal(p))).toEqual(p);
+    }
   });
 });

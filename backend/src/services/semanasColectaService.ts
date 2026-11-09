@@ -15,6 +15,8 @@
 
 import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
+// Import circular a propósito: los dos sólo se usan dentro de funciones
+import { cargarLargosDeAno } from './calendarioAnosService';
 import {
   type Periodo,
   lunesDeSemana,
@@ -131,6 +133,9 @@ export async function activarSemanaEnCurso(): Promise<Periodo> {
  */
 export async function mantenerCalendario(): Promise<void> {
   try {
+    // Primero los años que la funeraria ya confirmó (52 o 53): sin eso las
+    // semanas se generarían con la regla sola
+    await cargarLargosDeAno();
     await asegurarSemanas();
     await activarSemanaEnCurso();
   } catch (error) {

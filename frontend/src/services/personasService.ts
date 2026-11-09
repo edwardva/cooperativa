@@ -142,6 +142,8 @@ export interface ExpedienteAhorristaFicha {
     estado: string
     fecha_inscripcion: string
     es_delegado: boolean
+    /** Empleado de la cooperativa El Triunfo (no el trabajador de feria) */
+    es_trabajador_triunfo?: boolean
     ubicacion: { codigo: string; nombre: string } | null
   }
   cuentas: {

@@ -73,6 +73,7 @@ import { getErrorCode, getErrorDetalles, getErrorMessage, getErrorMessageDetalla
 import { formatearFecha, calcularEdad } from '../utils/formatters'
 import { valorEnMayusculas } from '../utils/mayusculas'
 import { usePermissions } from '../store/authStore'
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 type Tab = 'activo' | 'suspendido' | 'retirado' | 'todos'
 
@@ -91,7 +92,8 @@ type CambiarEstadoCandidato = {
   socio: { nombre_completo: string } | null
 }
 
-const hoyISO = (): string => new Date().toISOString().split('T')[0] ?? ''
+// El dia de Venezuela: toISOString daba el dia siguiente despues de las 8 pm
+const hoyISO = (): string => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
 
 const emptyBeneficiarioGrupoForm = (): BeneficiarioGrupoInput => ({
   cedula: '',
@@ -2100,7 +2102,7 @@ const handleSort = (field: string) => {
         {wizardPaso === 3 && wizardSocio && (
           <div className="space-y-4">
             <div className="rounded-lg border border-neutral-200 p-4 space-y-2 text-sm">
-              <p><span className="text-neutral-500">Titular:</span> <span className="font-medium">{wizardSocio.apellido}, {wizardSocio.nombre}</span></p>
+              <p><span className="text-neutral-500">Titular:</span> <span className="font-medium">{wizardSocio.apellido}, {wizardSocio.nombre}</span>{wizardSocio.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto className="ml-2" />}</p>
               <p><span className="text-neutral-500">Número de acuerdo:</span> <span className="font-mono font-medium">{wizardNumeroAcuerdo}</span></p>
               <p><span className="text-neutral-500">Fecha de ingreso:</span> <span className="font-medium">{formatearFecha(wizardFechaInicio)}</span></p>
               <p><span className="text-neutral-500">Total de personas:</span> <span className="font-medium">{wizardBeneficiarios.length + 1} (titular + {wizardBeneficiarios.length} beneficiario(s))</span></p>

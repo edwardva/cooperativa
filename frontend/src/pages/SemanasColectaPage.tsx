@@ -29,7 +29,8 @@ import { PrintableListado } from '../components/print/PrintableListado'
 import { SortableHeader } from '../components/ui/SortableHeader'
 import * as semanasService from '../services/semanasColectaService'
 import type { SemanaColecta, SemanaColectaFormData } from '../services/semanasColectaService'
-import { periodoDeFecha, rangoDeSemana } from '../services/semanasColectaService'
+import { cargarAnosConfirmados, periodoDeFecha, rangoDeSemana } from '../services/semanasColectaService'
+import { CierreDelAno } from '../components/colecta/CierreDelAno'
 import { getErrorMessage } from '../services/api'
 import { usePermissions } from '../store/authStore'
 
@@ -113,7 +114,8 @@ export const SemanasColectaPage = () => {
   }, [])
 
   useEffect(() => {
-    void cargar()
+    // Los años que la funeraria cerró en 53 cambian las fechas de las semanas
+    void cargarAnosConfirmados().then(cargar)
   }, [cargar])
 
   // ============================================
@@ -271,6 +273,9 @@ export const SemanasColectaPage = () => {
           )}
         </div>
       </div>
+
+      {/* 52 o 53 semanas: lo decide la funeraria cada diciembre (10/11) */}
+      <CierreDelAno modo="panel" onCambio={() => void cargar()} />
 
       {/* Sin semana activa no se puede cobrar: se avisa arriba de todo */}
       {!cargando && activas.length === 0 && (

@@ -29,6 +29,8 @@ export interface Socio {
   suspendido_desde?: string | null
   suspendido_hasta?: string | null
   es_delegado: boolean
+  /** Empleado de la cooperativa El Triunfo (no el trabajador de feria) */
+  es_trabajador_triunfo?: boolean
   ubicacion_id: number | null
   autorizado_nombre: string | null
   autorizado_cedula: string | null
@@ -59,6 +61,7 @@ export interface SocioFormData {
   autorizado_nombre: string
   autorizado_cedula: string
   es_delegado: boolean
+  es_trabajador_triunfo: boolean
   notas: string
   foto?: string // Base64 de la foto
 }
@@ -195,6 +198,8 @@ export const obtenerSocios = async (params?: {
   ubicacion_id?: number
   /** Sólo los delegados */
   es_delegado?: boolean
+  /** Sólo los trabajadores de El Triunfo */
+  es_trabajador_triunfo?: boolean
 }): Promise<PaginatedResponse<Socio>> => {
   const response = await apiClient.get('/socios', { params })
   return response.data
@@ -208,6 +213,7 @@ export const obtenerSociosParaImprimir = async (params: {
   estado?: string
   ubicacion_id?: number
   es_delegado?: boolean
+  es_trabajador_triunfo?: boolean
 }): Promise<PaginatedResponse<Socio>> => {
   const response = await apiClient.get('/socios', { params: { ...params, impresion: 1 } })
   return response.data

@@ -39,7 +39,8 @@ import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import * as colectaService from '../services/colectaService'
-import { periodoDeFecha } from '../services/semanasColectaService'
+import { cargarAnosConfirmados, periodoDeFecha } from '../services/semanasColectaService'
+import { CierreDelAno } from '../components/colecta/CierreDelAno'
 import type {
   AsambleaOpcion,
   Cobrable,
@@ -58,9 +59,15 @@ import { MovimientosDelDia } from '../components/colecta/MovimientosDelDia'
 import { ColectaClasica } from '../components/colecta/ColectaClasica'
 import { AvisoAbono } from '../components/colecta/AvisoAbono'
 import { SituacionSocio } from '../components/colecta/SituacionSocio'
+import {
+  EnlaceHistorial,
+  HistorialRapidoModal,
+  type ConsultaHistorial,
+} from '../components/colecta/HistorialRapido'
 import { HistorialSuspensiones } from '../components/colecta/HistorialSuspensiones'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
 import { PrintableLibretaAhorro } from '../components/print/PrintableLibretaAhorro'
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all placeholder:text-neutral-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
@@ -152,6 +159,9 @@ export default function ColectaPage() {
   // --- Busqueda ---
   const campoBusqueda = useRef<HTMLInputElement>(null)
   const campoSemanas = useRef<HTMLInputElement>(null)
+  const campoAdicional = useRef<HTMLInputElement>(null)
+  // Ventanita con los ultimos movimientos de la cuenta o el prestamo (09/11)
+  const [historial, setHistorial] = useState<ConsultaHistorial | null>(null)
   const botonCobrar = useRef<HTMLButtonElement>(null)
   const [termino, setTermino] = useState('')
   const [buscando, setBuscando] = useState(false)
@@ -170,6 +180,15 @@ export default function ColectaPage() {
   // Semana y año del calendario de colecta: del 28 al 31/12/2026 ya es la 1 de 2027
   const [semanaCobro, setSemanaCobro] = useState(() => periodoDeFecha(new Date()).semana)
   const [anoCobro, setAnoCobro] = useState(() => periodoDeFecha(new Date()).ano)
+  // Si la funeraria cerró el año en 53, la semana en curso puede ser otra:
+  // se recalcula apenas llegan los años confirmados
+  useEffect(() => {
+    void cargarAnosConfirmados().then(() => {
+      const actual = periodoDeFecha(new Date())
+      setSemanaCobro(actual.semana)
+      setAnoCobro(actual.ano)
+    })
+  }, [])
   const [referencia, setReferencia] = useState('')
   const [adicionalAhorro, setAdicionalAhorro] = useState('0')
   const [asambleas, setAsambleas] = useState<AsambleaOpcion[]>([])
@@ -701,6 +720,11 @@ export default function ColectaPage() {
                   <div>
                     <p className="text-lg font-semibold text-emerald-900">
                       Colecta #{recibo.id} registrada
+                      {recibo.numero_del_dia != null && (
+                        <span className="ml-2 rounded-full bg-emerald-100 px-2.5 py-0.5 align-middle text-sm font-semibold text-emerald-800">
+                          Movimiento {recibo.numero_del_dia} del socio hoy
+                        </span>
+                      )}
                     </p>
                     <p className="mt-1 text-sm text-emerald-800 print:uppercase">
                       {recibo.socio?.apellido}, {recibo.socio?.nombre} ·{' '}
@@ -766,6 +790,8 @@ export default function ColectaPage() {
   return (
     <div className="space-y-5">
       {libreta && <PrintableLibretaAhorro libreta={libreta.datos} modo={libreta.modo} />}
+      <HistorialRapidoModal consulta={historial} onClose={() => setHistorial(null)} />
+      <CierreDelAno modo="aviso" />
 
       {/* ENCABEZADO + ESTADO DE LA JORNADA */}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -792,8 +818,14 @@ export default function ColectaPage() {
             <p className="text-sm font-semibold text-neutral-900">
               Bs {money(resumenDia?.total_bs ?? 0)}
               <span className="ml-1.5 font-medium text-emerald-600">${money(resumenDia?.total_usd ?? 0)}</span>
-              <span className="font-normal text-neutral-500"> · {resumenDia?.cantidad ?? 0} operaciones</span>
             </p>
+          </div>
+          {/* Contador para el cierre de caja (09/11): a la vista, no en letra chica */}
+          <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-2 text-center">
+            <p className="text-xs font-medium uppercase tracking-wide text-primary-700" title="Cobros de hoy en su caja, sin contar lo reversado">
+              Movimientos hoy
+            </p>
+            <p className="text-xl font-bold tabular-nums text-primary-800">{resumenDia?.cantidad ?? 0}</p>
           </div>
           {veTodasLasCajas && resumenTodas && (
             <div className="rounded-xl border border-neutral-200 bg-white px-4 py-2">
@@ -1033,8 +1065,9 @@ export default function ColectaPage() {
                     className="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3 text-left transition hover:border-primary-400 hover:bg-primary-50/40"
                   >
                     <div>
-                      <p className="text-sm font-medium text-neutral-900 print:uppercase">
+                      <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-neutral-900 print:uppercase">
                         {c.apellido}, {c.nombre}
+                        {c.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto />}
                       </p>
                       <p className="text-xs text-neutral-500">
                         {c.codigo_socio} · CI {c.cedula} · {c.estado} · {c.cobrables.length} servicio(s)
@@ -1068,12 +1101,21 @@ export default function ColectaPage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {socio.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo />}
+                      {(socio.movimientos_hoy ?? 0) > 0 && (
+                        <span
+                          className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-800"
+                          title="Cobros de hoy de este socio, sin contar los reversados"
+                        >
+                          Hoy: {socio.movimientos_hoy} movimiento(s)
+                        </span>
+                      )}
                       {socio.trabajador && (
                         <span
                           className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700"
                           title="La misma persona tiene expediente de trabajador de feria"
                         >
-                          Trabajador {socio.trabajador.codigo}
+                          Trabajador de feria {socio.trabajador.codigo}
                           {socio.trabajador.feria ? ` · ${socio.trabajador.feria}` : ''}
                         </span>
                       )}
@@ -1170,7 +1212,43 @@ export default function ColectaPage() {
                     >
                       Poner al día · {Math.max(socio.semanas_para_ponerse_al_dia || 1, 1)}
                     </Button>
+                    {/* Depositar en ahorro sin pagar semanas (pedido del 09/11) */}
+                    {cuentasAhorro.length > 0 && (
+                      <Button
+                        variant={semanas === 0 ? 'primary' : 'outline'}
+                        onClick={() => {
+                          setSemanas(0)
+                          window.setTimeout(() => campoAdicional.current?.focus(), 0)
+                        }}
+                      >
+                        Solo abonar a ahorro
+                      </Button>
+                    )}
                   </div>
+                  {/* El abono a ahorro va siempre a la vista: es lo que se usa cuando
+                      al socio le sobra dinero despues de pagar sus semanas */}
+                  {cuentasAhorro.length > 0 && (
+                    <div className="mt-4 flex flex-wrap items-end gap-3 rounded-lg border border-neutral-200 bg-neutral-50/60 px-4 py-3">
+                      <label className="text-sm font-medium text-neutral-700">
+                        <span className="mb-1.5 block">Abonar a ahorro (Bs)</span>
+                        <input
+                          ref={campoAdicional}
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={adicionalAhorro}
+                          onChange={(e) => setAdicionalAhorro(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          className="w-40 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                        />
+                      </label>
+                      <p className="pb-2 text-xs text-neutral-500">
+                        {semanas === 0
+                          ? 'Solo abono a ahorro: no se cobran semanas ni servicios.'
+                          : `Se suma al cobro de ${semanas} semana(s). Opcional, sin tope de monto.`}
+                      </p>
+                    </div>
+                  )}
                   <div className="mt-4">
                     <OpcionesColecta
                       titulo="Período y referencia del recibo"
@@ -1284,9 +1362,9 @@ export default function ColectaPage() {
                 {/* AHORRO: saldo, ahorro adicional y ultimos movimientos */}
                 {cuentasAhorro.length > 0 && (
                   <OpcionesColecta
-                    key={`Ahorro adicional y movimientos-${socio.id}`}
-                    titulo="Ahorro adicional y movimientos"
-                    resumen={` ${cuentasAhorro.length} cuenta(s) · ${adicional > 0 ? `${money(adicional)} Bs adicional incluido` : 'Opcional: agregar ahorro al cobro'}`}
+                    key={`Movimientos de ahorro-${socio.id}`}
+                    titulo="Movimientos de ahorro"
+                    resumen={` ${cuentasAhorro.length} cuenta(s) · ${adicional > 0 ? `${money(adicional)} Bs adicional incluido` : 'Saldo y últimos movimientos'}`}
                   >
                     <div className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-5 py-3">
                       <Wallet className="h-4 w-4 text-primary-600" />
@@ -1294,23 +1372,6 @@ export default function ColectaPage() {
                       <span className="text-xs text-neutral-500">({cuentasAhorro.length})</span>
                     </div>
 
-                    <div className="flex flex-wrap items-end gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-3">
-                      <label className="text-xs font-medium text-neutral-600">
-                        <span className="mb-1 block">Ahorro adicional (Bs)</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={adicionalAhorro}
-                          onChange={(e) => setAdicionalAhorro(e.target.value)}
-                          className="w-36 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
-                        />
-                      </label>
-                      <p className="pb-2 text-xs text-neutral-500">
-                        Se suma al ahorro obligatorio de estas {semanas} semana(s). Sin tope de
-                        monto.
-                      </p>
-                    </div>
 
                     <div className="divide-y divide-neutral-100">
                       {cuentasAhorro.map((cuenta) => (
@@ -1318,7 +1379,11 @@ export default function ColectaPage() {
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
                               <p className="text-sm font-medium text-neutral-900">
-                                {cuenta.titulo}
+                                <EnlaceHistorial
+                                  onClick={() => setHistorial({ servicio: 'ahorro', id: cuenta.referencia_id })}
+                                >
+                                  {cuenta.titulo}
+                                </EnlaceHistorial>
                               </p>
                               <p className="text-xs text-neutral-500">{cuenta.detalle}</p>
                             </div>
@@ -1434,7 +1499,13 @@ export default function ColectaPage() {
                                   {prestamo.categoria ?? prestamo.titulo}
                                 </p>
                                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-                                  <span className="font-mono">{prestamo.numero_pagare ?? '—'}</span>
+                                  <span className="font-mono">
+                                    <EnlaceHistorial
+                                      onClick={() => setHistorial({ servicio: 'prestamo', id: prestamo.referencia_id })}
+                                    >
+                                      {prestamo.numero_pagare ?? 'Ver historial'}
+                                    </EnlaceHistorial>
+                                  </span>
                                   {/* La moneda va aparte de la categoria: en el
                                   sistema actual son dos campos distintos, y eso
                                   resuelve la duda de si "divisa" era un tipo de

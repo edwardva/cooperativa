@@ -20,6 +20,7 @@ import * as sociosService from '../services/sociosService'
 import type { Socio } from '../services/sociosService'
 import { getErrorMessage } from '../services/api'
 import { usePermissions } from '../store/authStore'
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 const money = (v: number | string | null | undefined) =>
   Number(v ?? 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -99,6 +100,7 @@ const BuscarSocio = ({ onElegir }: { onElegir: (s: Socio) => void }) => {
                 <span className="font-mono text-primary-700">{s.codigo_socio}</span>{' '}
                 <span className="uppercase">{s.apellido}, {s.nombre}</span>{' '}
                 <span className="text-neutral-500">C.I. {s.cedula} · {s.ubicacion?.codigo ?? 'sin sector'}</span>
+                {s.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto className="ml-2" />}
               </button>
             </li>
           ))}
@@ -234,8 +236,8 @@ export default function FondoPage() {
   const porcentajeAyuda = ayuda.porcentaje !== '' ? numero(ayuda.porcentaje) : conceptoAyuda?.porcentaje != null ? Number(conceptoAyuda.porcentaje) : 100
   const gastoAyuda = numero(ayuda.gasto) || 0
   const cubreFondo = Math.round(((gastoAyuda * porcentajeAyuda) / 100) * 100) / 100
-  const noEsTrabajador =
-    !!socio && !!resumen && !resumen.sectores_trabajadores.includes((socio.ubicacion?.codigo ?? '').toUpperCase())
+  // La marca la pone la oficina en el socio (09/11); antes se deducía del sector
+  const noEsTrabajador = !!socio && !socio.es_trabajador_triunfo
 
   const guardarAyuda = async () => {
     if (!socio || !ayuda.concepto_id || !(gastoAyuda > 0) || !ayuda.motivo.trim()) {
@@ -642,7 +644,7 @@ export default function FondoPage() {
                   {noEsTrabajador && (
                     <p className="mt-1 flex items-center gap-1.5 text-sm text-amber-700">
                       <AlertTriangle className="h-4 w-4" />
-                      No figura como trabajador de El Triunfo (sector {resumen?.sectores_trabajadores.join(', ')}). Verifique antes de dar la ayuda.
+                      No está marcado como trabajador de El Triunfo en su ficha de socio. Verifique antes de dar la ayuda.
                     </p>
                   )}
                 </div>

@@ -17,6 +17,7 @@ import { Badge } from '../components/ui/Badge'
 import { getErrorMessage } from '../services/api'
 import * as personasService from '../services/personasService'
 import type { FichaPersona } from '../services/personasService'
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 type Pestana = 'general' | 'trabajo' | 'salud' | 'ahorro' | 'colectas' | 'prestamos' | 'servicios' | 'historial'
 
@@ -124,7 +125,8 @@ export default function PersonaFichaPage() {
           <div className="flex flex-wrap gap-2">
             {badgeEstado(persona.estado)}
             {ahorristas.length > 0 && <Badge variant="info">Ahorrista</Badge>}
-            {trabajadores.length > 0 && <Badge variant="purple">Trabajador</Badge>}
+            {ahorristas.some((a) => a.socio.es_trabajador_triunfo) && <DistintivoTrabajadorTriunfo />}
+            {trabajadores.length > 0 && <Badge variant="purple">Trabajador de feria</Badge>}
           </div>
         </div>
       </Card>

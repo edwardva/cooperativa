@@ -14,6 +14,7 @@ import {
   eliminarSemanaColecta,
 } from '../controllers/semanasColectaController';
 import { authenticate } from '../middleware/authenticate';
+import { confirmarCierre, listarAnosConfirmados, obtenerCierreAno } from '../controllers/calendarioAnosController';
 import { authorize } from '../middleware/authorize';
 
 const router = Router();
@@ -54,6 +55,21 @@ router.get(
   authorize('semanas_colecta', 'read'),
   obtenerSemanaActual
 );
+
+/**
+ * GET /api/semanas-colecta/cierre-ano[/:ano]
+ * Con cuántas semanas cierra el año (52 o 53) y si falta confirmarlo con la
+ * funeraria. Lo leen también los cajeros: de ahí sale el aviso de diciembre.
+ */
+router.get('/anos', authorize('semanas_colecta', 'read'), listarAnosConfirmados);
+router.get('/cierre-ano', authorize('semanas_colecta', 'read'), obtenerCierreAno);
+router.get('/cierre-ano/:ano', authorize('semanas_colecta', 'read'), obtenerCierreAno);
+
+/**
+ * PUT /api/semanas-colecta/cierre-ano/:ano
+ * Confirma lo que avisó la funeraria. Si cambia el largo, re-rotula lo guardado.
+ */
+router.put('/cierre-ano/:ano', authorize('semanas_colecta', 'update'), confirmarCierre);
 
 /**
  * GET /api/semanas-colecta/:id
