@@ -29,7 +29,7 @@ CREATE TABLE "anos_colecta" (
 -- REVISAR ANTES DE APLICAR EN PRODUCCIÓN: `desde` es el día en que la regla del
 -- 1 de enero (commit 98d4732, del 23/10) llegó a producción. Lo escrito antes
 -- de esa fecha está en ISO.
-CREATE TEMP TABLE corte AS SELECT TIMESTAMP '2026-10-23 00:00:00' AS desde;
+CREATE TEMP TABLE corte AS SELECT TIMESTAMP '2026-10-23 07:16:00' AS desde; -- pull + build en producción, en UTC
 
 -- Lunes real de un rótulo ISO
 CREATE FUNCTION pg_temp.lunes_iso(a int, s int) RETURNS date LANGUAGE sql IMMUTABLE AS $$
