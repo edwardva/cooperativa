@@ -15,11 +15,13 @@
  * Son distintos: se puede pagar hoy diez semanas por adelantado.
  */
 
+import { useState } from 'react'
 import { AlertTriangle, CalendarCheck, HeartPulse, Shield } from 'lucide-react'
 import { Badge } from '../ui/Badge'
 import { Card } from '../ui/Card'
 import type { ResumenServicio } from '../../services/colectaService'
 import { agruparPorAcuerdo, fechaCorta } from './presentacion'
+import { EnlaceHistorial, HistorialRapidoModal, type ConsultaHistorial } from './HistorialRapido'
 
 interface Props {
   servicios: ResumenServicio[]
@@ -57,6 +59,9 @@ const insignia = (servicio: ResumenServicio) => {
 }
 
 export function SituacionSocio({ servicios, semanaActualTexto, tasa }: Props) {
+  // Ventanita con los ultimos movimientos del acuerdo (09/11)
+  const [historial, setHistorial] = useState<ConsultaHistorial | null>(null)
+
   if (servicios.length === 0) {
     return (
       <Card className="p-5 text-sm text-neutral-500">
@@ -87,7 +92,11 @@ export function SituacionSocio({ servicios, semanaActualTexto, tasa }: Props) {
                   ) : (
                     <HeartPulse className="h-4 w-4 text-rose-600" />
                   )}
-                  {servicio.titulo}
+                  <EnlaceHistorial
+                    onClick={() => setHistorial({ servicio: servicio.servicio, id: servicio.referencia_id })}
+                  >
+                    {servicio.titulo}
+                  </EnlaceHistorial>
                 </p>
                 <p className="mt-0.5 text-xs text-neutral-500">
                   {servicio.servicio === 'salud' && servicio.personas > 1
@@ -157,6 +166,7 @@ export function SituacionSocio({ servicios, semanaActualTexto, tasa }: Props) {
           </div>
         ))}
       </div>
+      <HistorialRapidoModal consulta={historial} onClose={() => setHistorial(null)} />
     </Card>
   )
 }

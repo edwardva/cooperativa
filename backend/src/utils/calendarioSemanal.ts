@@ -14,23 +14,26 @@
 //   semanas desde una fecha fija. Sobre el ordinal la aritmética es trivial y
 //   los cruces de año, los años de 53 semanas y los adelantos salen solos.
 //
-// Regla de calendario (confirmada por la cooperativa el 23/10/2026):
+// Regla de calendario (confirmada por la cooperativa el 23/10 y el 10/11/2026):
 //
 //   La semana va de LUNES a domingo, y la semana 1 de un año es la que
-//   CONTIENE EL 1 DE ENERO. "La semana 53 es la semana 1 del próximo año": la
-//   semana que cruza el fin de año ya es del año nuevo.
+//   CONTIENE EL 1 DE ENERO: la semana que cruza el fin de año ya es la 1 del
+//   año nuevo. Con eso casi todos los años tienen 52 semanas; 2026 cierra con
+//   la 52 el domingo 27/12 y la 1 de 2027 arranca el lunes 28/12.
 //
-//   No es ISO-8601 (allí la semana 1 es la que contiene el 4 de enero). Las dos
-//   reglas dan lo mismo en 2024, 2025 y 2026; difieren en los años cuyo 1 de
-//   enero cae viernes, sábado o domingo (2027, 2028...). Con esta regla 2026
-//   tiene 52 semanas: la del 28/12/2026 al 03/01/2027 es la semana 1 de 2027.
+//   Pero quien decide si un año cierra en 52 o en 53 es la FUNERARIA, y lo
+//   avisa cada diciembre ("este año cobramos hasta la 53"). Por eso el largo
+//   de un año se puede confirmar a mano (tabla `anos_colecta`, ver
+//   services/calendarioAnosService.ts). Con un año confirmado en 53, la semana
+//   que cruza el año pasa a ser su semana 53 y el año siguiente arranca una
+//   semana después. Sin confirmación vale la regla del 1 de enero.
 //
 //   El sistema viejo no tenía una regla fija: en 2021-2022 numeró así, cerró
 //   2022 con una "semana 53" y desde 2023 usó ISO (revisado en sus
 //   movimientos de funeraria). Por eso cada diciembre había que llamar al
 //   proveedor.
 //
-//   Toda la regla vive en `lunesDeSemana` y `periodoDeUtc`: cambiarla ahí la
+//   Toda la regla vive en `inicioDeAno` y `periodoDeUtc`: cambiarla ahí la
 //   cambia en todo el sistema, sin tocar quien la consume.
 
 /** Un período de colecta: el par (año, semana) que identifica una semana. */
@@ -63,20 +66,73 @@ const aUtc = (fecha: Date): number =>
 // ============================================
 
 /**
+ * Años con el largo confirmado por la funeraria: año -> 52 o 53 semanas.
+ *
+ * Vive en memoria para que todo el calendario siga siendo síncrono. Lo carga
+ * `calendarioAnosService` al arrancar y cada vez que alguien confirma un año.
+ */
+export type LargosDeAno = ReadonlyMap<number, 52 | 53>;
+
+let largosVigentes: LargosDeAno = new Map();
+let menorAnoConfirmado = Infinity;
+const cacheInicio = new Map<number, number>();
+
+export const fijarLargosDeAno = (largos: LargosDeAno): void => {
+  largosVigentes = new Map(largos);
+  menorAnoConfirmado = largos.size ? Math.min(...largos.keys()) : Infinity;
+  cacheInicio.clear();
+};
+
+export const largosDeAnoVigentes = (): LargosDeAno => largosVigentes;
+
+/** Regla base: lunes de la semana que contiene el 1 de enero (o el mismo 1, si es lunes) */
+const lunesQueContieneElPrimero = (ano: number): number => {
+  const primeroEnero = new Date(Date.UTC(ano, 0, 1));
+  const diaSemana = primeroEnero.getUTCDay() || 7; // domingo = 7, no 0
+  return primeroEnero.getTime() - (diaSemana - 1) * MS_POR_DIA;
+};
+
+/**
+ * Lunes (UTC, en ms) con el que arranca la semana 1 del año.
+ *
+ * Si no hay ningún año confirmado antes de `ano`, es la regla del 1 de enero.
+ * Si lo hay, se parte del inicio del año anterior: un año confirmado mide lo
+ * que se confirmó, y uno sin confirmar sigue la regla del 1 de enero pero sin
+ * bajar de 52 ni pasar de 53 semanas (así el calendario vuelve solo a la regla
+ * al año siguiente de una semana 53).
+ */
+export const inicioDeAno = (ano: number, largos: LargosDeAno = largosVigentes): number => {
+  const vigentes = largos === largosVigentes;
+  if (vigentes) {
+    const enCache = cacheInicio.get(ano);
+    if (enCache !== undefined) return enCache;
+  }
+
+  const menor = vigentes ? menorAnoConfirmado : largos.size ? Math.min(...largos.keys()) : Infinity;
+  let inicio: number;
+  if (ano <= menor) {
+    inicio = lunesQueContieneElPrimero(ano);
+  } else {
+    const previo = inicioDeAno(ano - 1, largos);
+    const confirmado = largos.get(ano - 1);
+    const semanas =
+      confirmado ??
+      Math.min(53, Math.max(52, Math.round((lunesQueContieneElPrimero(ano) - previo) / MS_POR_SEMANA)));
+    inicio = previo + semanas * MS_POR_SEMANA;
+  }
+
+  if (vigentes) cacheInicio.set(ano, inicio);
+  return inicio;
+};
+
+/**
  * Lunes con el que arranca la semana `semana` del año `ano`, en UTC.
  *
  * Admite semanas fuera de rango (0, -1, 54...) y devuelve el lunes que
  * corresponda: es lo que permite que `sumarSemanas` no tenga casos especiales.
  */
-export const lunesDeSemana = (ano: number, semana: number): Date => {
-  // La semana 1 es la que contiene el 1 de enero: arranca el lunes anterior
-  // (o el mismo 1 de enero, si cae lunes)
-  const primeroEnero = new Date(Date.UTC(ano, 0, 1));
-  const diaSemana = primeroEnero.getUTCDay() || 7; // domingo = 7, no 0
-  const lunesSemana1 = primeroEnero.getTime() - (diaSemana - 1) * MS_POR_DIA;
-
-  return new Date(lunesSemana1 + (semana - 1) * MS_POR_SEMANA);
-};
+export const lunesDeSemana = (ano: number, semana: number, largos: LargosDeAno = largosVigentes): Date =>
+  new Date(inicioDeAno(ano, largos) + (semana - 1) * MS_POR_SEMANA);
 
 /**
  * Período (año, semana) al que pertenece una fecha.
@@ -97,26 +153,32 @@ export const semanaDeFecha = (fecha: Date = new Date()): Periodo =>
  * Greenwich la medianoche UTC del lunes se leería como el domingo anterior y
  * cada ida y vuelta perdería una semana.
  */
-const periodoDeUtc = (utc: number): Periodo => {
+export const periodoDeUtc = (utc: number, largos: LargosDeAno = largosVigentes): Periodo => {
   const diaSemana = new Date(utc).getUTCDay() || 7;
-
-  // El DOMINGO de esa semana decide el año: si la semana contiene un 1 de
-  // enero, su domingo ya es del año nuevo; si no, toda la semana es de un año
   const lunes = utc - (diaSemana - 1) * MS_POR_DIA;
-  const domingo = lunes + 6 * MS_POR_DIA;
-  const ano = new Date(domingo).getUTCFullYear();
 
-  const inicioAno = lunesDeSemana(ano, 1).getTime();
-  const semana = Math.round((lunes - inicioAno) / MS_POR_SEMANA) + 1;
+  // Se parte del año del domingo (la regla base) y se corrige si un año
+  // confirmado en 53 corrió el inicio
+  let ano = new Date(lunes + 6 * MS_POR_DIA).getUTCFullYear();
+  while (lunes < inicioDeAno(ano, largos)) ano--;
+  while (lunes >= inicioDeAno(ano + 1, largos)) ano++;
 
+  const semana = Math.round((lunes - inicioDeAno(ano, largos)) / MS_POR_SEMANA) + 1;
   return { ano, semana };
 };
 
 /** Cuántas semanas tiene el año: 52 o 53. Nunca se asume 52. */
-export const semanasEnAno = (ano: number): number => {
-  const inicio = lunesDeSemana(ano, 1).getTime();
-  const inicioSiguiente = lunesDeSemana(ano + 1, 1).getTime();
-  return Math.round((inicioSiguiente - inicio) / MS_POR_SEMANA);
+export const semanasEnAno = (ano: number, largos: LargosDeAno = largosVigentes): number =>
+  Math.round((inicioDeAno(ano + 1, largos) - inicioDeAno(ano, largos)) / MS_POR_SEMANA);
+
+/**
+ * Semanas que tendría el año por la regla del 1 de enero, sin confirmar nada.
+ * Es lo que el sistema propone hasta que la funeraria avise otra cosa.
+ */
+export const semanasEnAnoPorRegla = (ano: number): number => {
+  const sinAno = new Map(largosVigentes);
+  sinAno.delete(ano);
+  return semanasEnAno(ano, sinAno);
 };
 
 // ============================================

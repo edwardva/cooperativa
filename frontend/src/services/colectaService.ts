@@ -192,6 +192,10 @@ export interface SocioColecta {
   telefono: string | null
   ubicacion: { id: number; codigo: string; direccion: string | null } | null
   es_trabajador?: boolean
+  /** Empleado de la cooperativa El Triunfo (no el trabajador de feria) */
+  es_trabajador_triunfo?: boolean
+  /** Cobros que lleva hoy, sin los reversados */
+  movimientos_hoy?: number
   /** Expediente de trabajador vigente de la misma persona, si lo tiene */
   trabajador?: { codigo: string; estado: string; feria: string | null } | null
   cobrables: Cobrable[]
@@ -388,6 +392,8 @@ export interface Colecta {
   tasa_cambio: string | number
   /** N° de recibo o comprobante */
   referencia?: string | null
+  /** Movimiento N° del socio en el día (1, 2, 3...); se reinicia cada día */
+  numero_del_dia?: number | null
   observaciones: string | null
   reversada?: boolean
   fecha_reverso?: string | null
@@ -653,5 +659,38 @@ export const obtenerAsientoContable = async (params: {
   hasta: string
 }): Promise<Respuesta<AsientoContable>> => {
   const response = await apiClient.get('/colecta/reportes/asiento-contable', { params })
+  return response.data
+}
+
+// ============================================
+// HISTORIAL RÁPIDO (ventanita desde la colecta, 09/11)
+// ============================================
+
+export type ServicioHistorial = 'prestamo' | 'ahorro' | 'funeraria' | 'salud'
+
+export interface MovimientoHistorial {
+  fecha: string
+  tipo: string
+  detalle: string | null
+  monto_usd: number
+  monto_bs: number
+  saldo_bs: number | null
+  cubre_hasta: string | null
+  reversado: boolean
+}
+
+export interface HistorialRapido {
+  servicio: ServicioHistorial
+  titulo: string
+  resumen: string
+  movimientos: MovimientoHistorial[]
+}
+
+/** Últimos 8 movimientos de un préstamo, cuenta de ahorro o acuerdo */
+export const obtenerHistorialRapido = async (
+  servicio: ServicioHistorial,
+  id: number
+): Promise<Respuesta<HistorialRapido>> => {
+  const response = await apiClient.get(`/colecta/historial/${servicio}/${id}`)
   return response.data
 }

@@ -30,8 +30,10 @@
  *     bolivares, igual que en el sistema actual.
  */
 
+import { useState } from 'react'
 import { Printer, RotateCcw, Search } from 'lucide-react'
 import { AvisoAbono } from './AvisoAbono'
+import { EnlaceHistorial, HistorialRapidoModal, type ConsultaHistorial } from './HistorialRapido'
 import { agruparPorAcuerdo, fechaCorta } from './presentacion'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
@@ -42,6 +44,7 @@ import type {
   ResumenServicio,
   SocioColecta,
 } from '../../services/colectaService'
+import { DistintivoTrabajadorTriunfo } from '../socios/DistintivoTrabajadorTriunfo'
 
 interface Props {
   termino: string
@@ -154,6 +157,8 @@ export const ColectaClasica = ({
   onLibreta, imprimiendoLibreta,
   onReverso, onCobrar, cobrando, puedeCobrar,
 }: Props) => {
+  // Ventanita con los ultimos movimientos de lo que se clica (09/11)
+  const [historial, setHistorial] = useState<ConsultaHistorial | null>(null)
   const ahorros = socio?.cuentas_ahorro ?? []
   const prestamos = socio?.prestamos ?? []
   const servicios = socio?.servicios ?? []
@@ -250,6 +255,14 @@ export const ColectaClasica = ({
             <span className="ml-3 align-middle text-base font-semibold text-neutral-500">
               Exp. {socio.codigo_socio} · C.I. {socio.cedula}
             </span>
+            {socio.es_trabajador_triunfo && (
+              <DistintivoTrabajadorTriunfo className="ml-3 align-middle" />
+            )}
+            {(socio.movimientos_hoy ?? 0) > 0 && (
+              <span className="ml-3 inline-flex rounded-full bg-sky-50 px-2.5 py-1 align-middle text-xs font-medium text-sky-800">
+                Hoy: {socio.movimientos_hoy} movimiento(s)
+              </span>
+            )}
           </p>
         )}
         {/* Confirmado el 23/10: al retirado por inasistencia se le dice por qué
@@ -316,6 +329,19 @@ export const ColectaClasica = ({
       {/* ---- Rejilla 2x2: todo el socio a la vez ---- */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel titulo="Ahorros a la Vista">
+          {ahorros.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-200 bg-neutral-50 px-2 py-1 text-xs">
+              <span className="text-neutral-500">Historial:</span>
+              {ahorros.map((c) => (
+                <EnlaceHistorial
+                  key={c.referencia_id}
+                  onClick={() => setHistorial({ servicio: 'ahorro', id: c.referencia_id })}
+                >
+                  {c.titulo}
+                </EnlaceHistorial>
+              ))}
+            </div>
+          )}
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-neutral-50">
               <tr>
@@ -366,7 +392,11 @@ export const ColectaClasica = ({
               ) : (
                 prestamos.map((p: Cobrable) => (
                   <tr key={p.referencia_id} className="odd:bg-neutral-50/60">
-                    <Td>{p.numero_pagare ?? p.titulo}</Td>
+                    <Td>
+                      <EnlaceHistorial onClick={() => setHistorial({ servicio: 'prestamo', id: p.referencia_id })}>
+                        {p.numero_pagare ?? p.titulo}
+                      </EnlaceHistorial>
+                    </Td>
                     <Td>{dia(p.fecha_desembolso)}</Td>
                     <Td>{p.categoria ?? ''}</Td>
                     <Td right>{money(p.monto_original_bs)}</Td>
@@ -399,7 +429,11 @@ export const ColectaClasica = ({
               ) : (
                 funeraria.map((s: ResumenServicio) => (
                   <tr key={s.referencia_id} className="odd:bg-neutral-50/60">
-                    <Td>{s.numero_acuerdo ?? s.titulo}</Td>
+                    <Td>
+                      <EnlaceHistorial onClick={() => setHistorial({ servicio: 'funeraria', id: s.referencia_id })}>
+                        {s.numero_acuerdo ?? s.titulo}
+                      </EnlaceHistorial>
+                    </Td>
                     <Td>{s.pagado_hasta?.ano ?? ''}</Td>
                     <Td>{s.pagado_hasta?.semana ?? ''}</Td>
                     <Td>{dia(s.fecha_ultimo_pago)}</Td>
@@ -434,7 +468,9 @@ export const ColectaClasica = ({
                   <tr key={s.referencia_id} className="odd:bg-neutral-50/60">
                     <Td>
                       <span title={`${s.personas} persona(s) en el acuerdo`}>
-                        {s.numero_acuerdo ?? s.titulo}
+                        <EnlaceHistorial onClick={() => setHistorial({ servicio: 'salud', id: s.referencia_id })}>
+                          {s.numero_acuerdo ?? s.titulo}
+                        </EnlaceHistorial>
                       </span>
                     </Td>
                     <Td>{s.pagado_hasta?.ano ?? ''}</Td>
@@ -462,6 +498,20 @@ export const ColectaClasica = ({
             className="w-20"
           />
         </Campo>
+        {/* Depositar en ahorro sin pagar semanas: el socio trae dinero de mas
+            y pide que se lo abonen (pedido del 09/11) */}
+        <Button
+          type="button"
+          size="sm"
+          variant={semanas === 0 ? 'primary' : 'outline'}
+          disabled={!socio}
+          onClick={() => {
+            onSemanas(0)
+            window.setTimeout(() => document.getElementById('colecta-adicional-ahorro')?.focus(), 0)
+          }}
+        >
+          Solo abonar a ahorro
+        </Button>
         <Campo rotulo="Semana Cobro:">
           <input readOnly value={semanaCobro} className={soloLectura} />
         </Campo>
@@ -501,6 +551,7 @@ export const ColectaClasica = ({
                     con 0 semanas a cobrar */}
                 <Campo rotulo="Adic: Bs">
                   <Input
+                    id="colecta-adicional-ahorro"
                     type="number"
                     min={0}
                     step="0.01"
@@ -512,7 +563,7 @@ export const ColectaClasica = ({
                 {/* Ahorro suelto: con 0 semanas solo entra el adicional (07/11) */}
                 {semanas === 0 && (
                   <span className="mt-0.5 block text-[11px] text-neutral-500">
-                    0 semanas: solo se registra el adicional, sin cobrar servicios
+                    Solo abono a ahorro: no se cobran semanas ni servicios
                   </span>
                 )}
               </Td>
@@ -571,6 +622,7 @@ export const ColectaClasica = ({
           {cobrando ? 'Registrando...' : 'Enviar'}
         </Button>
       </div>
+      <HistorialRapidoModal consulta={historial} onClose={() => setHistorial(null)} />
     </div>
   )
 }

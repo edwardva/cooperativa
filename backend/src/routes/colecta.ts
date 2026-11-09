@@ -20,6 +20,7 @@ import {
   asientoContable,
 } from '../controllers/colectaController';
 import { obtenerLibretaAhorro } from '../controllers/libretaController';
+import { historialRapido } from '../controllers/historialColectaController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -97,6 +98,12 @@ router.post('/', authorize('colecta', 'create'), registrarColecta);
  * Va antes de /:id para que "libreta" no se tome como un id.
  */
 router.get('/libreta/:cuentaId', authorize('colecta', 'read'), obtenerLibretaAhorro);
+
+/**
+ * GET /api/colecta/historial/:servicio/:id
+ * Últimos movimientos de un préstamo, cuenta de ahorro o acuerdo (09/11)
+ */
+router.get('/historial/:servicio/:id', authorize('colecta', 'read'), historialRapido);
 
 /**
  * GET /api/colecta/:id

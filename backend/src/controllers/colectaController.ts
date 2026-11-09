@@ -53,7 +53,7 @@ import {
 } from '../services/abonosPrestamoService';
 import { ponerInteresAlDia } from '../services/interesPrestamoService';
 import { idsSociosPorTexto } from '../services/busquedaSociosService';
-import { hoyDia } from '../utils/fechaDia';
+import { hoyDia, textoDia } from '../utils/fechaDia';
 import { nombreEnMayusculas } from '../utils/reportes';
 import {
   correoConfigurado,
@@ -472,6 +472,16 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
     });
     const vecesSuspendido = new Map(suspensiones.map((f) => [f.socio_id, f._count._all]));
 
+    // Cuántos movimientos lleva hoy cada socio, sin los reversados
+    const inicioHoy = new Date();
+    inicioHoy.setHours(0, 0, 0, 0);
+    const movimientosHoy = await prisma.colecta.groupBy({
+      by: ['socio_id'],
+      where: { socio_id: { in: socios.map((s) => s.id) }, fecha_colecta: { gte: inicioHoy }, reversada: false },
+      _count: { _all: true },
+    });
+    const movimientosHoyPorSocio = new Map(movimientosHoy.map((f) => [f.socio_id, f._count._all]));
+
     // Préstamos vigentes: son el cuarto servicio cobrable en caja
     const prestamos = await prisma.prestamo.findMany({
       where: { socio_id: { in: socios.map((s) => s.id) }, estado: { in: ['activo', 'moroso'] } },
@@ -688,6 +698,9 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         // Derivado del expediente de trabajador de la persona, no de la columna
         // vieja `socios.es_trabajador`, que nadie actualiza
         es_trabajador: (socio.persona?.trabajadores.length ?? 0) > 0,
+        movimientos_hoy: movimientosHoyPorSocio.get(socio.id) ?? 0,
+        // Empleado de la cooperativa: distinto del trabajador de feria de arriba
+        es_trabajador_triunfo: socio.es_trabajador_triunfo,
         trabajador: socio.persona?.trabajadores[0]
           ? {
               codigo: socio.persona.trabajadores[0].codigo_trabajador,
@@ -985,6 +998,18 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
       // cajero cobrando al mismo socio espera aquí, y cuando entra ya ve la
       // cobertura que dejó este cobro (ver utils/bloqueos.ts)
       await bloquearSocio(tx, datos.socio_id);
+      // Si alguien está confirmando el cierre del año (52 o 53), el cobro
+      // espera a que termine de re-rotular las semanas
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext('calendario_colecta'))`;
+
+      // Movimiento N° del socio hoy: con el candado del socio tomado, dos cobros
+      // simultáneos no pueden sacar el mismo número
+      const inicioDia = new Date();
+      inicioDia.setHours(0, 0, 0, 0);
+      const numeroDelDia =
+        (await tx.colecta.count({
+          where: { socio_id: datos.socio_id, fecha_colecta: { gte: inicioDia } },
+        })) + 1;
 
       let totalUsd = 0;
       let totalBs = 0;
@@ -1051,6 +1076,7 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
           semanas_cobradas: datos.semanas,
           semana_cobro: datos.semana_cobro ?? null,
           ano_cobro: datos.ano_cobro ?? null,
+          numero_del_dia: numeroDelDia,
           referencia: datos.referencia ?? null,
           ubicacion_id: datos.ubicacion_id ?? socio.ubicacion_id ?? null,
           canal: datos.canal,
@@ -1862,7 +1888,8 @@ function rangoFechas(req: Request): { desde: Date; hasta: Date } {
     return { desde, hasta };
   }
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  // El día de Venezuela: toISOString daba el día siguiente después de las 8 pm
+  const hoy = textoDia(hoyDia());
   const desde = new Date(`${String(req.query.desde ?? hoy)}T00:00:00`);
   const hasta = new Date(`${String(req.query.hasta ?? req.query.desde ?? hoy)}T23:59:59.999`);
 

@@ -61,6 +61,7 @@ const cargar = (personaId: number) =>
           estado: true,
           fecha_inscripcion: true,
           es_delegado: true,
+          es_trabajador_triunfo: true,
           ubicacion: { select: { codigo: true, nombre: true } },
           cuentas_ahorro: {
             select: {
@@ -200,6 +201,7 @@ export const fichaPersona = async (personaId: number) => {
         estado: s.estado,
         fecha_inscripcion: s.fecha_inscripcion,
         es_delegado: s.es_delegado,
+        es_trabajador_triunfo: s.es_trabajador_triunfo,
         ubicacion: s.ubicacion,
       },
       cuentas: s.cuentas_ahorro.map((c) => ({

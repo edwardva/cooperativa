@@ -608,6 +608,7 @@ export const buscarSociosApertura = async (req: Request, res: Response): Promise
         nombre: true,
         apellido: true,
         estado: true,
+        es_trabajador_triunfo: true,
         // La direccion es el nombre real del sector o feria (ver nombreUbicacion)
         ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true, tipo: true } },
         // El trabajador de El Triunfo también es particular: se marca para

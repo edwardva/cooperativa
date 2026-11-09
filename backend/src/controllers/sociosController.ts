@@ -46,6 +46,7 @@ const crearSocioSchema = z.object({
   foto_url: vacioANulo(z.string().max(255).optional().nullable()),
   foto: z.string().optional(), // Base64 de la foto
   es_delegado: z.boolean().optional(),
+  es_trabajador_triunfo: z.boolean().optional(),
 });
 
 const actualizarSocioSchema = z.object({
@@ -68,6 +69,7 @@ const actualizarSocioSchema = z.object({
   foto_url: vacioANulo(z.string().max(255).optional().nullable()),
   foto: z.string().optional(), // Base64 de la foto
   es_delegado: z.boolean().optional(),
+  es_trabajador_triunfo: z.boolean().optional(),
   estado: z.enum(['activo', 'suspendido', 'retirado', 'invalido']).optional(),
 });
 
@@ -213,6 +215,8 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
     const estado = req.query.estado as string | undefined;
     const ubicacionId = req.query.ubicacion_id ? parseInt(req.query.ubicacion_id as string, 10) : undefined;
     const soloDelegados = req.query.es_delegado === '1' || req.query.es_delegado === 'true';
+    const soloTrabajadoresTriunfo =
+      req.query.es_trabajador_triunfo === '1' || req.query.es_trabajador_triunfo === 'true';
 
     const skip = (page - 1) * limit;
 
@@ -240,6 +244,10 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
       where.es_delegado = true;
     }
 
+    if (soloTrabajadoresTriunfo) {
+      where.es_trabajador_triunfo = true;
+    }
+
     // El listado impreso sólo lleva datos de texto: sin la foto, miles de
     // socios caben en una respuesta liviana
     if (paraImprimir) {
@@ -255,6 +263,7 @@ export const obtenerSocios = async (req: Request, res: Response): Promise<void> 
           fecha_inscripcion: true,
           estado: true,
           es_delegado: true,
+          es_trabajador_triunfo: true,
           ubicacion_id: true,
           ubicacion: { select: { id: true, codigo: true, nombre: true, direccion: true } },
         },
@@ -645,6 +654,7 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
           foto_url: datos.foto_url,
           foto: fotoBuffer,
           es_delegado: datos.es_delegado || false,
+          es_trabajador_triunfo: datos.es_trabajador_triunfo || false,
         },
         include: {
           ubicacion: true,

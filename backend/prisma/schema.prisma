@@ -86,6 +86,10 @@ model Socio {
   // trabajador se sabe por su persona (expediente en socios_trabajadores sin
   // retirar). Queda para no perder el dato migrado; puede borrarse más adelante.
   es_trabajador     Boolean     @default(false)
+  /// Empleado de la cooperativa El Triunfo (no confundir con el trabajador de
+  /// feria, que es un expediente en socios_trabajadores). Lo marca la oficina;
+  /// el Fondo de Trabajadores lo usa para saber a quién le corresponde.
+  es_trabajador_triunfo Boolean @default(false)
   ubicacion_id      Int?
   // Identidad de la persona (fase 2). Nulo hasta correr prisma/backfill-personas.ts
   persona_id        Int?
@@ -954,6 +958,9 @@ model Colecta {
   semanas_cobradas Int     @default(1)
   semana_cobro     Int?
   ano_cobro        Int?
+  /// Movimiento N° del socio en el día (1, 2, 3...). Se reinicia cada día y
+  /// cuenta también los reversados, para que un número no se repita (09/11)
+  numero_del_dia   Int?
   referencia       String? @db.VarChar(50)
 
   // Oficina y canal: el cuadre se pide por oficina, por colector y por canal,
@@ -1228,6 +1235,20 @@ model HistoricoTasaCambio {
 // ============================================
 // SEMANAS DE COLECTA (GESTIÓN TASA SEMANAL)
 // ============================================
+
+/// Largo de un año del calendario de colecta, cuando la funeraria lo avisa
+/// (10/11/2026): "este año cobramos hasta la 53". Sin fila, el año sigue la
+/// regla del 1 de enero (ver utils/calendarioSemanal.ts).
+model AnoColecta {
+  ano            Int      @id
+  semanas        Int // 52 o 53
+  confirmado_por Int?
+  observaciones  String?  @db.Text
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@map("anos_colecta")
+}
 
 model SemanaColecta {
   id              Int      @id @default(autoincrement())

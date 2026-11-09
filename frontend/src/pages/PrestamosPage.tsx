@@ -48,6 +48,7 @@ import { getErrorMessage } from '../services/api'
 import { formatearFecha } from '../utils/formatters'
 import { usePermissions } from '../store/authStore'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 const controlClass =
   'w-full rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-100'
@@ -76,7 +77,8 @@ const badgeEstado = (estado: string) => {
   return <Badge variant="info">Activo</Badge>
 }
 
-const hoyISO = (): string => new Date().toISOString().split('T')[0] ?? ''
+// El dia de Venezuela: toISOString daba el dia siguiente despues de las 8 pm
+const hoyISO = (): string => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
 
 export default function PrestamosPage() {
   const { hasPermission } = usePermissions()
@@ -586,8 +588,9 @@ export default function PrestamosPage() {
                 {socioElegido ? (
                   <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
                     <div>
-                      <p className="text-sm font-medium text-neutral-900">
+                      <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-neutral-900">
                         {socioElegido.apellido}, {socioElegido.nombre}
+                        {socioElegido.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto />}
                       </p>
                       <p className="text-xs text-neutral-500">
                         {socioElegido.codigo_socio} · {socioElegido.cedula}

@@ -54,10 +54,12 @@ import { getErrorCode, getErrorMessage, getErrorMessageDetallado } from '../serv
 import { formatearFecha, calcularEdad, nombreEnMayusculas } from '../utils/formatters'
 import { valorEnMayusculas } from '../utils/mayusculas'
 import { usePermissions } from '../store/authStore'
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 type Tab = 'activo' | 'suspendido' | 'retirado' | 'todos'
 
-const hoyISO = (): string => new Date().toISOString().split('T')[0] ?? ''
+// El dia de Venezuela: toISOString daba el dia siguiente despues de las 8 pm
+const hoyISO = (): string => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
 
 const emptyBeneficiarioForm = (): BeneficiarioFormData => ({
   cedula: '',
@@ -1918,8 +1920,9 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         {wizardPaso === 2 && wizardSocio && (
           <div className="space-y-4">
             <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-              <p className="text-sm font-semibold text-neutral-900">
+              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-neutral-900">
                 {wizardSocio.apellido}, {wizardSocio.nombre}
+                {wizardSocio.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto />}
               </p>
               <p className="text-xs text-neutral-500">
                 {wizardSocio.codigo_socio} • {wizardSocio.cedula} • Tel. {wizardSocio.telefono || 'sin dato'}
@@ -2010,6 +2013,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                 <span className="font-medium">
                   {wizardSocio.apellido}, {wizardSocio.nombre}
                 </span>
+                {wizardSocio.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto className="ml-2" />}
               </p>
               {/* Solo lectura: los datos del socio se editan en el módulo de Socios */}
               <p>

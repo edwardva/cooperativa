@@ -106,6 +106,8 @@ export interface SocioApertura {
     tipo: 'sector' | 'feria';
   } | null;
   es_trabajador: boolean;
+  /** Empleado de la cooperativa El Triunfo (no el trabajador de feria) */
+  es_trabajador_triunfo?: boolean;
   cuentas_ahorro: {
     id: number;
     numero_cuenta: string;

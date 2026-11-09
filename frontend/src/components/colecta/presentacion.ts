@@ -18,7 +18,9 @@ export const fechaCorta = (
   anoCompleto = false
 ): string => {
   if (!valor) return ''
-  const soloDia = /^(\d{4})-(\d{2})-(\d{2})$/.exec(valor)
+  // Tambien la columna de solo fecha que llega serializada como medianoche UTC
+  // ("2027-01-17T00:00:00.000Z"): es un dia, no un instante
+  const soloDia = /^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.000)?Z)?$/.exec(valor)
   if (soloDia) {
     const [, a, m, d] = soloDia
     return `${d}/${m}/${anoCompleto ? a : a!.slice(2)}`

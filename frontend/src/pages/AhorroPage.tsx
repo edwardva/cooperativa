@@ -50,6 +50,7 @@ import type {
   SocioApertura,
   MovimientoRegistrado,
 } from '../services/ahorroService';
+import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo';
 
 // ============================================
 // TIPOS Y MONEDA
@@ -2464,9 +2465,10 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
                               {socio.nombre} {socio.apellido}
                             </p>
                             {etiquetaEstado(socio.estado)}
+                            {socio.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto />}
                             {socio.es_trabajador && (
                               <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-medium rounded">
-                                Trabajador
+                                Trabajador de feria
                               </span>
                             )}
                           </div>
@@ -2532,9 +2534,10 @@ const ModalAperturaCuenta = ({ onClose, onSuccess }: ModalAperturaCuentaProps) =
                         {socioSeleccionado.nombre} {socioSeleccionado.apellido}
                       </p>
                       {etiquetaEstado(socioSeleccionado.estado)}
+                      {socioSeleccionado.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto />}
                       {socioSeleccionado.es_trabajador && (
                         <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-medium rounded">
-                          Trabajador
+                          Trabajador de feria
                         </span>
                       )}
                     </div>
