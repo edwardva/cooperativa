@@ -675,7 +675,10 @@ export interface MovimientoHistorial {
   monto_usd: number
   monto_bs: number
   saldo_bs: number | null
+  saldo_usd: number | null
   cubre_hasta: string | null
+  /** Funeraria y salud: si el acuerdo quedó suspendido, desde qué fecha */
+  suspension: string | null
   reversado: boolean
 }
 
@@ -683,6 +686,8 @@ export interface HistorialRapido {
   servicio: ServicioHistorial
   titulo: string
   resumen: string
+  /** Ahorro: la cuenta en divisas muestra el saldo en $ */
+  moneda?: 'bs' | 'usd'
   movimientos: MovimientoHistorial[]
 }
 

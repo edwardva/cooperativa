@@ -53,6 +53,8 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
   }, [consulta])
 
   const conSaldo = historial?.servicio === 'ahorro'
+  // Cuenta en divisas: el saldo que importa es el de $ (10/11)
+  const enDivisas = historial?.moneda === 'usd'
   const conCobertura = historial?.servicio === 'funeraria' || historial?.servicio === 'salud'
 
   return (
@@ -82,14 +84,15 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
                   <th className="px-3 py-2 text-left">Tipo</th>
                   <th className="px-3 py-2 text-left">Detalle</th>
                   {conCobertura && <th className="px-3 py-2 text-left">Cubre hasta</th>}
+                  {conCobertura && <th className="px-3 py-2 text-left">Suspensión</th>}
                   <th className="px-3 py-2 text-right">Bs</th>
                   <th className="px-3 py-2 text-right">$</th>
-                  {conSaldo && <th className="px-3 py-2 text-right">Saldo Bs</th>}
+                  {conSaldo && <th className="px-3 py-2 text-right">{enDivisas ? 'Saldo $' : 'Saldo Bs'}</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {historial.movimientos.map((m, i) => (
-                  <tr key={i} className={m.reversado ? 'text-neutral-400 line-through' : 'text-neutral-800'}>
+                  <tr key={i} className={m.reversado ? 'text-neutral-400 line-through' : m.tipo === 'Suspensión' ? 'bg-red-50/60 text-neutral-800' : 'text-neutral-800'}>
                     <td className="whitespace-nowrap px-3 py-2">{fechaCorta(m.fecha, true)}</td>
                     <td className="whitespace-nowrap px-3 py-2 font-medium">
                       {m.tipo}
@@ -97,11 +100,19 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
                     </td>
                     <td className="px-3 py-2 text-neutral-600">{m.detalle ?? ''}</td>
                     {conCobertura && <td className="whitespace-nowrap px-3 py-2">{m.cubre_hasta ?? ''}</td>}
+                    {/* En blanco si quedó activo (10/11) */}
+                    {conCobertura && (
+                      <td className="whitespace-nowrap px-3 py-2 font-medium text-red-700">
+                        {m.suspension ? fechaCorta(m.suspension, true) : ''}
+                      </td>
+                    )}
                     <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{money(m.monto_bs)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{money(m.monto_usd)}</td>
                     {conSaldo && (
                       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
-                        {m.saldo_bs === null ? '' : money(m.saldo_bs)}
+                        {enDivisas
+                          ? m.saldo_usd === null ? '' : money(m.saldo_usd)
+                          : m.saldo_bs === null ? '' : money(m.saldo_bs)}
                       </td>
                     )}
                   </tr>

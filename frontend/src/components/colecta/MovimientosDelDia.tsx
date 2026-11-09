@@ -43,6 +43,29 @@ const coincide = (colecta: Colecta, consulta: string): boolean => {
   return campos.some((c) => c.includes(q))
 }
 
+/**
+ * Salud se cobra por acuerdo pero se registra un renglón por persona (los
+ * demás en 0): se muestra como una sola línea, con la suma (10/11).
+ */
+const detallesParaMostrar = (colecta: Colecta) => {
+  const lista: Colecta['detalles'] = []
+  let salud: Colecta['detalles'][number] | null = null
+  for (const d of colecta.detalles) {
+    if (d.servicio !== 'salud') {
+      lista.push(d)
+      continue
+    }
+    if (!salud) {
+      salud = { ...d, monto_usd: Number(d.monto_usd), monto_bs: Number(d.monto_bs) }
+      lista.push(salud)
+    } else {
+      salud.monto_usd = Number(salud.monto_usd) + Number(d.monto_usd)
+      salud.monto_bs = Number(salud.monto_bs) + Number(d.monto_bs)
+    }
+  }
+  return lista
+}
+
 const etiquetaServicio: Record<string, string> = {
   ahorro: 'Ahorro',
   funeraria: 'Funeraria',
@@ -171,7 +194,7 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
                 {ultimo.numero_del_dia != null && <> · Mov. {ultimo.numero_del_dia} del socio hoy</>}
               </p>
               <div className="mt-2 flex flex-wrap gap-1">
-                {ultimo.detalles.map((d) => (
+                {detallesParaMostrar(ultimo).map((d) => (
                   <span
                     key={d.id}
                     className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700"
@@ -296,7 +319,7 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
-                        {colecta.detalles.map((d) => (
+                        {detallesParaMostrar(colecta).map((d) => (
                           <span
                             key={d.id}
                             className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700"
@@ -366,7 +389,7 @@ export const MovimientosDelDia = ({ onCambio, socio, onVerTodos }: Props) => {
                 <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Se va a deshacer
                 </p>
-                {aReversar.detalles.map((d) => (
+                {detallesParaMostrar(aReversar).map((d) => (
                   <div
                     key={d.id}
                     className="flex justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm"
