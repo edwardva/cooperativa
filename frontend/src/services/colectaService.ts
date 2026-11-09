@@ -676,6 +676,8 @@ export interface MovimientoHistorial {
   monto_bs: number
   saldo_bs: number | null
   cubre_hasta: string | null
+  /** Funeraria y salud: si el acuerdo quedó suspendido, desde qué fecha */
+  suspension: string | null
   reversado: boolean
 }
 

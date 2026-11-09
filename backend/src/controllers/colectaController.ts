@@ -1106,6 +1106,7 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
           cobertura_semana_antes: number | null;
           cobertura_ano_despues: number | null;
           cobertura_semana_despues: number | null;
+          fecha_suspension_antes?: Date | null;
         } = {
           semanas: null,
           tarifa_unitaria_usd: null,
@@ -1243,6 +1244,9 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
             cobertura_semana_antes: coberturaAntes?.semana ?? null,
             cobertura_ano_despues: coberturaDespues?.ano ?? null,
             cobertura_semana_despues: coberturaDespues?.semana ?? null,
+            // Para que el reverso pueda volver a suspenderlo si este cobro lo reactivó
+            fecha_suspension_antes:
+              acuerdo.estado === 'suspendido' ? (acuerdo.fecha_suspension ?? new Date()) : null,
           };
 
           const datosMovimiento = {
@@ -1284,12 +1288,22 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
             ...(reactivar ? { estado: 'activo' as const, fecha_suspension: null } : {}),
           };
 
+          // Cómo quedó el acuerdo: el historial muestra si sigue suspendido
+          const quedoSuspendido =
+            acuerdo.estado === 'suspendido' && !reactivar ? (acuerdo.fecha_suspension ?? new Date()) : null;
+
           if (detalle.servicio === 'funeraria') {
-            await tx.movimientoFuneraria.create({ data: datosMovimiento });
+            await tx.movimientoFuneraria.create({
+              data: { ...datosMovimiento, fecha_suspension: quedoSuspendido },
+            });
             await tx.acuerdoFuneraria.update({ where: { id: acuerdo.id }, data: datosAcuerdo });
           } else {
             await tx.movimientoSalud.create({
-              data: { ...datosMovimiento, ubicacion_id: datos.ubicacion_id ?? socio.ubicacion_id ?? null },
+              data: {
+                ...datosMovimiento,
+                fecha_suspension: quedoSuspendido,
+                ubicacion_id: datos.ubicacion_id ?? socio.ubicacion_id ?? null,
+              },
             });
             await tx.acuerdoSalud.update({ where: { id: acuerdo.id }, data: datosAcuerdo });
           }
@@ -1771,6 +1785,12 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
             concepto: `Reverso de colecta #${colecta.id}: ${validacion.data.motivo}`,
           };
 
+          // Si el cobro había reactivado un acuerdo suspendido, el reverso lo
+          // vuelve a dejar suspendido desde la misma fecha (10/11)
+          const resuspender = detalle.fecha_suspension_antes
+            ? { estado: 'suspendido' as const, fecha_suspension: detalle.fecha_suspension_antes }
+            : {};
+
           // Datos viejos sin cobertura guardada: se cae al cálculo por contador
           const datosAcuerdo = coberturaAntes
             ? {
@@ -1783,7 +1803,12 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
           if (detalle.servicio === 'funeraria') {
             const acuerdo = await tx.acuerdoFuneraria.findUnique({ where: { id: detalle.referencia_id } });
             if (!acuerdo) continue;
-            await tx.movimientoFuneraria.create({ data: datosReverso });
+            await tx.movimientoFuneraria.create({
+              data: {
+                ...datosReverso,
+                fecha_suspension: detalle.fecha_suspension_antes ?? (acuerdo.estado === 'suspendido' ? acuerdo.fecha_suspension : null),
+              },
+            });
 
             // El pago original se marca: sin esto seguiría contando como
             // vigente y el "último pago" del socio tomaría un cobro deshecho.
@@ -1805,12 +1830,18 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
               data: {
                 ...(datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas }),
                 ...(semanas > 0 ? { fecha_ultimo_pago: previo?.fecha_movimiento ?? null } : {}),
+                ...resuspender,
               },
             });
           } else {
             const acuerdo = await tx.acuerdoSalud.findUnique({ where: { id: detalle.referencia_id } });
             if (!acuerdo) continue;
-            await tx.movimientoSalud.create({ data: datosReverso });
+            await tx.movimientoSalud.create({
+              data: {
+                ...datosReverso,
+                fecha_suspension: detalle.fecha_suspension_antes ?? (acuerdo.estado === 'suspendido' ? acuerdo.fecha_suspension : null),
+              },
+            });
 
             await tx.movimientoSalud.updateMany({
               where: { colecta_id: colecta.id, acuerdo_id: acuerdo.id, tipo_movimiento: 'pago' },
@@ -1828,6 +1859,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
               data: {
                 ...(datosAcuerdo ?? { semanas_sin_pago: acuerdo.semanas_sin_pago + semanas }),
                 ...(semanas > 0 ? { fecha_ultimo_pago: previo?.fecha_movimiento ?? null } : {}),
+                ...resuspender,
               },
             });
           }

@@ -620,6 +620,9 @@ model MovimientoFuneraria {
   // De que colecta vino, y si ya fue reversado. Sin esto no hay forma de saber
   // que un pago quedo sin efecto: el reverso crea un movimiento espejo, pero
   // el pago original seguia figurando como vigente.
+  /// Si el acuerdo QUEDÓ suspendido después de este movimiento, desde cuándo
+  /// (nulo: quedó activo). Se ve en el historial de la colecta (10/11)
+  fecha_suspension DateTime? @db.Date
   colecta_id       Int?
   reversado        Boolean  @default(false)
   concepto         String?  @db.Text
@@ -703,6 +706,9 @@ model MovimientoSalud {
   ano_cobertura    Int?
   semana_cobertura Int?
   // De que colecta vino, y si ya fue reversado (ver nota en MovimientoFuneraria)
+  /// Si el acuerdo QUEDÓ suspendido después de este movimiento, desde cuándo
+  /// (nulo: quedó activo). Se ve en el historial de la colecta (10/11)
+  fecha_suspension DateTime? @db.Date
   colecta_id       Int?
   reversado        Boolean  @default(false)
   numero_recibo    String?  @db.VarChar(30)
@@ -1007,6 +1013,9 @@ model Colecta {
 
 model DetalleColecta {
   id            Int     @id @default(autoincrement())
+  /// Suspensión del acuerdo ANTES del cobro: si el cobro lo reactivó, el
+  /// reverso lo vuelve a dejar suspendido desde esa misma fecha (10/11)
+  fecha_suspension_antes DateTime? @db.Date
   colecta_id    Int
   servicio      String  @db.VarChar(20) // ahorro, funeraria, salud, prestamo
   referencia_id Int? // ID del acuerdo o préstamo
