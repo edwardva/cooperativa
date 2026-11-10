@@ -17,6 +17,7 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { obtenerOCrearFichaTitular } from '../utils/fichaTitular';
+import { agregarAlAcuerdo, retirarDelAcuerdo } from '../utils/miembrosFuneraria';
 import {
   ErrorTraspaso,
   type PersonaTraspaso,
@@ -61,15 +62,17 @@ async function planificar(cliente: Cliente, acuerdoId: number, expediente: strin
         );
 
   // Beneficiarios vigentes del acuerdo (fallecidos incluidos: son historial del acuerdo)
-  const miembros = await cliente.beneficiario.findMany({
-    where: {
-      acuerdo_funeraria_id: acuerdo.id,
-      socio_id: anterior.id,
-      fecha_retiro_funeraria: null,
-      NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
-    },
-    orderBy: { id: 'asc' },
-  });
+  const miembros = (
+    await cliente.acuerdoFunerariaBeneficiario.findMany({
+      where: {
+        acuerdo_id: acuerdo.id,
+        fecha_retiro: null,
+        beneficiario: { socio_id: anterior.id, NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } } },
+      },
+      include: { beneficiario: true },
+      orderBy: { beneficiario_id: 'asc' },
+    })
+  ).map((m) => m.beneficiario);
 
   const fichaNuevo = await cliente.beneficiario.findFirst({
     where: { socio_id: nuevo.id, parentesco: { equals: 'titular', mode: 'insensitive' } },
@@ -92,23 +95,9 @@ async function planificar(cliente: Cliente, acuerdoId: number, expediente: strin
       personas.push({ ...base, accion: 'es_nuevo_titular', nota: 'Es quien recibe el acuerdo: pasa a ser el titular.', requiere_parentesco: false, destino: null });
       continue;
     }
+    // Si ya está en otro acuerdo del nuevo titular, sigue allá y además entra a
+    // este: una persona puede estar en varios acuerdos de funeraria (10/11)
     const destino = await fichaEnExpediente(cliente, nuevo.id, m.cedula);
-    if (destino && destino.acuerdo_funeraria_id !== null && destino.acuerdo_funeraria_id !== acuerdo.id && destino.fecha_retiro_funeraria === null) {
-      const otro = await cliente.acuerdoFuneraria.findUnique({
-        where: { id: destino.acuerdo_funeraria_id },
-        select: { numero_acuerdo: true, estado: true },
-      });
-      if (otro && otro.estado !== 'retirado') {
-        personas.push({
-          ...base,
-          accion: 'excluida',
-          nota: `Ya está en el acuerdo de funeraria ${otro.numero_acuerdo || ''} del nuevo titular: no se duplica.`,
-          requiere_parentesco: false,
-          destino,
-        });
-        continue;
-      }
-    }
     if (destino && esTitular(destino.parentesco)) {
       // Socio con la misma cédula registrado como titular de este expediente: no se toca su ficha
       personas.push({ ...base, accion: 'excluida', nota: 'Su cédula es la del titular del nuevo expediente.', requiere_parentesco: false, destino });
@@ -216,24 +205,22 @@ export const confirmarTraspasoFuneraria = async (req: Request, res: Response): P
         for (const p of plan.personas) {
           let destinoId: number | null = null;
           if (p.accion === 'pasa') {
-            const copia = await copiarFichaAExpediente(tx, p.origen, plan.nuevo.id, parentescoDe.get(p.clave)!, {
-              acuerdo_funeraria_id: plan.acuerdo.id,
-            });
+            const copia = await copiarFichaAExpediente(tx, p.origen, plan.nuevo.id, parentescoDe.get(p.clave)!);
             destinoId = copia.id;
           } else if (p.accion === 'reutiliza') {
             await tx.beneficiario.update({
               where: { id: p.destino!.id },
               data: {
-                acuerdo_funeraria_id: plan.acuerdo.id,
-                fecha_retiro_funeraria: null,
                 parentesco: parentescoDe.get(p.clave)!,
                 ...datosFallecimiento(p.origen, p.destino!),
               },
             });
             destinoId = p.destino!.id;
           }
-          // La ficha del expediente anterior sale del acuerdo y queda como historial
-          await tx.beneficiario.update({ where: { id: p.origen.id }, data: { fecha_retiro_funeraria: hoy } });
+          // La ficha del expediente anterior sale del acuerdo y queda como
+          // historial; la del nuevo expediente entra en su lugar
+          await retirarDelAcuerdo(tx, plan.acuerdo.id, p.origen.id, hoy);
+          if (destinoId !== null) await agregarAlAcuerdo(tx, plan.acuerdo.id, [destinoId], hoy);
           detalle.push({ cedula: p.cedula, accion: p.accion, ficha_origen: p.origen.id, ficha_destino: destinoId });
         }
 

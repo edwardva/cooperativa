@@ -142,13 +142,45 @@ export interface Beneficiario {
   telefono: string | null
   estado: 'activo' | 'inactivo' | 'retirado' | 'fallecido'
   fecha_fallecimiento: string | null
-  /** Acuerdo de funeraria en el que figura; nulo si no está en funeraria */
-  acuerdo_funeraria_id: number | null
-  /** Retiro propio de funeraria (no cambia `estado`, que es el de la persona) */
-  fecha_retiro_funeraria: string | null
+  /**
+   * Acuerdos de funeraria en que figura (puede estar en varios a la vez).
+   * Cada entrada es una vez que entró a un acuerdo; con fecha_retiro, ya salió.
+   * Solo lo trae obtenerBeneficiarios.
+   */
+  membresias_funeraria?: MembresiaFuneraria[]
   created_at: string
   updated_at: string
 }
+
+export interface MembresiaFuneraria {
+  id: number
+  acuerdo_id: number
+  fecha_ingreso: string
+  fecha_retiro: string | null
+}
+
+/** Beneficiario visto dentro de UN acuerdo de funeraria */
+export interface BeneficiarioEnAcuerdo extends Beneficiario {
+  acuerdo_funeraria_id: number
+  /** Retiro de ESTE acuerdo (propio de funeraria: no cambia `estado`, que es el de la persona) */
+  fecha_retiro_funeraria: string | null
+}
+
+/**
+ * Las personas que están o estuvieron en el acuerdo de funeraria, con su
+ * situación en ESE acuerdo. Si salió y volvió a entrar, cuenta la vez vigente.
+ */
+export const beneficiariosEnAcuerdoFuneraria = (lista: Beneficiario[], acuerdoId: number): BeneficiarioEnAcuerdo[] =>
+  lista.flatMap((b) => {
+    const enEste = (b.membresias_funeraria ?? []).filter((m) => m.acuerdo_id === acuerdoId)
+    if (enEste.length === 0) return []
+    const actual = enEste.find((m) => m.fecha_retiro === null) ?? enEste[enEste.length - 1]!
+    return [{ ...b, acuerdo_funeraria_id: acuerdoId, fecha_retiro_funeraria: actual.fecha_retiro }]
+  })
+
+/** Acuerdos de funeraria en que la persona está vigente hoy */
+export const acuerdosFunerariaVigentes = (b: Beneficiario) =>
+  (b.membresias_funeraria ?? []).filter((m) => m.fecha_retiro === null).map((m) => m.acuerdo_id)
 
 export interface BeneficiarioFormData {
   cedula: string
@@ -344,7 +376,8 @@ export const obtenerBeneficiarios = async (
 export const crearBeneficiario = async (
   socioId: number,
   data: BeneficiarioFormData & { acuerdo_funeraria_id?: number }
-): Promise<SingleResponse<Beneficiario>> => {
+): Promise<SingleResponse<Beneficiario & { reingreso: boolean }>> => {
+  // reingreso: la persona ya había estado registrada y se volvió a registrar con su misma ficha
   const response = await apiClient.post(`/socios/${socioId}/beneficiarios`, data)
   return response.data
 }

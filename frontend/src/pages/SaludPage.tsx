@@ -15,6 +15,7 @@ import { imprimirCuandoEsteListo } from '../components/print/EncabezadoImpresion
 import type { PrintableFichaAcuerdoProps } from '../components/print/PrintableFichaAcuerdo';
 import { PrintableListadoGrupos } from '../components/print/PrintableListadoGrupos';
 import { ModalRevertirConNuevoAcuerdo } from '../components/funeraria/ModalRevertirConNuevoAcuerdo';
+import { ModalImportarDesdeFuneraria } from '../components/salud/ModalImportarDesdeFuneraria';
 import { ModalTraspasoAcuerdo, type AcuerdoATraspasar } from '../components/traspaso/ModalTraspasoAcuerdo';
 import { SortableHeader } from '../components/ui/SortableHeader';
 
@@ -41,11 +42,12 @@ import {
   UserMinus,
   Edit2,
   Trash2,
-  RotateCcw,
   ArrowRight,
   ArrowLeft,
   ArrowRightLeft,
-  X,
+  RotateCcw,
+  Download,
+  Upload,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -76,14 +78,6 @@ import { usePermissions } from '../store/authStore'
 import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 type Tab = 'activo' | 'suspendido' | 'retirado' | 'todos'
-
-/** Datos mínimos necesarios para abrir el modal de retiro individual. */
-type RetiroCandidato = {
-  id: number
-  numero_acuerdo: string | null
-  estado: string
-  beneficiario: { cedula: string; nombre_completo: string }
-}
 
 /** Forma mínima que necesita abrirCambiarEstado; AcuerdoSalud y GrupoSalud.titular la cumplen. */
 type CambiarEstadoCandidato = {
@@ -257,8 +251,11 @@ const handleSort = (field: string) => {
   }, [paginaActual, busqueda, tab, itemsPorPagina])
 
   // ============================================
-  // WIZARD: NUEVO ACUERDO (titular + beneficiarios en un solo paso)
+  // WIZARD: NUEVO ACUERDO
   // ============================================
+  // Igual que en Funeraria (pedido del 10/11): primero se guarda el acuerdo con
+  // el titular, con el número propuesto "expediente-0" (editable), y después se
+  // abre el detalle para agregar ahí a los beneficiarios.
   const [wizardAbierto, setWizardAbierto] = useState(false)
   const [wizardPaso, setWizardPaso] = useState<1 | 2 | 3>(1)
   const [wizardExpediente, setWizardExpediente] = useState('')
@@ -267,9 +264,6 @@ const handleSort = (field: string) => {
   const [wizardSocio, setWizardSocio] = useState<Socio | null>(null)
   const [wizardNumeroAcuerdo, setWizardNumeroAcuerdo] = useState('')
   const [wizardFechaInicio, setWizardFechaInicio] = useState(hoyISO())
-  const [wizardBeneficiarios, setWizardBeneficiarios] = useState<BeneficiarioGrupoInput[]>([])
-  const [wizardBenefForm, setWizardBenefForm] = useState<BeneficiarioGrupoInput>(emptyBeneficiarioGrupoForm())
-  const [wizardBenefError, setWizardBenefError] = useState<string | null>(null)
   const [wizardEnviando, setWizardEnviando] = useState(false)
 
   // Acuerdos de salud vigentes del socio buscado: si el titular ya no estará
@@ -340,9 +334,6 @@ const handleSort = (field: string) => {
     setWizardSocio(null)
     setWizardNumeroAcuerdo('')
     setWizardFechaInicio(hoyISO())
-    setWizardBeneficiarios([])
-    setWizardBenefForm(emptyBeneficiarioGrupoForm())
-    setWizardBenefError(null)
     setWizardAcuerdosTitular([])
     setWizardSocioEncontrado(null)
   }
@@ -382,6 +373,9 @@ const handleSort = (field: string) => {
         return
       }
 
+      // Número propuesto: expediente-0 (o el siguiente libre); se puede modificar
+      const sugerido = await saludService.obtenerNumeroSugeridoSalud(socio.id).catch(() => null)
+      setWizardNumeroAcuerdo(sugerido?.data?.numero_sugerido ?? `${socio.codigo_socio}-0`)
       setWizardSocio(socio)
       setWizardPaso(2)
     } catch (err) {
@@ -389,34 +383,6 @@ const handleSort = (field: string) => {
     } finally {
       setWizardBuscando(false)
     }
-  }
-
-  const wizardBenefFormValido =
-    wizardBenefForm.cedula.trim() !== '' &&
-    wizardBenefForm.nombre.trim() !== '' &&
-    wizardBenefForm.apellido.trim() !== '' &&
-    wizardBenefForm.parentesco.trim() !== '' &&
-    wizardBenefForm.fecha_nacimiento.trim() !== '' &&
-    wizardBenefForm.fecha_ingreso.trim() !== ''
-
-  const agregarBeneficiarioAWizard = () => {
-    if (!wizardBenefFormValido) {
-      setWizardBenefError('Completa cédula, nombre, apellido, parentesco, fecha de nacimiento y fecha de ingreso.')
-      return
-    }
-    // "MENOR" puede repetirse: cada menor sin cédula recibe su propio MENOR-N al guardar
-    if (wizardBenefForm.cedula !== 'MENOR' && wizardBeneficiarios.some((b) => b.cedula === wizardBenefForm.cedula)) {
-      setWizardBenefError('Ya agregaste un beneficiario con esa cédula.')
-      return
-    }
-    setWizardBeneficiarios((prev) => [...prev, wizardBenefForm])
-    setWizardBenefForm(emptyBeneficiarioGrupoForm())
-    setWizardBenefError(null)
-  }
-
-  // Por posición: varios menores pueden tener la misma cédula "MENOR"
-  const quitarBeneficiarioDeWizard = (indice: number) => {
-    setWizardBeneficiarios((prev) => prev.filter((_, i) => i !== indice))
   }
 
   const wizardPaso2Valido = wizardNumeroAcuerdo.trim() !== '' && wizardFechaInicio.trim() !== ''
@@ -428,18 +394,24 @@ const handleSort = (field: string) => {
     setWizardError(null)
 
     try {
+      // Solo el titular: los beneficiarios se agregan en el detalle que se abre después
       const respuesta = await saludService.crearGrupoAcuerdo({
         socio_id: wizardSocio.id,
         numero_acuerdo: wizardNumeroAcuerdo.trim(),
         fecha_inicio: new Date(wizardFechaInicio).toISOString(),
-        beneficiarios: wizardBeneficiarios,
+        beneficiarios: [],
       })
 
       if (!respuesta.success) throw new Error('No fue posible crear el acuerdo')
 
+      const numeroCreado = respuesta.data.numero_acuerdo ?? wizardNumeroAcuerdo.trim()
       cerrarWizard()
       await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
-      window.alert('Acuerdo de salud creado exitosamente')
+      window.alert(
+        `Acuerdo de salud ${numeroCreado} creado con los datos del titular.\n\n` +
+          'A continuación se abre el detalle del acuerdo para agregar sus beneficiarios.'
+      )
+      await abrirGrupo(numeroCreado)
     } catch (err) {
       setWizardError(getErrorMessageDetallado(err))
     } finally {
@@ -552,21 +524,33 @@ const handleSort = (field: string) => {
 
   // Modificar la fecha de inicio del acuerdo (p. ej. uno creado al importar
   // desde Funeraria, que empieza hoy por defecto)
+  // "Modificar" del titular (pedido del 10/11): N° de acuerdo y fecha de inicio,
+  // como el "Editar" de Funeraria. Sus datos personales se modifican en Socios.
   const [fechaInicioEditando, setFechaInicioEditando] = useState<string | null>(null)
+  const [numeroAcuerdoEditando, setNumeroAcuerdoEditando] = useState('')
   const [fechaInicioGuardando, setFechaInicioGuardando] = useState(false)
   const [fechaInicioError, setFechaInicioError] = useState<string | null>(null)
 
   const abrirEditarFechaInicio = () => {
     setFechaInicioError(null)
+    setNumeroAcuerdoEditando(grupoActual?.numero_acuerdo ?? '')
     setFechaInicioEditando((grupoActual?.fecha_inicio ?? hoyISO()).slice(0, 10))
   }
 
   const guardarFechaInicio = async () => {
     if (!grupoActual?.numero_acuerdo || !fechaInicioEditando) return
+    const numeroNuevo = numeroAcuerdoEditando.trim()
+    if (!numeroNuevo) {
+      setFechaInicioError('El N° de acuerdo es requerido.')
+      return
+    }
     setFechaInicioGuardando(true)
     setFechaInicioError(null)
     try {
-      const respuesta = await saludService.actualizarGrupoAcuerdo(grupoActual.numero_acuerdo, { fecha_inicio: fechaInicioEditando })
+      const respuesta = await saludService.actualizarGrupoAcuerdo(grupoActual.numero_acuerdo, {
+        fecha_inicio: fechaInicioEditando,
+        ...(numeroNuevo !== grupoActual.numero_acuerdo ? { numero_acuerdo_nuevo: numeroNuevo } : {}),
+      })
       if (!respuesta.success) throw new Error('No fue posible guardar la fecha')
       setGrupoActual(respuesta.data)
       setFechaInicioEditando(null)
@@ -626,6 +610,7 @@ const handleSort = (field: string) => {
       fecha_ingreso: miembro.fecha_ingreso?.split('T')[0] || '',
       parentesco: miembro.parentesco,
       telefono: miembro.telefono || '',
+      estado: miembro.estado_persona === 'fallecido' ? 'fallecido' : 'activo',
     })
     setBeneficiarioError(null)
     setBeneficiarioModalAbierto(true)
@@ -656,7 +641,9 @@ const handleSort = (field: string) => {
       } else if (beneficiarioEditando) {
         const socioId = grupoActual.socio?.id
         if (!socioId) throw new Error('No se encontró el socio del acuerdo')
-        await sociosService.actualizarBeneficiario(socioId, beneficiarioEditando.beneficiario_id, beneficiarioForm)
+        // Solo datos personales: fallecido / revertir tienen su propio botón
+        const { estado: _estado, ...datos } = beneficiarioForm
+        await sociosService.actualizarBeneficiario(socioId, beneficiarioEditando.beneficiario_id, datos)
       } else {
         await saludService.agregarBeneficiarioAGrupo(grupoActual.numero_acuerdo, beneficiarioForm)
       }
@@ -669,6 +656,8 @@ const handleSort = (field: string) => {
     }
   }
 
+  // Botones de cada beneficiario como en Funeraria (pedido del 10/11):
+  // Editar, Marcar como fallecido, Retirar; y Revertir si está fallecido.
   const marcarFallecidoGrupo = async (miembro: MiembroGrupoSalud) => {
     const socioId = grupoActual?.socio?.id
     if (!socioId) return
@@ -693,11 +682,9 @@ const handleSort = (field: string) => {
   // acuerdo de funeraria del mismo titular para esta persona
   const [revertirNuevoAcuerdo, setRevertirNuevoAcuerdo] = useState<MiembroGrupoSalud | null>(null)
 
-  // Corrige un "fallecido" marcado por error. El estado es de la persona, así
-  // que se revierte también en Funeraria. En Salud el cupo depende del estado
-  // del acuerdo, pero si está en un acuerdo de funeraria lleno el backend no
-  // lo permite (para que no quede activo en uno y fallecido en otro): en ese
-  // caso se ofrece ModalRevertirConNuevoAcuerdo.
+  // Corrige un "fallecido" marcado por error. El estado es de la persona: se
+  // revierte también en Funeraria. Si allá su acuerdo ya está lleno, el backend
+  // no lo permite y se ofrece ModalRevertirConNuevoAcuerdo.
   const revertirFallecidoGrupo = async (miembro: MiembroGrupoSalud) => {
     const socioId = grupoActual?.socio?.id
     if (!socioId) return
@@ -719,6 +706,50 @@ const handleSort = (field: string) => {
     }
   }
 
+  // Retirar a un beneficiario de ESTE acuerdo de salud (solo Salud: en
+  // Funeraria no cambia nada). Pide fecha y motivo y confirma dos veces.
+  const [retirarBenef, setRetirarBenef] = useState<MiembroGrupoSalud | null>(null)
+  const [retirarBenefFecha, setRetirarBenefFecha] = useState(hoyISO())
+  const [retirarBenefMotivo, setRetirarBenefMotivo] = useState<(typeof saludService.MOTIVOS_RETIRO_SALUD)[number]>('Voluntario')
+  const [retirarBenefEnviando, setRetirarBenefEnviando] = useState(false)
+  const [retirarBenefError, setRetirarBenefError] = useState<string | null>(null)
+
+  const abrirRetirarBeneficiario = (miembro: MiembroGrupoSalud) => {
+    setRetirarBenef(miembro)
+    setRetirarBenefFecha(hoyISO())
+    setRetirarBenefMotivo('Voluntario')
+    setRetirarBenefError(null)
+  }
+
+  const confirmarRetirarBeneficiario = async () => {
+    if (!retirarBenef || !retirarBenefFecha) return
+    const nombreCompleto = `${retirarBenef.nombre} ${retirarBenef.apellido}`
+    const confirmado = window.confirm(
+      `¿Retirar a ${nombreCompleto} (C.I. ${retirarBenef.cedula}) de este acuerdo de salud?\n\n` +
+        'Dejará de estar en el acuerdo. Si también está en Funeraria, allá no cambia nada.'
+    )
+    if (!confirmado) return
+    const reconfirmado = window.confirm(
+      `Confirma de nuevo: ¿seguro que deseas retirar a ${nombreCompleto}? Esta acción no se puede deshacer.`
+    )
+    if (!reconfirmado) return
+
+    setRetirarBenefEnviando(true)
+    setRetirarBenefError(null)
+    try {
+      await saludService.retirarBeneficiario(retirarBenef.acuerdo_id, {
+        fecha_retiro: retirarBenefFecha,
+        motivo_retiro: retirarBenefMotivo,
+      })
+      setRetirarBenef(null)
+      await Promise.all([recargarGrupoActual(), cargarAcuerdos(), cargarEstadisticas()])
+    } catch (err) {
+      setRetirarBenefError(getErrorMessage(err))
+    } finally {
+      setRetirarBenefEnviando(false)
+    }
+  }
+
   const completarRevertirNuevoAcuerdo = async (numeroAcuerdo: string | null) => {
     const miembro = revertirNuevoAcuerdo
     setRevertirNuevoAcuerdo(null)
@@ -726,21 +757,6 @@ const handleSort = (field: string) => {
     window.alert(
       `Se abrió el acuerdo de funeraria ${numeroAcuerdo || 'sin número'} y ${miembro?.nombre} ${miembro?.apellido} volvió a estar activo en Funeraria y en Salud.`
     )
-  }
-
-  const eliminarMiembroGrupo = async (miembro: MiembroGrupoSalud) => {
-    const confirmado = window.confirm(
-      `¿Eliminar definitivamente a ${miembro.nombre} ${miembro.apellido} de este acuerdo de salud? Solo se permite si no tiene pagos registrados.`
-    )
-    if (!confirmado) return
-
-    try {
-      const respuesta = await saludService.eliminarAcuerdo(miembro.acuerdo_id)
-      if (!respuesta.success) throw new Error('No fue posible eliminar')
-      await Promise.all([recargarGrupoActual(), cargarAcuerdos(), cargarEstadisticas()])
-    } catch (err) {
-      window.alert(getErrorMessage(err))
-    }
   }
 
   // ============================================
@@ -880,18 +896,18 @@ const handleSort = (field: string) => {
   }
 
   // ============================================
-  // MODAL: RETIRAR ACUERDOS (retiro individual)
+  // MODAL: RETIRAR ACUERDO (buscar por expediente)
   // ============================================
+  // Pedido del 10/11: "Retirar" es para el acuerdo COMPLETO del socio titular
+  // (titular + beneficiarios), no para un beneficiario. Se busca el expediente,
+  // se elige su acuerdo y se sigue en la ventana de retiro del acuerdo, que
+  // pregunta "¿está seguro?" antes de retirarlo.
   const [retirarAbierto, setRetirarAbierto] = useState(false)
   const [retirarExpediente, setRetirarExpediente] = useState('')
   const [retirarBuscando, setRetirarBuscando] = useState(false)
   const [retirarError, setRetirarError] = useState<string | null>(null)
   const [retirarSocioActual, setRetirarSocioActual] = useState<Socio | null>(null)
   const [retirarOpciones, setRetirarOpciones] = useState<AcuerdoSalud[]>([])
-  const [retirarSeleccionado, setRetirarSeleccionado] = useState<RetiroCandidato | null>(null)
-  const [retirarFecha, setRetirarFecha] = useState(hoyISO())
-  const [retirarMotivo, setRetirarMotivo] = useState<(typeof saludService.MOTIVOS_RETIRO_SALUD)[number]>('Voluntario')
-  const [retirarEnviando, setRetirarEnviando] = useState(false)
 
   // ============================================
   // MODAL: RETIRAR ACUERDO (titular + cascada a todo el grupo)
@@ -913,6 +929,13 @@ const handleSort = (field: string) => {
 
   const confirmarRetirarTitular = async () => {
     if (!retirarTitularAcuerdo || !retirarTitularFecha) return
+    const titular = retirarTitularAcuerdo.socio?.nombre_completo || retirarTitularAcuerdo.beneficiario.nombre_completo
+    const confirmado = window.confirm(
+      `¿Está seguro de que desea retirar el acuerdo de salud ${retirarTitularAcuerdo.numero_acuerdo || ''} de ${titular}?\n\n` +
+        'Se retira el acuerdo COMPLETO: el titular y todos sus beneficiarios quedarán retirados de este acuerdo. ' +
+        'El retiro es definitivo.'
+    )
+    if (!confirmado) return
     setRetirarTitularEnviando(true)
     setRetirarTitularError(null)
     try {
@@ -938,19 +961,6 @@ const handleSort = (field: string) => {
     setRetirarError(null)
     setRetirarSocioActual(null)
     setRetirarOpciones([])
-    setRetirarSeleccionado(null)
-    setRetirarFecha(hoyISO())
-    setRetirarMotivo('Voluntario')
-  }
-
-  const abrirRetirarDirecto = (acuerdo: RetiroCandidato) => {
-    setRetirarAbierto(true)
-    setRetirarError(null)
-    setRetirarSocioActual(null)
-    setRetirarOpciones([])
-    setRetirarSeleccionado(acuerdo)
-    setRetirarFecha(hoyISO())
-    setRetirarMotivo('Voluntario')
   }
 
   const buscarParaRetirar = async () => {
@@ -959,7 +969,6 @@ const handleSort = (field: string) => {
     setRetirarError(null)
     setRetirarSocioActual(null)
     setRetirarOpciones([])
-    setRetirarSeleccionado(null)
 
     try {
       const socio = await sociosService.buscarSocioPorExpediente(retirarExpediente.trim())
@@ -969,10 +978,14 @@ const handleSort = (field: string) => {
       const acuerdosSocio = await saludService.obtenerAcuerdosPorSocio(socio.data.id)
       if (!acuerdosSocio.success) throw new Error('No fue posible obtener los acuerdos del socio')
 
+      // Solo los acuerdos donde este socio es el titular (la fila del titular de cada uno)
       const opciones = acuerdosSocio.data.filter(
-        (a) => a.beneficiario.parentesco.trim().toLowerCase() !== 'titular' && a.estado !== 'retirado'
+        (a) => a.numero_acuerdo && a.beneficiario.parentesco.trim().toLowerCase() === 'titular' && a.estado !== 'retirado'
       )
-      setRetirarOpciones(opciones)
+      // Esta consulta no trae el socio: se completa para la ventana de retiro
+      const s = socio.data
+      const datosSocio = { id: s.id, codigo_socio: s.codigo_socio, cedula: s.cedula, nombre_completo: `${s.nombre} ${s.apellido}`, estado: s.estado }
+      setRetirarOpciones(opciones.map((a) => ({ ...a, socio: a.socio ?? datosSocio })))
     } catch (err) {
       setRetirarError(getErrorMessage(err) || 'Socio no encontrado')
     } finally {
@@ -980,26 +993,10 @@ const handleSort = (field: string) => {
     }
   }
 
-  const confirmarRetiro = async () => {
-    if (!retirarSeleccionado || !retirarFecha) return
-
-    setRetirarEnviando(true)
-    setRetirarError(null)
-    try {
-      const respuesta = await saludService.retirarBeneficiario(retirarSeleccionado.id, {
-        fecha_retiro: retirarFecha,
-        motivo_retiro: retirarMotivo,
-      })
-      if (!respuesta.success) throw new Error('No fue posible retirar al beneficiario')
-
-      setRetirarAbierto(false)
-      await Promise.all([cargarAcuerdos(), cargarEstadisticas()])
-      if (grupoModalAbierto) await recargarGrupoActual()
-    } catch (err) {
-      setRetirarError(getErrorMessage(err))
-    } finally {
-      setRetirarEnviando(false)
-    }
+  // Elegido el acuerdo, se sigue en la ventana de retiro del acuerdo completo
+  const elegirAcuerdoARetirar = (acuerdo: AcuerdoSalud) => {
+    setRetirarAbierto(false)
+    abrirRetirarTitularModal(acuerdo)
   }
 
   // ============================================
@@ -1035,8 +1032,10 @@ const handleSort = (field: string) => {
   }
 
   // ============================================
-  // MODAL: TRASPASO A FUNERARIA
+  // MODAL: EXPORTAR A FUNERARIA (antes "Importar a Funeraria")
   // ============================================
+  // "Importar" en el detalle hace lo inverso: ver ModalImportarDesdeFuneraria
+  const [importarDesdeFunerariaAbierto, setImportarDesdeFunerariaAbierto] = useState(false)
   const [traspasoAbierto, setTraspasoAbierto] = useState(false)
   const [traspasoNumeroAcuerdo, setTraspasoNumeroAcuerdo] = useState('')
   const [traspasoBuscando, setTraspasoBuscando] = useState(false)
@@ -1062,12 +1061,17 @@ const handleSort = (field: string) => {
   const [traspasoNumeroNuevo, setTraspasoNumeroNuevo] = useState<string | null>(null)
   const traspasoCrearAcuerdo = traspasoNumeroNuevo !== null
   const [traspasoFechaNueva, setTraspasoFechaNueva] = useState(hoyISO())
+  // El titular ya tiene acuerdo(s) de funeraria: ventana "¿en el mismo o crear
+  // otro?" (pedido del 10/11) y, si eligió crear otro, se envía abrir_otro
+  const [traspasoPreguntarOtro, setTraspasoPreguntarOtro] = useState(false)
+  const [traspasoAbrirOtro, setTraspasoAbrirOtro] = useState(false)
 
-  // Se pueden copiar: vivos, vigentes en este acuerdo de salud y de esta
-  // familia (un socio de otro expediente tiene su propia funeraria)
-  const seleccionableParaFuneraria = (b: MiembroGrupoSalud) =>
-    b.estado_persona === 'activo' && b.estado_acuerdo !== 'retirado' && !b.expediente_propio
-  const traspasoSeleccionables = (traspasoGrupo?.beneficiarios ?? []).filter(seleccionableParaFuneraria)
+  // Se pueden copiar: vivos y vigentes en este acuerdo de salud. Quien es de
+  // otro expediente (p. ej. otro socio) también: Funeraria le hace su ficha en
+  // el expediente del titular sin tocar la suya. El titular ya es el dueño.
+  const seleccionableParaFuneraria = (b: MiembroGrupoSalud, cedulaTitular = traspasoGrupo?.socio?.cedula) =>
+    b.estado_persona === 'activo' && b.estado_acuerdo !== 'retirado' && b.cedula !== cedulaTitular
+  const traspasoSeleccionables = (traspasoGrupo?.beneficiarios ?? []).filter((b) => seleccionableParaFuneraria(b))
   const traspasoTodosSeleccionados =
     traspasoSeleccionables.length > 0 && traspasoSeleccionables.every((b) => traspasoSeleccionados.includes(b.beneficiario_id))
   const alternarTodosTraspaso = () =>
@@ -1085,6 +1089,8 @@ const handleSort = (field: string) => {
     setTraspasoLimite(null)
     setTraspasoNumeroNuevo(null)
     setTraspasoFechaNueva(hoyISO())
+    setTraspasoPreguntarOtro(false)
+    setTraspasoAbrirOtro(false)
 
     if (numeroAcuerdoPrefill) {
       await buscarGrupoParaTraspaso(numeroAcuerdoPrefill)
@@ -1100,12 +1106,19 @@ const handleSort = (field: string) => {
     setTraspasoAcuerdosFuneraria([])
     setTraspasoAcuerdoFunerariaId('')
     setTraspasoNumeroNuevo(null)
+    setTraspasoPreguntarOtro(false)
+    setTraspasoAbrirOtro(false)
     try {
       const respuesta = await saludService.obtenerGrupoPorNumeroAcuerdo(numero)
       if (!respuesta.success) throw new Error('Acuerdo no encontrado')
       setTraspasoGrupo(respuesta.data)
-      // Se eligen uno a uno o con "Seleccionar todos"; el titular ya es el dueño del acuerdo de funeraria
-      setTraspasoSeleccionados([])
+      // Se exporta toda la información del acuerdo: todos marcados de entrada
+      // (se pueden desmarcar); el titular ya es el dueño del acuerdo de funeraria
+      setTraspasoSeleccionados(
+        respuesta.data.beneficiarios
+          .filter((b) => seleccionableParaFuneraria(b, respuesta.data.socio?.cedula))
+          .map((b) => b.beneficiario_id)
+      )
       if (respuesta.data.estado === 'suspendido') {
         setTraspasoError(
           `El acuerdo ${numero} está suspendido; reactívelo antes de copiar personas a Funeraria.`
@@ -1123,9 +1136,29 @@ const handleSort = (field: string) => {
         // No tiene acuerdo de funeraria: se le creará uno al copiar
         const sugerido = await saludService.obtenerNumeroSugeridoFuneraria(socioId)
         setTraspasoNumeroNuevo(sugerido.data?.numero_sugerido ?? `${respuesta.data.socio?.codigo_socio ?? ''}-0`)
+      } else if (vigentes.length > 0) {
+        // Ya tiene: ¿copiar en el mismo acuerdo de funeraria o crear otro?
+        setTraspasoPreguntarOtro(true)
       }
     } catch (err) {
       setTraspasoError(getErrorMessage(err) || 'Acuerdo no encontrado')
+    } finally {
+      setTraspasoBuscando(false)
+    }
+  }
+
+  // Respuesta "Crear otro acuerdo de funeraria": número propuesto expediente-N (editable)
+  const aceptarAbrirOtraFuneraria = async () => {
+    setTraspasoPreguntarOtro(false)
+    const socioId = traspasoGrupo?.socio?.id
+    if (!socioId) return
+    setTraspasoBuscando(true)
+    try {
+      const sugerido = await saludService.obtenerNumeroSugeridoFuneraria(socioId)
+      setTraspasoNumeroNuevo(sugerido.data?.numero_sugerido ?? `${traspasoGrupo?.socio?.codigo_socio ?? ''}-0`)
+      setTraspasoAbrirOtro(true)
+    } catch (err) {
+      setTraspasoError(getErrorMessage(err))
     } finally {
       setTraspasoBuscando(false)
     }
@@ -1178,7 +1211,9 @@ const handleSort = (field: string) => {
       const cantidad = traspasoSeleccionados.length
       const confirmado = window.confirm(
         (acuerdoFunerariaId === null
-          ? `El socio ${traspasoGrupo.socio?.codigo_socio ?? ''} no tiene acuerdo de funeraria.\n\n` +
+          ? (traspasoAbrirOtro
+              ? `El socio ${traspasoGrupo.socio?.codigo_socio ?? ''} ya tiene acuerdo de funeraria; se le abrirá uno ADICIONAL.\n\n`
+              : `El socio ${traspasoGrupo.socio?.codigo_socio ?? ''} no tiene acuerdo de funeraria.\n\n`) +
             `Se CREARÁ el acuerdo de funeraria ${numeroNuevo} a su nombre (inicia el ${formatearFecha(traspasoFechaNueva)})` +
             (cantidad > 0
               ? ` y se copiarán ahí ${cantidad} beneficiario(s) del acuerdo de salud ${traspasoGrupo.numero_acuerdo}. ¿Continuar?\n\n`
@@ -1196,7 +1231,10 @@ const handleSort = (field: string) => {
       const respuesta = await saludService.importarGrupoAFuneraria(traspasoGrupo.numero_acuerdo, {
         beneficiario_ids: traspasoSeleccionados,
         ...(acuerdoFunerariaId === null
-          ? { acuerdo_nuevo: { numero_acuerdo: numeroNuevo, fecha_inicio: traspasoFechaNueva } }
+          ? {
+              acuerdo_nuevo: { numero_acuerdo: numeroNuevo, fecha_inicio: traspasoFechaNueva },
+              ...(traspasoAbrirOtro ? { abrir_otro: true } : {}),
+            }
           : { acuerdo_funeraria_id: acuerdoFunerariaId }),
         ...(numeroAdicional ? { acuerdo_adicional: { numero_acuerdo: numeroAdicional } } : {}),
       })
@@ -1538,13 +1576,13 @@ const handleSort = (field: string) => {
                 ? [
                     {
                       key: 'traspaso',
-                      label: 'Importar a Funeraria',
+                      label: 'Exportar a Funeraria',
                       icon: <ArrowRightLeft className="h-4 w-4 text-primary-600" />,
                       onSelect: () => void abrirTraspasoModal(),
                     },
                     {
                       key: 'retirar',
-                      label: 'Retirar acuerdos',
+                      label: 'Retirar acuerdo',
                       icon: <UserMinus className="h-4 w-4 text-amber-600" />,
                       onSelect: abrirRetirarModal,
                     },
@@ -1997,94 +2035,20 @@ const handleSort = (field: string) => {
             {listaTraspasoWizard()}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Input label="Número de acuerdo" value={wizardNumeroAcuerdo} onChange={(e) => setWizardNumeroAcuerdo(valorEnMayusculas(e))} placeholder="Ej: SAL-001234" required />
+              <Input
+                label="N° de acuerdo"
+                value={wizardNumeroAcuerdo}
+                onChange={(e) => setWizardNumeroAcuerdo(valorEnMayusculas(e))}
+                helperText="Propuesto como expediente-número; puedes modificarlo"
+                required
+              />
               <Input label="Fecha de ingreso" type="date" value={wizardFechaInicio} onChange={(e) => setWizardFechaInicio(e.target.value)} />
             </div>
 
-            <div className="border-t border-neutral-200 pt-4">
-              <h4 className="text-sm font-semibold text-neutral-900 mb-1">
-                Beneficiarios ({wizardBeneficiarios.length})
-              </h4>
-              <p className="text-xs text-neutral-500 mb-3">
-                Puedes continuar sin beneficiarios y agregarlos después.
-              </p>
-
-              {wizardBeneficiarios.length > 0 && (
-                <div className="mb-3 space-y-2">
-                  {wizardBeneficiarios.map((b, indice) => (
-                    <div key={`${b.cedula}-${indice}`} className="flex items-center justify-between rounded-lg border border-neutral-200 px-3 py-2">
-                      <div>
-                        <p className="text-sm font-medium text-neutral-900">{b.nombre} {b.apellido}</p>
-                        <p className="text-xs text-neutral-500">{b.cedula} • {b.parentesco}</p>
-                      </div>
-                      <button onClick={() => quitarBeneficiarioDeWizard(indice)} className="text-neutral-400 hover:text-rose-600">
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="rounded-lg border border-dashed border-neutral-300 p-3 space-y-3">
-                {wizardBenefError && <p className="text-xs text-rose-600">{wizardBenefError}</p>}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Input
-                    label="Cédula"
-                    value={wizardBenefForm.cedula}
-                    onChange={(e) =>
-                      setWizardBenefForm((f) => ({ ...f, cedula: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '') }))
-                    }
-                    maxLength={20}
-                    placeholder="Ej: 12345678 o 12345678-1"
-                    helperText="Números, letras y guión (-). Menor sin cédula: escribe MENOR y se le asigna MENOR-1, MENOR-2…"
-                  />
-                  <Select
-                    label="Parentesco"
-                    value={wizardBenefForm.parentesco}
-                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, parentesco: e.target.value }))}
-                  >
-                    <option value="">Selecciona...</option>
-                    {saludService.PARENTESCOS_BENEFICIARIO_SALUD.map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </Select>
-                  <Input
-                    label="Nombre"
-                    value={wizardBenefForm.nombre}
-                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, nombre: valorEnMayusculas(e) }))}
-                  />
-                  <Input
-                    label="Apellido"
-                    value={wizardBenefForm.apellido}
-                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, apellido: valorEnMayusculas(e) }))}
-                  />
-                  <Input
-                    label="Fecha de nacimiento"
-                    type="date"
-                    value={wizardBenefForm.fecha_nacimiento}
-                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, fecha_nacimiento: e.target.value }))}
-                  />
-                  <Input
-                    label="Fecha de ingreso"
-                    type="date"
-                    value={wizardBenefForm.fecha_ingreso}
-                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, fecha_ingreso: e.target.value }))}
-                  />
-                  <Select
-                    label="Estado"
-                    value={wizardBenefForm.estado}
-                    onChange={(e) => setWizardBenefForm((f) => ({ ...f, estado: e.target.value as 'activo' | 'fallecido' }))}
-                  >
-                    <option value="activo">Vivo</option>
-                    <option value="fallecido">Fallecido</option>
-                  </Select>
-                </div>
-                <Button variant="outline" size="sm" onClick={agregarBeneficiarioAWizard} className="w-full">
-                  <UserPlus className="h-4 w-4" />
-                  Agregar a la lista
-                </Button>
-              </div>
-            </div>
+            <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              Primero se guarda el acuerdo con los datos del titular. Después se abre el detalle del acuerdo para agregar a sus
+              beneficiarios.
+            </p>
 
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => setWizardPaso(1)} className="flex-1">
@@ -2103,10 +2067,10 @@ const handleSort = (field: string) => {
           <div className="space-y-4">
             <div className="rounded-lg border border-neutral-200 p-4 space-y-2 text-sm">
               <p><span className="text-neutral-500">Titular:</span> <span className="font-medium">{wizardSocio.apellido}, {wizardSocio.nombre}</span>{wizardSocio.es_trabajador_triunfo && <DistintivoTrabajadorTriunfo compacto className="ml-2" />}</p>
-              <p><span className="text-neutral-500">Número de acuerdo:</span> <span className="font-mono font-medium">{wizardNumeroAcuerdo}</span></p>
+              <p><span className="text-neutral-500">N° de acuerdo:</span> <span className="font-mono font-medium">{wizardNumeroAcuerdo}</span></p>
               <p><span className="text-neutral-500">Fecha de ingreso:</span> <span className="font-medium">{formatearFecha(wizardFechaInicio)}</span></p>
-              <p><span className="text-neutral-500">Total de personas:</span> <span className="font-medium">{wizardBeneficiarios.length + 1} (titular + {wizardBeneficiarios.length} beneficiario(s))</span></p>
             </div>
+            <p className="text-xs text-neutral-500">Al confirmar se abrirá el detalle del acuerdo para agregar a los beneficiarios.</p>
 
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => setWizardPaso(2)} className="flex-1">
@@ -2114,7 +2078,7 @@ const handleSort = (field: string) => {
                 Atrás
               </Button>
               <Button onClick={() => void confirmarNuevoAcuerdo()} isLoading={wizardEnviando} className="flex-1">
-                Confirmar y Crear
+                Guardar acuerdo
               </Button>
             </div>
           </div>
@@ -2135,7 +2099,20 @@ const handleSort = (field: string) => {
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4">
               <div>
                 <dt className="text-xs font-medium uppercase text-neutral-500">Titular</dt>
-                <dd className="text-sm font-semibold text-neutral-900">{grupoActual.socio?.nombre_completo || '—'}</dd>
+                <dd className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                  {grupoActual.socio?.nombre_completo || '—'}
+                  {/* Modificar del titular: N° de acuerdo y fecha de inicio */}
+                  {puedeEscribir && grupoActual.estado !== 'retirado' && (
+                    <button
+                      title="Modificar (N° de acuerdo y fecha de inicio)"
+                      onClick={abrirEditarFechaInicio}
+                      className="inline-flex items-center gap-1 rounded-md border border-primary-200 px-2 py-0.5 text-xs font-medium text-primary-700 hover:bg-primary-50"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                      Modificar
+                    </button>
+                  )}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs font-medium uppercase text-neutral-500">Expediente / Cédula</dt>
@@ -2155,14 +2132,7 @@ const handleSort = (field: string) => {
               </div>
               <div>
                 <dt className="text-xs font-medium uppercase text-neutral-500">Fecha de Inicio</dt>
-                <dd className="flex items-center gap-2 text-sm text-neutral-900">
-                  {formatearFecha(grupoActual.fecha_inicio) || '—'}
-                  {puedeEscribir && grupoActual.estado !== 'retirado' && (
-                    <button title="Modificar fecha de inicio" onClick={abrirEditarFechaInicio} className="text-primary-600 hover:text-primary-800">
-                      <Edit2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </dd>
+                <dd className="text-sm text-neutral-900">{formatearFecha(grupoActual.fecha_inicio) || '—'}</dd>
               </div>
               {grupoActual.estado === 'retirado' && (
                 <div>
@@ -2185,9 +2155,6 @@ const handleSort = (field: string) => {
                 )}
               </div>
 
-              {gruposBeneficiariosVisibles.length === 0 ? (
-                <p className="text-sm text-neutral-500">Este acuerdo aún no tiene beneficiarios agregados.</p>
-              ) : (
                 <div className="overflow-x-auto rounded-lg border border-neutral-200">
                   <table className="min-w-full divide-y divide-neutral-200 text-sm">
                     <thead className="bg-neutral-50">
@@ -2203,6 +2170,15 @@ const handleSort = (field: string) => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">
+                      {/* El titular NO va en la lista de beneficiarios (pedido del 10/11):
+                          es el titular del acuerdo. Su "Modificar" está en el encabezado. */}
+                      {gruposBeneficiariosVisibles.length === 0 && (
+                        <tr>
+                          <td colSpan={puedeEscribir ? 8 : 7} className="px-3 py-3 text-sm text-neutral-500">
+                            Este acuerdo aún no tiene beneficiarios agregados.
+                          </td>
+                        </tr>
+                      )}
                       {gruposBeneficiariosVisibles.map((b) => (
                         <tr key={b.acuerdo_id}>
                           <td className="px-3 py-2 text-neutral-600">{b.cedula}</td>
@@ -2221,40 +2197,42 @@ const handleSort = (field: string) => {
                           </td>
                           {puedeEscribir && (
                             <td className="px-3 py-2 text-right whitespace-nowrap">
+                              {/* Igual que en Funeraria: Editar, Fallecido y Retirar;
+                                  si está fallecido, solo Revertir. Los retirados del acuerdo no tienen acciones. */}
                               {b.estado_persona === 'activo' && b.estado_acuerdo !== 'retirado' && (
-                                <div className="flex justify-end gap-2">
-                                  <button title="Editar" onClick={() => abrirEditarBeneficiarioGrupo(b)} className="text-primary-600 hover:text-primary-800">
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() => abrirEditarBeneficiarioGrupo(b)}
+                                    className="rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-100"
+                                    title="Editar"
+                                  >
                                     <Edit2 className="h-4 w-4" />
                                   </button>
                                   {/* De otro expediente: su fallecimiento se registra en el suyo */}
                                   {!b.expediente_propio && (
-                                    <button title="Marcar como fallecido" onClick={() => void marcarFallecidoGrupo(b)} className="text-purple-600 hover:text-purple-800">
+                                    <button
+                                      onClick={() => void marcarFallecidoGrupo(b)}
+                                      className="rounded-lg p-1.5 text-purple-600 hover:bg-purple-50"
+                                      title="Marcar como fallecido"
+                                    >
                                       <CruzFallecido className="h-4 w-4" />
                                     </button>
                                   )}
                                   <button
+                                    onClick={() => abrirRetirarBeneficiario(b)}
+                                    className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50"
                                     title="Retirar"
-                                    onClick={() => abrirRetirarDirecto({
-                                      id: b.acuerdo_id,
-                                      numero_acuerdo: grupoActual.numero_acuerdo,
-                                      estado: b.estado_acuerdo,
-                                      beneficiario: { cedula: b.cedula, nombre_completo: `${b.nombre} ${b.apellido}` },
-                                    })}
-                                    className="text-amber-600 hover:text-amber-800"
                                   >
-                                    <UserMinus className="h-4 w-4" />
-                                  </button>
-                                  <button title="Eliminar" onClick={() => void eliminarMiembroGrupo(b)} className="text-rose-600 hover:text-rose-800">
                                     <Trash2 className="h-4 w-4" />
                                   </button>
                                 </div>
                               )}
-                              {b.estado_persona === 'fallecido' && b.estado_acuerdo !== 'retirado' && (
-                                <div className="flex justify-end gap-2">
+                              {b.estado_persona === 'fallecido' && b.estado_acuerdo !== 'retirado' && !b.expediente_propio && (
+                                <div className="flex items-center justify-end gap-1">
                                   <button
-                                    title="Revertir fallecimiento (volver a activo)"
                                     onClick={() => void revertirFallecidoGrupo(b)}
-                                    className="text-emerald-600 hover:text-emerald-800"
+                                    className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50"
+                                    title="Revertir fallecimiento (volver a activo)"
                                   >
                                     <RotateCcw className="h-4 w-4" />
                                   </button>
@@ -2267,7 +2245,6 @@ const handleSort = (field: string) => {
                     </tbody>
                   </table>
                 </div>
-              )}
             </div>
 
             <div className="flex flex-wrap gap-3 border-t border-neutral-200 pt-4">
@@ -2288,20 +2265,28 @@ const handleSort = (field: string) => {
                 <Printer className="h-4 w-4" />
                 Imprimir Ficha
               </Button>
-              {puedeEscribir && grupoActual.estado !== 'retirado' && (
-                <Button
-                  variant="outline"
-                  onClick={() => void abrirTraspasoModal(grupoActual.numero_acuerdo || undefined)}
-                  disabled={grupoActual.estado === 'suspendido'}
-                  title={
-                    grupoActual.estado === 'suspendido'
-                      ? 'No se puede traspasar a Funeraria un acuerdo suspendido: reactívelo primero.'
-                      : undefined
-                  }
-                >
-                  <ArrowRightLeft className="h-4 w-4" />
-                  Importar a Funeraria
-                </Button>
+              {puedeEscribir && grupoActual.estado !== 'retirado' && grupoActual.numero_acuerdo && grupoActual.socio && (
+                <>
+                  {/* Trae beneficiarios de un acuerdo de funeraria del titular a ESTE acuerdo */}
+                  <Button variant="outline" onClick={() => setImportarDesdeFunerariaAbierto(true)} title="Traer beneficiarios desde Funeraria">
+                    <Download className="h-4 w-4" />
+                    Importar
+                  </Button>
+                  {/* Lleva la información de este acuerdo a Funeraria */}
+                  <Button
+                    variant="outline"
+                    onClick={() => void abrirTraspasoModal(grupoActual.numero_acuerdo || undefined)}
+                    disabled={grupoActual.estado === 'suspendido'}
+                    title={
+                      grupoActual.estado === 'suspendido'
+                        ? 'No se puede exportar a Funeraria un acuerdo suspendido: reactívelo primero.'
+                        : 'Copiar este acuerdo a Funeraria'
+                    }
+                  >
+                    <Upload className="h-4 w-4" />
+                    Exportar
+                  </Button>
+                </>
               )}
               <div className="flex-1" />
               <Button variant="secondary" onClick={() => setGrupoModalAbierto(false)}>
@@ -2368,6 +2353,54 @@ const handleSort = (field: string) => {
       </Modal>
 
       {/* ============================================ */}
+      {/* MODAL: RETIRAR BENEFICIARIO (solo de este acuerdo de salud) */}
+      {/* ============================================ */}
+      <Modal
+        open={!!retirarBenef}
+        onClose={() => setRetirarBenef(null)}
+        title="Retirar beneficiario"
+        description={`Acuerdo de salud ${grupoActual?.numero_acuerdo ?? ''}`}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setRetirarBenef(null)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={() => void confirmarRetirarBeneficiario()} isLoading={retirarBenefEnviando} disabled={!retirarBenefFecha}>
+              Retirar
+            </Button>
+          </>
+        }
+      >
+        {retirarBenef && (
+          <div className="space-y-4">
+            {retirarBenefError && <Alert variant="error">{retirarBenefError}</Alert>}
+            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm">
+              <p className="font-semibold text-neutral-900">
+                {retirarBenef.nombre} {retirarBenef.apellido}
+              </p>
+              <p className="text-xs text-neutral-500">
+                C.I. {retirarBenef.cedula} • {retirarBenef.parentesco}
+              </p>
+            </div>
+            <Input label="Fecha de retiro" type="date" value={retirarBenefFecha} onChange={(e) => setRetirarBenefFecha(e.target.value)} required />
+            <Select
+              label="Motivo del retiro"
+              value={retirarBenefMotivo}
+              onChange={(e) => setRetirarBenefMotivo(e.target.value as (typeof saludService.MOTIVOS_RETIRO_SALUD)[number])}
+            >
+              {saludService.MOTIVOS_RETIRO_SALUD.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+            <p className="text-xs text-neutral-500">Solo sale de este acuerdo de salud. En Funeraria no cambia nada.</p>
+          </div>
+        )}
+      </Modal>
+
+      {/* ============================================ */}
       {/* MODAL: ELIMINAR ACUERDO */}
       {/* ============================================ */}
       <Modal open={eliminarModalAbierto} onClose={() => setEliminarModalAbierto(false)} title="Eliminar Acuerdo de Salud" size="md">
@@ -2399,13 +2432,20 @@ const handleSort = (field: string) => {
                   </div>
                 )}
                 {eliminarGrupoData.beneficiarios.map((b) => (
-                  <label key={b.acuerdo_id} className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-neutral-50 cursor-pointer">
+                  <label
+                    key={b.acuerdo_id}
+                    className={`flex items-center gap-2 px-2 py-1.5 text-sm rounded ${b.tiene_pagos ? 'text-neutral-400' : 'hover:bg-neutral-50 cursor-pointer'}`}
+                  >
+                    {/* No se elimina a quien ya tiene pagos desde que entró al acuerdo */}
                     <input
                       type="checkbox"
+                      disabled={b.tiene_pagos}
                       checked={eliminarSeleccionados.includes(b.acuerdo_id)}
                       onChange={() => alternarSeleccionEliminar(b.acuerdo_id)}
                     />
-                    <span>{b.nombre} {b.apellido} <span className="text-neutral-400">({b.parentesco})</span></span>
+                    <span>
+                      {b.nombre} {b.apellido} <span className="text-neutral-400">({b.parentesco}{b.tiene_pagos ? ' • tiene pagos: no se puede eliminar' : ''})</span>
+                    </span>
                   </label>
                 ))}
               </div>
@@ -2454,12 +2494,11 @@ const handleSort = (field: string) => {
       {/* ============================================ */}
       {/* MODAL: RETIRAR ACUERDOS */}
       {/* ============================================ */}
-      <Modal open={retirarAbierto} onClose={() => setRetirarAbierto(false)} title="Retirar Acuerdos" description="Retira a un beneficiario específico (no aplica al titular)" size="md">
+      <Modal open={retirarAbierto} onClose={() => setRetirarAbierto(false)} title="Retirar Acuerdo" description="Retira el acuerdo completo del socio titular: el titular y todos sus beneficiarios" size="md">
         {retirarError && (
           <Alert variant="error" className="mb-4">{retirarError}</Alert>
         )}
 
-        {!retirarSeleccionado && (
           <div className="space-y-4">
             <BuscarPorNumeroInline
               label="Número de expediente del socio"
@@ -2474,17 +2513,20 @@ const handleSort = (field: string) => {
               <div>
                 <p className="text-sm font-semibold text-neutral-900 mb-2">{retirarSocioActual.apellido}, {retirarSocioActual.nombre}</p>
                 {retirarOpciones.length === 0 ? (
-                  <p className="text-sm text-neutral-500">Este socio no tiene beneficiarios de salud disponibles para retirar.</p>
+                  <p className="text-sm text-neutral-500">Este socio no tiene acuerdos de salud vigentes como titular.</p>
                 ) : (
                   <div className="space-y-1">
+                    <p className="text-xs text-neutral-500">Elige el acuerdo que deseas retirar:</p>
                     {retirarOpciones.map((a) => (
                       <button
                         key={a.id}
-                        onClick={() => setRetirarSeleccionado(a)}
+                        onClick={() => elegirAcuerdoARetirar(a)}
                         className="w-full text-left px-3 py-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-sm"
                       >
-                        <span className="font-medium">{a.beneficiario.nombre_completo}</span>{' '}
-                        <span className="text-neutral-500">({a.beneficiario.parentesco}) • {a.numero_acuerdo}</span>
+                        <span className="font-mono font-medium">{a.numero_acuerdo}</span>{' '}
+                        <span className="text-neutral-500">
+                          • desde {formatearFecha(a.fecha_inicio)} • {a.estado}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -2492,52 +2534,6 @@ const handleSort = (field: string) => {
               </div>
             )}
           </div>
-        )}
-
-        {retirarSeleccionado && (
-          <div className="space-y-4">
-            <dl className="grid grid-cols-2 gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm">
-              <div>
-                <dt className="text-xs text-neutral-500">N° Acuerdo</dt>
-                <dd className="font-mono font-medium">{retirarSeleccionado.numero_acuerdo || '—'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-neutral-500">Cédula</dt>
-                <dd className="font-medium">{retirarSeleccionado.beneficiario.cedula}</dd>
-              </div>
-              <div className="col-span-2">
-                <dt className="text-xs text-neutral-500">Nombre</dt>
-                <dd className="font-medium">{retirarSeleccionado.beneficiario.nombre_completo}</dd>
-              </div>
-              <div className="col-span-2">
-                <dt className="text-xs text-neutral-500">Estado actual</dt>
-                <dd>{badgeEstado(retirarSeleccionado.estado)}</dd>
-              </div>
-            </dl>
-
-            <Input label="Fecha de retiro" type="date" value={retirarFecha} onChange={(e) => setRetirarFecha(e.target.value)} required />
-
-            <Select
-              label="Motivo del retiro"
-              value={retirarMotivo}
-              onChange={(e) => setRetirarMotivo(e.target.value as (typeof saludService.MOTIVOS_RETIRO_SALUD)[number])}
-            >
-              {saludService.MOTIVOS_RETIRO_SALUD.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </Select>
-
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setRetirarSeleccionado(null)} className="flex-1">
-                <ArrowLeft className="w-4 h-4" />
-                Cambiar selección
-              </Button>
-              <Button onClick={() => void confirmarRetiro()} isLoading={retirarEnviando} className="flex-1">
-                Confirmar Retiro
-              </Button>
-            </div>
-          </div>
-        )}
       </Modal>
 
       {/* ============================================ */}
@@ -2698,7 +2694,7 @@ const handleSort = (field: string) => {
       {/* ============================================ */}
       {/* MODAL: TRASPASO A FUNERARIA */}
       {/* ============================================ */}
-      <Modal open={traspasoAbierto} onClose={() => setTraspasoAbierto(false)} title="Importar a Funeraria" description="Copia los beneficiarios seleccionados a un acuerdo de funeraria del mismo titular (si no tiene uno, se le crea). En Salud no se borra nada." size="md">
+      <Modal open={traspasoAbierto} onClose={() => setTraspasoAbierto(false)} title="Exportar a Funeraria" description="Copia la información de este acuerdo de salud a un acuerdo de funeraria del mismo titular (el mismo que ya tiene, o uno nuevo). En Salud no se borra nada." size="md">
         {traspasoError && (
           <Alert variant="error" className="mb-4">{traspasoError}</Alert>
         )}
@@ -2759,9 +2755,11 @@ const handleSort = (field: string) => {
                           ? b.estado_persona
                           : b.estado_acuerdo === 'retirado'
                             ? 'retirado de este acuerdo'
-                            : b.expediente_propio
-                              ? `socio del exp. ${b.expediente_propio}: tiene su propia funeraria`
-                              : ''
+                            : b.cedula === traspasoGrupo.socio?.cedula
+                              ? 'es el titular'
+                              : b.expediente_propio
+                                ? `exp. ${b.expediente_propio}: se copia al expediente del titular`
+                                : ''
                       return (
                         <label
                           key={b.beneficiario_id}
@@ -2788,8 +2786,18 @@ const handleSort = (field: string) => {
                 {traspasoCrearAcuerdo && (
                   <div className="space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
                     <p className="text-sm text-sky-800">
-                      El socio {traspasoGrupo.socio?.codigo_socio} <strong>no tiene acuerdo de funeraria</strong>. Al copiar se le creará
-                      uno nuevo a su nombre
+                      {traspasoAbrirOtro ? (
+                        <>
+                          El socio {traspasoGrupo.socio?.codigo_socio} ya tiene acuerdo de funeraria (
+                          {traspasoAcuerdosFuneraria.map((a) => a.numero_acuerdo || 'sin número').join(', ')}). Al copiar se le abrirá{' '}
+                          <strong>otro acuerdo de funeraria</strong> a su nombre
+                        </>
+                      ) : (
+                        <>
+                          El socio {traspasoGrupo.socio?.codigo_socio} <strong>no tiene acuerdo de funeraria</strong>. Al copiar se le
+                          creará uno nuevo a su nombre
+                        </>
+                      )}
                       {traspasoSeleccionables.length > 0
                         ? ' y los beneficiarios seleccionados se agregarán a ese acuerdo (si no marcas ninguno, queda solo con el titular).'
                         : ', con sus datos como titular.'}
@@ -2812,13 +2820,13 @@ const handleSort = (field: string) => {
                     </div>
                   </div>
                 )}
-                {traspasoAcuerdosFuneraria.length === 1 && (
+                {!traspasoCrearAcuerdo && traspasoAcuerdosFuneraria.length === 1 && (
                   <p className="text-sm text-neutral-600">
                     Se copiarán al acuerdo de funeraria{' '}
                     <span className="font-mono font-medium">{traspasoAcuerdosFuneraria[0]!.numero_acuerdo || 'sin número'}</span>.
                   </p>
                 )}
-                {traspasoAcuerdosFuneraria.length > 1 && (
+                {!traspasoCrearAcuerdo && traspasoAcuerdosFuneraria.length > 1 && (
                   <p className="text-sm text-neutral-600">
                     El titular tiene {traspasoAcuerdosFuneraria.length} acuerdos de funeraria; al continuar se te preguntará a cuál copiarlos.
                   </p>
@@ -2838,6 +2846,62 @@ const handleSort = (field: string) => {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* Ventana: el titular ya tiene acuerdo(s) de funeraria → ¿el mismo o uno nuevo? */}
+      <Modal
+        open={traspasoPreguntarOtro}
+        onClose={() => {
+          setTraspasoPreguntarOtro(false)
+          setTraspasoAbierto(false)
+        }}
+        title="El socio ya tiene acuerdo de funeraria"
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setTraspasoPreguntarOtro(false)
+                setTraspasoAbierto(false)
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button variant="outline" onClick={() => setTraspasoPreguntarOtro(false)}>
+              Copiar en el mismo acuerdo
+            </Button>
+            <Button onClick={() => void aceptarAbrirOtraFuneraria()}>Crear otro acuerdo</Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm text-neutral-700">
+          <p>
+            El socio <strong>{traspasoGrupo?.socio?.nombre_completo}</strong> (exp. {traspasoGrupo?.socio?.codigo_socio}) ya tiene{' '}
+            {traspasoAcuerdosFuneraria.length === 1
+              ? 'un acuerdo de funeraria'
+              : `${traspasoAcuerdosFuneraria.length} acuerdos de funeraria`}
+            :
+          </p>
+          <ul className="space-y-1">
+            {traspasoAcuerdosFuneraria.map((a) => (
+              <li key={a.id} className="rounded border border-neutral-200 px-3 py-1.5">
+                <span className="font-mono font-medium">{a.numero_acuerdo || 'sin número'}</span>
+                <span className="text-neutral-500">
+                  {' '}
+                  • desde {formatearFecha(a.fecha_inicio)} • {a.estado}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="font-medium">
+            ¿Desea copiar los datos de este acuerdo de salud en{' '}
+            {traspasoAcuerdosFuneraria.length === 1 ? 'ese mismo acuerdo de funeraria' : 'uno de esos acuerdos de funeraria'} o crear otro?
+          </p>
+          <p className="text-xs text-neutral-500">
+            Cada acuerdo de funeraria admite hasta 8 beneficiarios: si no caben todos, se te ofrecerá un acuerdo adicional con los que falten.
+          </p>
+        </div>
       </Modal>
 
       {/* Ventana adicional: el titular tiene más de un acuerdo de funeraria */}
@@ -2887,8 +2951,8 @@ const handleSort = (field: string) => {
       <Modal
         open={fechaInicioEditando !== null}
         onClose={() => setFechaInicioEditando(null)}
-        title="Modificar fecha de inicio"
-        description={`Acuerdo de salud ${grupoActual?.numero_acuerdo ?? ''}`}
+        title="Modificar acuerdo"
+        description={`Titular: ${grupoActual?.socio?.nombre_completo ?? ''} • Exp. ${grupoActual?.socio?.codigo_socio ?? ''}`}
         size="sm"
         footer={
           <>
@@ -2906,13 +2970,21 @@ const handleSort = (field: string) => {
             <div className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">{fechaInicioError}</div>
           )}
           <Input
+            label="N° de acuerdo"
+            value={numeroAcuerdoEditando}
+            onChange={(e) => setNumeroAcuerdoEditando(valorEnMayusculas(e))}
+            maxLength={20}
+            helperText="Cambia el número de todo el acuerdo (titular y beneficiarios)"
+          />
+          <Input
             label="Fecha de inicio"
             type="date"
             value={fechaInicioEditando ?? ''}
             onChange={(e) => setFechaInicioEditando(e.target.value)}
           />
           <p className="text-xs text-neutral-500">
-            Cambia la fecha del titular y de quienes empezaron junto con él; los beneficiarios que se sumaron después conservan su propia fecha.
+            La fecha cambia la del titular y la de quienes empezaron junto con él; los beneficiarios que se sumaron después conservan
+            su propia fecha. Los datos personales del titular se modifican en el módulo de Socios.
           </p>
         </div>
       </Modal>
@@ -2969,6 +3041,19 @@ const handleSort = (field: string) => {
           </div>
         )}
       </Modal>
+
+      {importarDesdeFunerariaAbierto && grupoActual?.socio && grupoActual.numero_acuerdo && (
+        <ModalImportarDesdeFuneraria
+          open
+          onClose={() => setImportarDesdeFunerariaAbierto(false)}
+          onCompletado={() => {
+            setImportarDesdeFunerariaAbierto(false)
+            void Promise.all([recargarGrupoActual(), cargarAcuerdos(), cargarEstadisticas()])
+          }}
+          numeroAcuerdoSalud={grupoActual.numero_acuerdo}
+          socio={grupoActual.socio}
+        />
+      )}
 
       {revertirNuevoAcuerdo && grupoActual?.socio && (
         <ModalRevertirConNuevoAcuerdo

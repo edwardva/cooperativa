@@ -62,6 +62,8 @@ export interface AcuerdoSalud {
 
 /** Un miembro (titular o beneficiario) dentro de un grupo de salud. */
 export interface MiembroGrupoSalud {
+  /** El acuerdo ya registró pagos desde que esta persona entró: no se puede eliminar */
+  tiene_pagos: boolean;
   acuerdo_id: number;
   beneficiario_id: number;
   cedula: string;
@@ -203,6 +205,8 @@ export interface ImportarFunerariaData {
   acuerdo_nuevo?: { numero_acuerdo: string; fecha_inicio?: string };
   /** Si no caben todos (máx. 8), los que sobran van a un acuerdo nuevo del titular con este número */
   acuerdo_adicional?: { numero_acuerdo: string };
+  /** Con acuerdo_nuevo: el titular ya tiene acuerdo de funeraria y se eligió crear otro */
+  abrir_otro?: boolean;
 }
 
 export interface ImportarFunerariaResultado {

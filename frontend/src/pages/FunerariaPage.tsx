@@ -23,7 +23,6 @@ import {
   Eye,
   Printer,
   FileSpreadsheet,
-  HeartPulse,
   UserPlus,
   Edit2,
   Trash2,
@@ -32,6 +31,8 @@ import {
   ArrowLeft,
   ArrowRightLeft,
   Contact,
+  Download,
+  Upload,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -44,13 +45,14 @@ import { PrintableListado } from '../components/print/PrintableListado'
 import { PrintableFichaAcuerdo, type PrintableFichaAcuerdoProps } from '../components/print/PrintableFichaAcuerdo'
 import { EncabezadoImpresion, imprimirCuandoEsteListo, LOGO_COOPERATIVA, NOMBRE_COOPERATIVA } from '../components/print/EncabezadoImpresion'
 import { ModalRevertirConNuevoAcuerdo } from '../components/funeraria/ModalRevertirConNuevoAcuerdo'
+import { ModalImportarDesdeSalud } from '../components/funeraria/ModalImportarDesdeSalud'
 import { ModalTraspasoAcuerdo, type AcuerdoATraspasar } from '../components/traspaso/ModalTraspasoAcuerdo'
 import * as funerariaService from '../services/funerariaService'
 import * as sociosService from '../services/sociosService'
 import * as saludService from '../services/saludService'
 import type { AcuerdoFuneraria, AcuerdoDetalle } from '../services/funerariaService'
-import type { Socio, Beneficiario, BeneficiarioFormData } from '../services/sociosService'
-import { getErrorCode, getErrorMessage, getErrorMessageDetallado } from '../services/api'
+import type { Socio, Beneficiario, BeneficiarioEnAcuerdo, BeneficiarioFormData } from '../services/sociosService'
+import { getErrorCode, getErrorDetalles, getErrorMessage, getErrorMessageDetallado } from '../services/api'
 import { formatearFecha, calcularEdad, nombreEnMayusculas } from '../utils/formatters'
 import { valorEnMayusculas } from '../utils/mayusculas'
 import { usePermissions } from '../store/authStore'
@@ -415,12 +417,13 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   // de los 8 cupos de su propia familia.
   const MAX_BENEFICIARIOS_POR_ACUERDO = 8
   const esFilaTitular = (b: Beneficiario) => b.parentesco?.trim().toLowerCase() === 'titular'
-  // Beneficiarios de un acuerdo, incluidos los retirados de funeraria (para la ficha)
+  // Beneficiarios de un acuerdo, incluidos los retirados de funeraria (para la
+  // ficha). Una persona puede estar en varios acuerdos: se ve su situación en ESTE.
   const beneficiariosDeAcuerdo = (beneficiarios: Beneficiario[], acuerdoId: number) =>
-    beneficiarios.filter((b) => b.acuerdo_funeraria_id === acuerdoId && !esFilaTitular(b))
-  // El retiro de funeraria es propio de este módulo (fecha_retiro_funeraria):
-  // retirar aquí no cambia el estado de la persona en Salud, ni al revés.
-  const retiradoDeFuneraria = (b: Beneficiario) => b.fecha_retiro_funeraria !== null
+    sociosService.beneficiariosEnAcuerdoFuneraria(beneficiarios, acuerdoId).filter((b) => !esFilaTitular(b))
+  // El retiro de funeraria es propio de este módulo y de cada acuerdo:
+  // retirar aquí no cambia el estado de la persona en Salud ni en sus otros acuerdos.
+  const retiradoDeFuneraria = (b: BeneficiarioEnAcuerdo) => b.fecha_retiro_funeraria !== null
   const beneficiariosVisibles = (acuerdoDetalle ? beneficiariosDeAcuerdo(beneficiariosSocio, acuerdoDetalle.id) : []).filter(
     (b) => !retiradoDeFuneraria(b) && (b.estado === 'activo' || b.estado === 'fallecido')
   )
@@ -463,16 +466,24 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     setBeneficiarioError(null)
 
     try {
+      let reingreso = false
       if (beneficiarioEditando) {
         await sociosService.actualizarBeneficiario(socioId, beneficiarioEditando.id, beneficiarioForm)
       } else {
-        await sociosService.crearBeneficiario(socioId, {
+        const respuesta = await sociosService.crearBeneficiario(socioId, {
           ...beneficiarioForm,
           ...(acuerdoDetalle ? { acuerdo_funeraria_id: acuerdoDetalle.id } : {}),
         })
+        reingreso = !!respuesta.data?.reingreso
       }
       setBeneficiarioModalAbierto(false)
       await recargarBeneficiarios()
+      if (reingreso) {
+        window.alert(
+          `${beneficiarioForm.nombre} ${beneficiarioForm.apellido} ya había estado registrado en este expediente: ` +
+            'se volvió a registrar con su misma ficha y los datos que escribiste. Su historial anterior se conserva.'
+        )
+      }
     } catch (err) {
       setBeneficiarioError(getErrorMessageDetallado(err))
     } finally {
@@ -503,12 +514,15 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   // Si el acuerdo ya tiene los 8 activos, revertir un fallecido abre otro
   // acuerdo del mismo titular para esa persona (ver ModalRevertirConNuevoAcuerdo)
   const [revertirNuevoAcuerdo, setRevertirNuevoAcuerdo] = useState<Beneficiario | null>(null)
+  // La persona puede estar en varios acuerdos: el que está lleno (si no es este)
+  const [revertirOrigenId, setRevertirOrigenId] = useState<number | null>(null)
 
   // Corrige un "fallecido" marcado por error: vuelve a activo y ocupa de nuevo
   // uno de los 8 cupos (el backend valida el mismo tope).
   const revertirFallecido = async (beneficiario: Beneficiario) => {
     const socioId = acuerdoDetalle?.socio?.id
     if (!socioId) return
+    setRevertirOrigenId(null)
     if (limiteBeneficiariosAlcanzado) {
       setRevertirNuevoAcuerdo(beneficiario)
       return
@@ -526,9 +540,12 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       })
       await recargarBeneficiarios()
     } catch (err) {
-      // Otro usuario pudo llenar el acuerdo mientras tanto
-      if (getErrorCode(err) === 'LIMITE_BENEFICIARIOS') setRevertirNuevoAcuerdo(beneficiario)
-      else window.alert(getErrorMessage(err))
+      // Otro usuario pudo llenar el acuerdo mientras tanto, o el lleno es OTRO
+      // acuerdo en que también figura la persona (el backend dice cuál)
+      if (getErrorCode(err) === 'LIMITE_BENEFICIARIOS') {
+        setRevertirOrigenId(getErrorDetalles<{ acuerdo_id?: number }>(err)?.acuerdo_id ?? null)
+        setRevertirNuevoAcuerdo(beneficiario)
+      } else window.alert(getErrorMessage(err))
     }
   }
 
@@ -611,147 +628,155 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   }
 
   // ============================================
-  // MODAL: IMPORTAR A SALUD
+  // MODAL: EXPORTAR A SALUD
   // ============================================
-  // COPIA beneficiarios de este acuerdo de funeraria al acuerdo de salud del
-  // mismo titular (si tiene varios, se pregunta a cuál). En Funeraria nada cambia.
-  // Si el acuerdo no tiene beneficiarios se copia solo el titular: si ya tiene
-  // acuerdo de salud se pregunta si se le abre otro.
-  const [importarSaludAbierto, setImportarSaludAbierto] = useState(false)
-  const [importarSaludCargando, setImportarSaludCargando] = useState(false)
-  const [importarSaludGrupos, setImportarSaludGrupos] = useState<{ numero_acuerdo: string; estado: string; fecha_inicio: string }[]>([])
-  const [importarSaludElegirAbierto, setImportarSaludElegirAbierto] = useState(false)
-  const [importarSaludGrupoElegido, setImportarSaludGrupoElegido] = useState('')
-  const [importarSaludSeleccionados, setImportarSaludSeleccionados] = useState<number[]>([])
-  const [importarSaludEnviando, setImportarSaludEnviando] = useState(false)
-  const [importarSaludError, setImportarSaludError] = useState<string | null>(null)
+  // "Exportar" (antes "Importar a Salud"): COPIA la información de este acuerdo
+  // de funeraria (todos sus beneficiarios vigentes, se pueden desmarcar) a Salud.
+  // En Funeraria nada cambia. Pedido del 10/11: si el titular ya tiene acuerdo
+  // de salud, una ventana pregunta si se copia en ese mismo acuerdo o se crea
+  // otro (número propuesto, editable). Si no tiene, se le crea uno.
+  // El botón "Importar" hace lo inverso: ver ModalImportarDesdeSalud.
+  const [importarDesdeSaludAbierto, setImportarDesdeSaludAbierto] = useState(false)
+  const [exportarSaludAbierto, setExportarSaludAbierto] = useState(false)
+  const [exportarSaludCargando, setExportarSaludCargando] = useState(false)
+  const [exportarSaludGrupos, setExportarSaludGrupos] = useState<{ numero_acuerdo: string; estado: string; fecha_inicio: string }[]>([])
+  const [exportarSaludElegirAbierto, setExportarSaludElegirAbierto] = useState(false)
+  const [exportarSaludGrupoElegido, setExportarSaludGrupoElegido] = useState('')
+  const [exportarSaludSeleccionados, setExportarSaludSeleccionados] = useState<number[]>([])
+  const [exportarSaludEnviando, setExportarSaludEnviando] = useState(false)
+  const [exportarSaludError, setExportarSaludError] = useState<string | null>(null)
   // Ventana final: éxito o fallo de la operación, antes de volver al detalle
-  const [importarSaludResultado, setImportarSaludResultado] = useState<{ exito: boolean; mensaje: string } | null>(null)
+  const [exportarSaludResultado, setExportarSaludResultado] = useState<{ exito: boolean; mensaje: string } | null>(null)
   // Acuerdo sin beneficiarios y el titular ya tiene acuerdo de salud: ¿abrir otro?
-  const [importarSaludPreguntarOtro, setImportarSaludPreguntarOtro] = useState(false)
-  const [importarSaludAbrirOtro, setImportarSaludAbrirOtro] = useState(false)
+  const [exportarSaludPreguntarOtro, setExportarSaludPreguntarOtro] = useState(false)
+  const [exportarSaludAbrirOtro, setExportarSaludAbrirOtro] = useState(false)
   // Titular sin acuerdo de salud: número del acuerdo que se le creará (editable).
   // null = sí tiene acuerdo de salud (o aún se está consultando)
-  const [importarSaludNumeroNuevo, setImportarSaludNumeroNuevo] = useState<string | null>(null)
-  const importarSaludCrearAcuerdo = importarSaludNumeroNuevo !== null
+  const [exportarSaludNumeroNuevo, setExportarSaludNumeroNuevo] = useState<string | null>(null)
+  const exportarSaludCrearAcuerdo = exportarSaludNumeroNuevo !== null
   // Fecha de inicio del acuerdo de salud que se creará (por defecto hoy, editable)
-  const [importarSaludFechaNueva, setImportarSaludFechaNueva] = useState(hoyISO())
+  const [exportarSaludFechaNueva, setExportarSaludFechaNueva] = useState(hoyISO())
 
   // Beneficiarios vivos y vigentes de ESTE acuerdo (el titular ya es el dueño de su acuerdo de salud)
-  const importarSaludCandidatos = (acuerdoDetalle ? beneficiariosDeAcuerdo(beneficiariosSocio, acuerdoDetalle.id) : []).filter(
+  const exportarSaludCandidatos = (acuerdoDetalle ? beneficiariosDeAcuerdo(beneficiariosSocio, acuerdoDetalle.id) : []).filter(
     (b) => b.estado === 'activo' && !retiradoDeFuneraria(b)
   )
-  const importarSaludTodos =
-    importarSaludCandidatos.length > 0 && importarSaludCandidatos.every((b) => importarSaludSeleccionados.includes(b.id))
-  const alternarTodosImportarSalud = () =>
-    setImportarSaludSeleccionados(importarSaludTodos ? [] : importarSaludCandidatos.map((b) => b.id))
+  const exportarSaludTodos =
+    exportarSaludCandidatos.length > 0 && exportarSaludCandidatos.every((b) => exportarSaludSeleccionados.includes(b.id))
+  const alternarTodosExportarSalud = () =>
+    setExportarSaludSeleccionados(exportarSaludTodos ? [] : exportarSaludCandidatos.map((b) => b.id))
 
   // Número propuesto para el acuerdo de salud nuevo (el expediente, o -1, -2… si ya se usa)
   const proponerNumeroSaludNuevo = async (socioId: number) => {
     const sugerido = await saludService.obtenerNumeroSugeridoSalud(socioId)
-    setImportarSaludNumeroNuevo(sugerido.data?.numero_sugerido ?? acuerdoDetalle?.socio?.codigo_socio ?? '')
+    setExportarSaludNumeroNuevo(sugerido.data?.numero_sugerido ?? acuerdoDetalle?.socio?.codigo_socio ?? '')
   }
 
-  const cerrarImportarSalud = () => {
-    setImportarSaludPreguntarOtro(false)
-    setImportarSaludElegirAbierto(false)
-    setImportarSaludAbierto(false)
+  const cerrarExportarSalud = () => {
+    setExportarSaludPreguntarOtro(false)
+    setExportarSaludElegirAbierto(false)
+    setExportarSaludAbierto(false)
   }
 
-  const abrirImportarSalud = async () => {
+  const abrirExportarSalud = async () => {
     cerrarMenuAcciones()
-    setImportarSaludSeleccionados([])
-    setImportarSaludGrupos([])
-    setImportarSaludGrupoElegido('')
-    setImportarSaludError(null)
-    setImportarSaludResultado(null)
-    setImportarSaludNumeroNuevo(null)
-    setImportarSaludFechaNueva(hoyISO())
-    setImportarSaludPreguntarOtro(false)
-    setImportarSaludAbrirOtro(false)
-    setImportarSaludAbierto(true)
+    setExportarSaludSeleccionados([])
+    setExportarSaludGrupos([])
+    setExportarSaludGrupoElegido('')
+    setExportarSaludError(null)
+    setExportarSaludResultado(null)
+    setExportarSaludNumeroNuevo(null)
+    setExportarSaludFechaNueva(hoyISO())
+    setExportarSaludPreguntarOtro(false)
+    setExportarSaludAbrirOtro(false)
+    setExportarSaludAbierto(true)
 
     const socioId = acuerdoDetalle?.socio?.id
     if (!socioId) return
-    const sinBeneficiarios = importarSaludCandidatos.length === 0
-    setImportarSaludCargando(true)
+    // Se exporta toda la información del acuerdo: todos marcados de entrada
+    setExportarSaludSeleccionados(exportarSaludCandidatos.map((b) => b.id))
+    setExportarSaludCargando(true)
     try {
       // Acuerdos de salud vigentes donde este socio es el titular
       const respuesta = await saludService.obtenerAcuerdosPorSocio(socioId)
       const grupos = (respuesta.data ?? [])
         .filter((a) => a.numero_acuerdo && a.estado !== 'retirado' && a.beneficiario.parentesco.trim().toLowerCase() === 'titular')
         .map((a) => ({ numero_acuerdo: a.numero_acuerdo!, estado: a.estado, fecha_inicio: a.fecha_inicio }))
-      setImportarSaludGrupos(grupos)
-      if (grupos.length === 1) setImportarSaludGrupoElegido(grupos[0]!.numero_acuerdo)
+      setExportarSaludGrupos(grupos)
+      if (grupos.length === 1) setExportarSaludGrupoElegido(grupos[0]!.numero_acuerdo)
       if (grupos.length === 0) {
         // No tiene acuerdo de salud: se le creará uno al copiar
         await proponerNumeroSaludNuevo(socioId)
-      } else if (sinBeneficiarios) {
-        // Solo se copiaría el titular, que ya tiene acuerdo de salud: se pregunta
-        setImportarSaludPreguntarOtro(true)
+      } else {
+        // Ya tiene acuerdo de salud: ¿en el mismo o en uno nuevo?
+        setExportarSaludPreguntarOtro(true)
       }
     } catch (err) {
-      setImportarSaludError(getErrorMessage(err))
+      setExportarSaludError(getErrorMessage(err))
     } finally {
-      setImportarSaludCargando(false)
+      setExportarSaludCargando(false)
     }
   }
 
-  // Respuesta "Sí" a "¿Desea abrir un nuevo acuerdo para este socio?"
+  // Respuesta "Copiar en el mismo acuerdo": se sigue con la lista y, si tiene
+  // varios acuerdos de salud, al continuar se pregunta a cuál
+  const elegirMismoAcuerdoSalud = () => setExportarSaludPreguntarOtro(false)
+
+  // Respuesta "Crear otro acuerdo de salud"
   const aceptarAbrirOtroSalud = async () => {
     const socioId = acuerdoDetalle?.socio?.id
-    setImportarSaludPreguntarOtro(false)
+    setExportarSaludPreguntarOtro(false)
     if (!socioId) return
-    setImportarSaludCargando(true)
+    setExportarSaludCargando(true)
     try {
       await proponerNumeroSaludNuevo(socioId)
-      setImportarSaludAbrirOtro(true)
+      setExportarSaludAbrirOtro(true)
     } catch (err) {
-      setImportarSaludError(getErrorMessage(err))
+      setExportarSaludError(getErrorMessage(err))
     } finally {
-      setImportarSaludCargando(false)
+      setExportarSaludCargando(false)
     }
   }
 
   // Sin acuerdo de salud se crea uno; con uno solo se copia directo; con varios,
   // primero se pregunta a cuál. Sin beneficiarios en el acuerdo de funeraria
   // solo se puede crear (con el titular).
-  const continuarImportarSalud = () => {
-    if (importarSaludSeleccionados.length === 0 && !(importarSaludCrearAcuerdo && importarSaludCandidatos.length === 0)) return
-    if (importarSaludCrearAcuerdo) {
-      void confirmarImportarSalud(null)
+  const continuarExportarSalud = () => {
+    if (exportarSaludSeleccionados.length === 0 && !(exportarSaludCrearAcuerdo && exportarSaludCandidatos.length === 0)) return
+    if (exportarSaludCrearAcuerdo) {
+      void confirmarExportarSalud(null)
       return
     }
-    if (importarSaludGrupos.length === 0) return
-    if (importarSaludGrupos.length > 1) {
-      setImportarSaludElegirAbierto(true)
+    if (exportarSaludGrupos.length === 0) return
+    if (exportarSaludGrupos.length > 1) {
+      setExportarSaludElegirAbierto(true)
       return
     }
-    void confirmarImportarSalud(importarSaludGrupos[0]!.numero_acuerdo)
+    void confirmarExportarSalud(exportarSaludGrupos[0]!.numero_acuerdo)
   }
 
   // numeroAcuerdoSalud null = el titular no tiene acuerdo de salud y se crea
-  const confirmarImportarSalud = async (numeroAcuerdoSalud: string | null) => {
+  const confirmarExportarSalud = async (numeroAcuerdoSalud: string | null) => {
     if (!acuerdoDetalle) return
-    if (importarSaludSeleccionados.length === 0 && numeroAcuerdoSalud !== null) return
-    const numeroNuevo = (importarSaludNumeroNuevo ?? '').trim()
+    if (exportarSaludSeleccionados.length === 0 && numeroAcuerdoSalud !== null) return
+    const numeroNuevo = (exportarSaludNumeroNuevo ?? '').trim()
     if (numeroAcuerdoSalud === null && !numeroNuevo) {
-      setImportarSaludError('Escribe el número del acuerdo de salud que se va a crear.')
+      setExportarSaludError('Escribe el número del acuerdo de salud que se va a crear.')
       return
     }
-    if (numeroAcuerdoSalud === null && !importarSaludFechaNueva) {
-      setImportarSaludError('Indica la fecha de inicio del acuerdo de salud que se va a crear.')
+    if (numeroAcuerdoSalud === null && !exportarSaludFechaNueva) {
+      setExportarSaludError('Indica la fecha de inicio del acuerdo de salud que se va a crear.')
       return
     }
-    const cantidad = importarSaludSeleccionados.length
+    const cantidad = exportarSaludSeleccionados.length
     const origen = `del acuerdo de funeraria ${acuerdoDetalle.numero_acuerdo || 'sin número'}`
     const expediente = acuerdoDetalle.socio?.codigo_socio ?? ''
     const confirmado = window.confirm(
       (numeroAcuerdoSalud === null
-        ? (importarSaludAbrirOtro
+        ? (exportarSaludAbrirOtro
             ? `El socio ${expediente} ya tiene acuerdo de salud; se le abrirá uno ADICIONAL.\n\n`
             : `El socio ${expediente} no tiene acuerdo de salud.\n\n`) +
-          `Se CREARÁ el acuerdo de salud ${numeroNuevo} a su nombre (inicia el ${formatearFecha(importarSaludFechaNueva)})` +
+          `Se CREARÁ el acuerdo de salud ${numeroNuevo} a su nombre (inicia el ${formatearFecha(exportarSaludFechaNueva)})` +
           (cantidad > 0
             ? ` y se copiarán ahí ${cantidad} beneficiario(s) ${origen}. ¿Continuar?\n\n`
             : ` con los datos del titular (el acuerdo de funeraria no tiene beneficiarios). ¿Continuar?\n\n`)
@@ -760,23 +785,23 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     )
     if (!confirmado) return
 
-    setImportarSaludElegirAbierto(false)
-    setImportarSaludEnviando(true)
-    setImportarSaludError(null)
+    setExportarSaludElegirAbierto(false)
+    setExportarSaludEnviando(true)
+    setExportarSaludError(null)
     try {
-      const datos = { beneficiario_ids: importarSaludSeleccionados, acuerdo_funeraria_id: acuerdoDetalle.id }
+      const datos = { beneficiario_ids: exportarSaludSeleccionados, acuerdo_funeraria_id: acuerdoDetalle.id }
       const respuesta =
         numeroAcuerdoSalud === null
           ? await saludService.importarDesdeFunerariaNuevoAcuerdo({
               ...datos,
               numero_acuerdo: numeroNuevo,
-              fecha_inicio: importarSaludFechaNueva,
-              abrir_otro: importarSaludAbrirOtro,
+              fecha_inicio: exportarSaludFechaNueva,
+              abrir_otro: exportarSaludAbrirOtro,
             })
           : await saludService.importarDesdeFuneraria(numeroAcuerdoSalud, datos)
       if (!respuesta.success) throw new Error('No fue posible completar la copia')
       const { numero_acuerdo_salud, acuerdo_creado, copiados, ya_estaban, omitidos } = respuesta.data
-      setImportarSaludResultado({
+      setExportarSaludResultado({
         exito: true,
         mensaje: [
           acuerdo_creado ? `Se creó el acuerdo de salud ${numero_acuerdo_salud} a nombre del socio ${expediente}, con sus datos como titular.` : '',
@@ -792,7 +817,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
     } catch (err) {
       // Siempre se informa qué pasó: la operación es todo o nada
       const motivo = getErrorMessage(err)
-      setImportarSaludResultado({
+      setExportarSaludResultado({
         exito: false,
         mensaje:
           numeroAcuerdoSalud === null
@@ -800,7 +825,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             : `No se copió ningún beneficiario al acuerdo de salud ${numeroAcuerdoSalud}. Motivo: ${motivo}`,
       })
     } finally {
-      setImportarSaludEnviando(false)
+      setExportarSaludEnviando(false)
     }
   }
 
@@ -948,12 +973,12 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   //
   // Estado con que sale cada beneficiario: el del acuerdo (suspendido/retirado)
   // manda, luego su retiro de funeraria y por último el de la persona.
-  const estadoEnFicha = (detalle: AcuerdoDetalle, b: Beneficiario): string =>
+  const estadoEnFicha = (detalle: AcuerdoDetalle, b: BeneficiarioEnAcuerdo): string =>
     detalle.estado !== 'activo' ? detalle.estado : retiradoDeFuneraria(b) ? 'retirado' : b.estado
 
   const construirPayloadFicha = (
     detalle: AcuerdoDetalle,
-    beneficiarios: Beneficiario[]
+    beneficiarios: BeneficiarioEnAcuerdo[]
   ): funerariaService.FichaAcuerdoFunerariaData => ({
     numero_acuerdo: detalle.numero_acuerdo || 'S/N',
     fecha_inicio: detalle.fecha_inicio,
@@ -978,7 +1003,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
   const construirPropsFichaImpresion = (
     detalle: AcuerdoDetalle,
-    beneficiarios: Beneficiario[]
+    beneficiarios: BeneficiarioEnAcuerdo[]
   ): PrintableFichaAcuerdoProps => ({
     servicio: 'FUNERARIA',
     numero_acuerdo: detalle.numero_acuerdo || 'S/N',
@@ -1976,7 +2001,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             )}
 
             <Input
-              label="N° de acuerdo de funeraria"
+              label="N° de acuerdo"
               value={wizardNumeroAcuerdo}
               onChange={(e) => setWizardNumeroAcuerdo(valorEnMayusculas(e))}
               helperText="Propuesto como expediente-número; puedes modificarlo"
@@ -2021,7 +2046,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                 <span className="font-medium">{wizardSocio.telefono || 'Sin dato'}</span>
               </p>
               <p>
-                <span className="text-neutral-500">N° de acuerdo de funeraria:</span>{' '}
+                <span className="text-neutral-500">N° de acuerdo:</span>{' '}
                 <span className="font-mono font-medium">{wizardNumeroAcuerdo || 'se asigna después'}</span>
               </p>
               <p>
@@ -2170,7 +2195,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           )}
 
           <Input
-            label="N° de acuerdo de funeraria"
+            label="N° de acuerdo"
             value={editNumeroAcuerdo}
             onChange={(e) => setEditNumeroAcuerdo(valorEnMayusculas(e))}
             placeholder={acuerdoEditando?.socio?.codigo_socio ? `${acuerdoEditando.socio.codigo_socio}-0` : undefined}
@@ -2203,11 +2228,19 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                   <Printer className="h-4 w-4" />
                   Imprimir Ficha
                 </Button>
-                {puedeEscribir && (
-                  <Button variant="outline" onClick={() => void abrirImportarSalud()}>
-                    <HeartPulse className="h-4 w-4" />
-                    Importar a Salud
-                  </Button>
+                {puedeEscribir && acuerdoDetalle.estado !== 'retirado' && (
+                  <>
+                    {/* Trae beneficiarios de un acuerdo de salud del titular a ESTE acuerdo */}
+                    <Button variant="outline" onClick={() => setImportarDesdeSaludAbierto(true)} title="Traer beneficiarios desde Salud">
+                      <Download className="h-4 w-4" />
+                      Importar
+                    </Button>
+                    {/* Lleva la información de este acuerdo a Salud */}
+                    <Button variant="outline" onClick={() => void abrirExportarSalud()} title="Copiar este acuerdo a Salud">
+                      <Upload className="h-4 w-4" />
+                      Exportar
+                    </Button>
+                  </>
                 )}
               </>
             )}
@@ -2437,6 +2470,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           onCompletado={(numero) => void completarRevertirNuevoAcuerdo(numero)}
           socio={acuerdoDetalle.socio}
           beneficiario={revertirNuevoAcuerdo}
+          acuerdoOrigenId={revertirOrigenId ?? acuerdoDetalle.id}
         />
       )}
 
@@ -2590,53 +2624,69 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
       </Modal>
 
       {/* ============================================ */}
-      {/* MODAL: IMPORTAR A SALUD */}
+      {/* MODAL: IMPORTAR DESDE SALUD */}
+      {/* ============================================ */}
+      {importarDesdeSaludAbierto && acuerdoDetalle?.socio && (
+        <ModalImportarDesdeSalud
+          open
+          onClose={() => setImportarDesdeSaludAbierto(false)}
+          onCompletado={() => {
+            setImportarDesdeSaludAbierto(false)
+            void Promise.all([recargarBeneficiarios(), cargarAcuerdos(), cargarEstadisticas()])
+          }}
+          acuerdo={acuerdoDetalle}
+          socio={acuerdoDetalle.socio}
+        />
+      )}
+
+      {/* ============================================ */}
+      {/* MODAL: EXPORTAR A SALUD */}
       {/* ============================================ */}
       <Modal
-        open={importarSaludAbierto}
-        onClose={cerrarImportarSalud}
+        open={exportarSaludAbierto}
+        onClose={cerrarExportarSalud}
         title={
-          importarSaludResultado
-            ? importarSaludResultado.exito
-              ? 'Importación a Salud completada'
-              : 'No se completó la importación a Salud'
-            : 'Importar a Salud'
+          exportarSaludResultado
+            ? exportarSaludResultado.exito
+              ? 'Exportación a Salud completada'
+              : 'No se completó la exportación a Salud'
+            : 'Exportar a Salud'
         }
         description={
-          importarSaludResultado
+          exportarSaludResultado
             ? undefined
-            : 'Copia los beneficiarios seleccionados (o solo el titular, si el acuerdo no tiene beneficiarios) a un acuerdo de salud del mismo titular. En Funeraria no se borra nada.'
+            : 'Copia la información de este acuerdo (sus beneficiarios, o solo el titular si no tiene) a un acuerdo de salud del mismo titular. En Funeraria no se borra nada.'
         }
         size="md"
         footer={
-          importarSaludResultado ? (
+          exportarSaludResultado ? (
             <>
-              {!importarSaludResultado.exito && (
-                <Button variant="outline" onClick={() => setImportarSaludResultado(null)}>
+              {!exportarSaludResultado.exito && (
+                <Button variant="outline" onClick={() => setExportarSaludResultado(null)}>
                   Corregir e intentar de nuevo
                 </Button>
               )}
-              <Button onClick={cerrarImportarSalud}>Volver al acuerdo de funeraria</Button>
+              <Button onClick={cerrarExportarSalud}>Volver al acuerdo de funeraria</Button>
             </>
           ) : (
             <>
-              <Button variant="outline" onClick={cerrarImportarSalud}>
+              <Button variant="outline" onClick={cerrarExportarSalud}>
                 Cancelar
               </Button>
               <Button
-                onClick={continuarImportarSalud}
-                isLoading={importarSaludEnviando}
+                onClick={continuarExportarSalud}
+                isLoading={exportarSaludEnviando}
                 disabled={
-                  (importarSaludSeleccionados.length === 0 && !(importarSaludCrearAcuerdo && importarSaludCandidatos.length === 0)) ||
-                  importarSaludCargando ||
-                  (importarSaludGrupos.length === 0 && !importarSaludCrearAcuerdo)
+                  (exportarSaludSeleccionados.length === 0 && !(exportarSaludCrearAcuerdo && exportarSaludCandidatos.length === 0)) ||
+                  exportarSaludCargando ||
+                  (exportarSaludGrupos.length === 0 && !exportarSaludCrearAcuerdo)
                 }
               >
-                {importarSaludCrearAcuerdo
-                  ? importarSaludCandidatos.length === 0
+                {exportarSaludCrearAcuerdo
+                  ? exportarSaludCandidatos.length === 0
                     ? 'Crear acuerdo de salud'
                     : 'Crear acuerdo de salud y copiar'
-                  : importarSaludGrupos.length > 1
+                  : exportarSaludGrupos.length > 1
                     ? 'Continuar'
                     : 'Copiar a Salud'}
               </Button>
@@ -2644,21 +2694,21 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           )
         }
       >
-        {importarSaludResultado ? (
+        {exportarSaludResultado ? (
           <div
             className={
-              importarSaludResultado.exito
+              exportarSaludResultado.exito
                 ? 'rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800'
                 : 'rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700'
             }
           >
-            {importarSaludResultado.mensaje}
+            {exportarSaludResultado.mensaje}
           </div>
         ) : (
           <div className="space-y-4">
-            {importarSaludError && (
+            {exportarSaludError && (
               <div className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-2 text-sm text-rose-700">
-                {importarSaludError}
+                {exportarSaludError}
               </div>
             )}
 
@@ -2667,7 +2717,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                 <p className="text-sm font-semibold text-neutral-900">{acuerdoDetalle.socio.nombre_completo}</p>
                 <p className="text-xs text-neutral-500">
                   Titular • Exp. {acuerdoDetalle.socio.codigo_socio} •{' '}
-                  {importarSaludCrearAcuerdo ? 'será el titular del acuerdo de salud nuevo' : importarSaludGrupos.length > 0 ? 'ya es el dueño de su acuerdo de salud' : ''}
+                  {exportarSaludCrearAcuerdo ? 'será el titular del acuerdo de salud nuevo' : exportarSaludGrupos.length > 0 ? 'ya es el dueño de su acuerdo de salud' : ''}
                 </p>
               </div>
             )}
@@ -2675,30 +2725,30 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             <div>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-sm font-medium text-neutral-700">
-                  Beneficiarios a copiar ({importarSaludSeleccionados.length} de {importarSaludCandidatos.length})
+                  Beneficiarios a copiar ({exportarSaludSeleccionados.length} de {exportarSaludCandidatos.length})
                 </p>
-                {importarSaludCandidatos.length > 0 && (
-                  <Button variant="outline" size="sm" onClick={alternarTodosImportarSalud}>
-                    {importarSaludTodos ? 'Quitar todos' : 'Seleccionar todos'}
+                {exportarSaludCandidatos.length > 0 && (
+                  <Button variant="outline" size="sm" onClick={alternarTodosExportarSalud}>
+                    {exportarSaludTodos ? 'Quitar todos' : 'Seleccionar todos'}
                   </Button>
                 )}
               </div>
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {importarSaludCandidatos.length === 0 && (
+                {exportarSaludCandidatos.length === 0 && (
                   <p className="px-2 py-1.5 text-sm text-neutral-500">
                     Este acuerdo no tiene beneficiarios vivos para copiar: solo se copiarán los datos del titular.
                   </p>
                 )}
-                {importarSaludCandidatos.map((beneficiario) => (
+                {exportarSaludCandidatos.map((beneficiario) => (
                   <label
                     key={beneficiario.id}
                     className="flex items-center gap-3 rounded-lg border border-neutral-200 p-2.5 text-sm cursor-pointer hover:bg-neutral-50"
                   >
                     <input
                       type="checkbox"
-                      checked={importarSaludSeleccionados.includes(beneficiario.id)}
+                      checked={exportarSaludSeleccionados.includes(beneficiario.id)}
                       onChange={(e) => {
-                        setImportarSaludSeleccionados((prev) =>
+                        setExportarSaludSeleccionados((prev) =>
                           e.target.checked
                             ? [...prev, beneficiario.id]
                             : prev.filter((id) => id !== beneficiario.id)
@@ -2713,31 +2763,31 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               </div>
             </div>
 
-            {importarSaludCargando && <p className="text-sm text-neutral-500">Buscando los acuerdos de salud del titular...</p>}
-            {!importarSaludCrearAcuerdo && importarSaludCandidatos.length > 0 && importarSaludGrupos.length === 1 && (
+            {exportarSaludCargando && <p className="text-sm text-neutral-500">Buscando los acuerdos de salud del titular...</p>}
+            {!exportarSaludCrearAcuerdo && exportarSaludCandidatos.length > 0 && exportarSaludGrupos.length === 1 && (
               <p className="text-sm text-neutral-600">
                 Se copiarán al acuerdo de salud{' '}
-                <span className="font-mono font-medium">{importarSaludGrupos[0]!.numero_acuerdo}</span>.
+                <span className="font-mono font-medium">{exportarSaludGrupos[0]!.numero_acuerdo}</span>.
               </p>
             )}
-            {!importarSaludCrearAcuerdo && importarSaludCandidatos.length > 0 && importarSaludGrupos.length > 1 && (
+            {!exportarSaludCrearAcuerdo && exportarSaludCandidatos.length > 0 && exportarSaludGrupos.length > 1 && (
               <p className="text-sm text-neutral-600">
-                El titular tiene {importarSaludGrupos.length} acuerdos de salud; al continuar se te preguntará a cuál copiarlos.
+                El titular tiene {exportarSaludGrupos.length} acuerdos de salud; al continuar se te preguntará a cuál copiarlos.
               </p>
             )}
-            {!importarSaludCrearAcuerdo && !importarSaludCargando && importarSaludCandidatos.length === 0 && importarSaludGrupos.length > 0 && (
+            {!exportarSaludCrearAcuerdo && !exportarSaludCargando && exportarSaludCandidatos.length === 0 && exportarSaludGrupos.length > 0 && (
               <p className="text-sm text-neutral-600">
-                El socio ya tiene acuerdo de salud ({importarSaludGrupos.map((g) => g.numero_acuerdo).join(', ')}) y no se abrió uno
+                El socio ya tiene acuerdo de salud ({exportarSaludGrupos.map((g) => g.numero_acuerdo).join(', ')}) y no se abrió uno
                 nuevo. No hay nada más que copiar.
               </p>
             )}
-            {importarSaludCrearAcuerdo && (
+            {exportarSaludCrearAcuerdo && (
               <div className="space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
                 <p className="text-sm text-sky-800">
-                  {importarSaludAbrirOtro ? (
+                  {exportarSaludAbrirOtro ? (
                     <>
                       El socio {acuerdoDetalle?.socio?.codigo_socio} ya tiene acuerdo de salud (
-                      {importarSaludGrupos.map((g) => g.numero_acuerdo).join(', ')}). Se le abrirá <strong>un acuerdo nuevo adicional</strong>{' '}
+                      {exportarSaludGrupos.map((g) => g.numero_acuerdo).join(', ')}). Se le abrirá <strong>un acuerdo nuevo adicional</strong>{' '}
                       a su nombre
                     </>
                   ) : (
@@ -2746,23 +2796,23 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
                       su nombre
                     </>
                   )}
-                  {importarSaludCandidatos.length > 0
+                  {exportarSaludCandidatos.length > 0
                     ? ' y los beneficiarios seleccionados se agregarán a ese acuerdo.'
                     : ', con sus datos como titular.'}
                 </p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Input
                     label="N° del acuerdo de salud que se creará"
-                    value={importarSaludNumeroNuevo ?? ''}
-                    onChange={(e) => setImportarSaludNumeroNuevo(valorEnMayusculas(e))}
+                    value={exportarSaludNumeroNuevo ?? ''}
+                    onChange={(e) => setExportarSaludNumeroNuevo(valorEnMayusculas(e))}
                     maxLength={20}
                     helperText="Propuesto con el número de expediente; puedes modificarlo"
                   />
                   <Input
                     label="Fecha de inicio"
                     type="date"
-                    value={importarSaludFechaNueva}
-                    onChange={(e) => setImportarSaludFechaNueva(e.target.value)}
+                    value={exportarSaludFechaNueva}
+                    onChange={(e) => setExportarSaludFechaNueva(e.target.value)}
                     helperText="Por defecto hoy; puedes modificarla"
                   />
                 </div>
@@ -2774,20 +2824,20 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
       {/* Ventana adicional: el titular tiene más de un acuerdo de salud */}
       <Modal
-        open={importarSaludElegirAbierto}
-        onClose={() => setImportarSaludElegirAbierto(false)}
+        open={exportarSaludElegirAbierto}
+        onClose={() => setExportarSaludElegirAbierto(false)}
         title="¿A qué acuerdo de salud?"
-        description={`El titular (exp. ${acuerdoDetalle?.socio?.codigo_socio ?? ''}) tiene varios acuerdos de salud. Elige a cuál copiar los ${importarSaludSeleccionados.length} beneficiario(s).`}
+        description={`El titular (exp. ${acuerdoDetalle?.socio?.codigo_socio ?? ''}) tiene varios acuerdos de salud. Elige a cuál copiar los ${exportarSaludSeleccionados.length} beneficiario(s).`}
         size="sm"
         footer={
           <>
-            <Button variant="outline" onClick={() => setImportarSaludElegirAbierto(false)}>
+            <Button variant="outline" onClick={() => setExportarSaludElegirAbierto(false)}>
               Cancelar
             </Button>
             <Button
-              onClick={() => importarSaludGrupoElegido && void confirmarImportarSalud(importarSaludGrupoElegido)}
-              disabled={!importarSaludGrupoElegido}
-              isLoading={importarSaludEnviando}
+              onClick={() => exportarSaludGrupoElegido && void confirmarExportarSalud(exportarSaludGrupoElegido)}
+              disabled={!exportarSaludGrupoElegido}
+              isLoading={exportarSaludEnviando}
             >
               Copiar a este acuerdo
             </Button>
@@ -2795,7 +2845,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         }
       >
         <div className="space-y-2">
-          {importarSaludGrupos.map((g) => (
+          {exportarSaludGrupos.map((g) => (
             <label
               key={g.numero_acuerdo}
               className="flex items-center gap-3 rounded-lg border border-neutral-200 p-3 text-sm hover:bg-neutral-50 cursor-pointer"
@@ -2803,8 +2853,8 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               <input
                 type="radio"
                 name="acuerdo-salud-destino"
-                checked={importarSaludGrupoElegido === g.numero_acuerdo}
-                onChange={() => setImportarSaludGrupoElegido(g.numero_acuerdo)}
+                checked={exportarSaludGrupoElegido === g.numero_acuerdo}
+                onChange={() => setExportarSaludGrupoElegido(g.numero_acuerdo)}
               />
               <span className="font-mono font-medium">{g.numero_acuerdo}</span>
               <span className="text-neutral-500">
@@ -2815,28 +2865,31 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
         </div>
       </Modal>
 
-      {/* Ventana informativa: acuerdo sin beneficiarios y el titular ya tiene acuerdo de salud */}
+      {/* Ventana: el titular ya tiene acuerdo de salud → ¿el mismo o uno nuevo? */}
       <Modal
-        open={importarSaludPreguntarOtro}
-        onClose={cerrarImportarSalud}
+        open={exportarSaludPreguntarOtro}
+        onClose={cerrarExportarSalud}
         title="El socio ya tiene acuerdo de salud"
         size="sm"
         footer={
           <>
-            <Button variant="outline" onClick={cerrarImportarSalud}>
-              No
+            <Button variant="outline" onClick={cerrarExportarSalud}>
+              Cancelar
             </Button>
-            <Button onClick={() => void aceptarAbrirOtroSalud()}>Sí, abrir un acuerdo nuevo</Button>
+            <Button variant="outline" onClick={elegirMismoAcuerdoSalud}>
+              Copiar en el mismo acuerdo
+            </Button>
+            <Button onClick={() => void aceptarAbrirOtroSalud()}>Crear otro acuerdo</Button>
           </>
         }
       >
         <div className="space-y-3 text-sm text-neutral-700">
           <p>
             El socio <strong>{acuerdoDetalle?.socio?.nombre_completo}</strong> (exp. {acuerdoDetalle?.socio?.codigo_socio}) ya tiene{' '}
-            {importarSaludGrupos.length === 1 ? 'un acuerdo de salud abierto' : `${importarSaludGrupos.length} acuerdos de salud abiertos`}:
+            {exportarSaludGrupos.length === 1 ? 'un acuerdo de salud abierto' : `${exportarSaludGrupos.length} acuerdos de salud abiertos`}:
           </p>
           <ul className="space-y-1">
-            {importarSaludGrupos.map((g) => (
+            {exportarSaludGrupos.map((g) => (
               <li key={g.numero_acuerdo} className="rounded border border-neutral-200 px-3 py-1.5">
                 <span className="font-mono font-medium">{g.numero_acuerdo}</span>
                 <span className="text-neutral-500">
@@ -2846,7 +2899,10 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
               </li>
             ))}
           </ul>
-          <p className="font-medium">¿Desea abrir un nuevo acuerdo para este socio?</p>
+          <p className="font-medium">
+            ¿Desea copiar los datos de este acuerdo de funeraria en{' '}
+            {exportarSaludGrupos.length === 1 ? 'ese mismo acuerdo de salud' : 'uno de esos acuerdos de salud'} o crear otro acuerdo de salud?
+          </p>
         </div>
       </Modal>
 

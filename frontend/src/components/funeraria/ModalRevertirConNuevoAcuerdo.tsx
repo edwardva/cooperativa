@@ -17,6 +17,12 @@ export interface ModalRevertirConNuevoAcuerdoProps {
   onCompletado: (numeroAcuerdo: string | null) => void
   socio: { id: number; codigo_socio: string; nombre_completo: string; cedula: string }
   beneficiario: { id: number; nombre: string; apellido: string; parentesco: string }
+  /**
+   * Acuerdo lleno desde el que se revierte. La persona puede estar en varios
+   * acuerdos: desde Funeraria se pasa el que está abierto; desde Salud no se
+   * pasa y se toma el primero en que figura.
+   */
+  acuerdoOrigenId?: number
 }
 
 /**
@@ -31,6 +37,7 @@ export const ModalRevertirConNuevoAcuerdo = ({
   onCompletado,
   socio,
   beneficiario,
+  acuerdoOrigenId,
 }: ModalRevertirConNuevoAcuerdoProps) => {
   const [cargando, setCargando] = useState(false)
   const [acuerdoOrigen, setAcuerdoOrigen] = useState<funerariaService.AcuerdoFunerariaPorSocio | null>(null)
@@ -50,7 +57,9 @@ export const ModalRevertirConNuevoAcuerdo = ({
         ])
         const existentes = acuerdos.data ?? []
         const actual = beneficiarios.data?.find((b) => b.id === beneficiario.id)
-        setAcuerdoOrigen(existentes.find((a) => a.id === actual?.acuerdo_funeraria_id) ?? null)
+        const vigentes = actual ? sociosService.acuerdosFunerariaVigentes(actual) : []
+        const origenId = acuerdoOrigenId ?? vigentes[0]
+        setAcuerdoOrigen(existentes.find((a) => a.id === origenId) ?? null)
         // Mismo criterio que "Nuevo acuerdo": expediente-N con el primer N libre
         const usados = new Set(existentes.map((a) => a.numero_acuerdo))
         let sufijo = 0
@@ -62,7 +71,7 @@ export const ModalRevertirConNuevoAcuerdo = ({
         setCargando(false)
       }
     })()
-  }, [open, socio.id, socio.codigo_socio, beneficiario.id])
+  }, [open, socio.id, socio.codigo_socio, beneficiario.id, acuerdoOrigenId])
 
   const nombreBeneficiario = nombreEnMayusculas(`${beneficiario.nombre} ${beneficiario.apellido}`)
   const numeroOrigen = acuerdoOrigen?.numero_acuerdo || 'sin número'
@@ -74,6 +83,7 @@ export const ModalRevertirConNuevoAcuerdo = ({
     try {
       const respuesta = await funerariaService.revertirFallecidoConNuevoAcuerdo(beneficiario.id, {
         numero_acuerdo: numeroAcuerdo.trim() || undefined,
+        ...(acuerdoOrigenId ? { acuerdo_origen_id: acuerdoOrigenId } : {}),
       })
       if (!respuesta.success) throw new Error('No fue posible crear el acuerdo')
       onCompletado(respuesta.data.numero_acuerdo)
@@ -144,7 +154,8 @@ export const ModalRevertirConNuevoAcuerdo = ({
                 {acuerdoOrigen ? ` (${formatearFecha(acuerdoOrigen.fecha_inicio)})` : ''}: no hay período de espera.
               </li>
               <li>
-                {nombreBeneficiario} sale de {numeroOrigen}, pasa al acuerdo nuevo y vuelve a estar activo.
+                {nombreBeneficiario} sale de {numeroOrigen} (y de cualquier otro acuerdo suyo que también esté lleno),
+                pasa al acuerdo nuevo y vuelve a estar activo. En los acuerdos con cupo sigue igual.
               </li>
               <li>El fallecimiento también se revierte en Salud.</li>
             </ul>

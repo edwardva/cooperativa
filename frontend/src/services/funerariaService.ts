@@ -361,7 +361,8 @@ export const retirarBeneficiarioAcuerdo = async (
  */
 export const revertirFallecidoConNuevoAcuerdo = async (
   beneficiarioId: number,
-  data: { numero_acuerdo?: string }
+  // acuerdo_origen_id: el acuerdo lleno desde el que se revierte (la persona puede estar en varios)
+  data: { numero_acuerdo?: string; acuerdo_origen_id?: number }
 ): Promise<ApiResponse<{ id: number; numero_acuerdo: string | null; fecha_inicio: string }>> => {
   const response = await apiClient.post(`/funeraria/beneficiarios/${beneficiarioId}/revertir-con-nuevo-acuerdo`, data);
   return response.data;
