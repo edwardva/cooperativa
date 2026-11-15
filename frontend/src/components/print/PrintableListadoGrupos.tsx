@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { MarcoVistaPrevia } from './MarcoVistaPrevia';
 import { nombreEnMayusculas } from '../../utils/formatters';
 import { EncabezadoImpresion } from './EncabezadoImpresion';
 import type { GrupoSalud } from '../../services/saludService';
@@ -9,6 +10,9 @@ export type TipoListadoGrupos = 'activos' | 'suspendidos' | 'proximos_suspender'
 export interface PrintableListadoGruposProps {
   tipo: TipoListadoGrupos;
   grupos: GrupoSalud[];
+  /** Muestra la hoja en pantalla con Imprimir y Cerrar antes de imprimir (16/11) */
+  vistaPrevia?: boolean;
+  onCerrarVistaPrevia?: () => void;
 }
 
 const TITULOS: Record<TipoListadoGrupos, string> = {
@@ -29,7 +33,7 @@ const TITULOS: Record<TipoListadoGrupos, string> = {
  * PrintableFichaAcuerdo.tsx para el porqué (evita la página fantasma final
  * que dejaba el truco anterior de "visibility: hidden").
  */
-export const PrintableListadoGrupos = ({ tipo, grupos }: PrintableListadoGruposProps) => {
+export const PrintableListadoGrupos = ({ tipo, grupos, vistaPrevia = false, onCerrarVistaPrevia }: PrintableListadoGruposProps) => {
   useEffect(() => {
     document.body.classList.add('print-portal-active');
     return () => document.body.classList.remove('print-portal-active');
@@ -39,7 +43,7 @@ export const PrintableListadoGrupos = ({ tipo, grupos }: PrintableListadoGruposP
     <>
       <style>{`
         @media screen {
-          .listado-grupos-print-root {
+          .listado-grupos-print-root:not(.en-vista-previa) {
             display: none;
           }
         }
@@ -79,7 +83,8 @@ export const PrintableListadoGrupos = ({ tipo, grupos }: PrintableListadoGruposP
         }
       `}</style>
 
-      <div className="listado-grupos-print-root">
+      <MarcoVistaPrevia activa={vistaPrevia} titulo={`${TITULOS[tipo]} · ${grupos.length} grupos`} onCerrar={onCerrarVistaPrevia}>
+      <div className={`listado-grupos-print-root${vistaPrevia ? ' en-vista-previa' : ''}`}>
         <EncabezadoImpresion titulo={`${TITULOS[tipo]} - Salud`} detalles={<div>Total de grupos: {grupos.length}</div>} />
 
         <div className="mt-4">
@@ -118,6 +123,7 @@ export const PrintableListadoGrupos = ({ tipo, grupos }: PrintableListadoGruposP
           )}
         </div>
       </div>
+      </MarcoVistaPrevia>
     </>,
     document.body
   );

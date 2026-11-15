@@ -11,7 +11,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { PrintableFichaAcuerdo } from '../components/print/PrintableFichaAcuerdo';
-import { imprimirCuandoEsteListo } from '../components/print/EncabezadoImpresion';
 import type { PrintableFichaAcuerdoProps } from '../components/print/PrintableFichaAcuerdo';
 import { PrintableListadoGrupos } from '../components/print/PrintableListadoGrupos';
 import { ModalRevertirConNuevoAcuerdo } from '../components/funeraria/ModalRevertirConNuevoAcuerdo';
@@ -489,15 +488,12 @@ const handleSort = (field: string) => {
   // Se dispara solo cuando hay un listado agrupado listo: espera a que React
   // monte PrintableListadoGrupos con los datos antes de abrir el diálogo de impresión.
   useEffect(() => {
+    // Ya no imprime solo: se muestra la hoja y la persona decide (16/11).
+    // Al terminar de imprimir se cierra la vista previa.
     if (!gruposParaImprimir) return
     const limpiar = () => setGruposParaImprimir(null)
     window.addEventListener('afterprint', limpiar, { once: true })
-    let cancelado = false
-    void imprimirCuandoEsteListo(() => cancelado)
-    return () => {
-      cancelado = true
-      window.removeEventListener('afterprint', limpiar)
-    }
+    return () => window.removeEventListener('afterprint', limpiar)
   }, [gruposParaImprimir])
 
   const abrirGrupo = async (numeroAcuerdo: string) => {
@@ -1413,15 +1409,12 @@ const handleSort = (field: string) => {
   // Se dispara solo cuando hay una ficha lista: evita imprimir contenido
   // obsoleto y espera a que React monte PrintableFichaAcuerdo con los datos.
   useEffect(() => {
+    // Ya no imprime solo: se muestra la hoja y la persona decide (16/11).
+    // Al terminar de imprimir se cierra la vista previa.
     if (!fichaParaImprimir) return
     const limpiar = () => setFichaParaImprimir(null)
     window.addEventListener('afterprint', limpiar, { once: true })
-    let cancelado = false
-    void imprimirCuandoEsteListo(() => cancelado)
-    return () => {
-      cancelado = true
-      window.removeEventListener('afterprint', limpiar)
-    }
+    return () => window.removeEventListener('afterprint', limpiar)
   }, [fichaParaImprimir])
 
 
@@ -1608,9 +1601,14 @@ const handleSort = (field: string) => {
           un "print root" coincidiera en el DOM durante window.print(), se
           mostrarían superpuestos. */}
       {fichaParaImprimir ? (
-        <PrintableFichaAcuerdo {...fichaParaImprimir} />
+        <PrintableFichaAcuerdo {...fichaParaImprimir} vistaPrevia onCerrarVistaPrevia={() => setFichaParaImprimir(null)} />
       ) : gruposParaImprimir ? (
-        <PrintableListadoGrupos tipo={gruposParaImprimir.tipo} grupos={gruposParaImprimir.grupos} />
+        <PrintableListadoGrupos
+          tipo={gruposParaImprimir.tipo}
+          grupos={gruposParaImprimir.grupos}
+          vistaPrevia
+          onCerrarVistaPrevia={() => setGruposParaImprimir(null)}
+        />
       ) : null}
 
       {/* ESTADÍSTICAS */}

@@ -50,6 +50,8 @@ const NOMBRE_TIPO: Record<TipoUbicacion, string> = { sector: 'Sector', feria: 'F
 const tipoFijo = (feria: Ubicacion) => (feria._count?.socios ?? 0) > 0 || trabajadoresActivos(feria) > 0;
 
 export const FeriasPage = () => {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const { hasPermission } = usePermissions();
   const puedeCrear = hasPermission('ubicaciones', 'create');
   const puedeEditar = hasPermission('ubicaciones', 'update');
@@ -224,7 +226,7 @@ export const FeriasPage = () => {
           </p>
         </div>
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => setVistaPrevia(true)} className="flex items-center gap-2">
             <MapPin className="w-4 h-4" />
             Imprimir listado
           </Button>
@@ -238,6 +240,10 @@ export const FeriasPage = () => {
       </div>
 
       <PrintableListado
+
+        vistaPrevia={vistaPrevia}
+
+        onCerrarVistaPrevia={() => setVistaPrevia(false)}
         titulo="Sectores y ferias"
         subtitulo="Listado generado con los filtros actuales"
         filtros={filtrosImpresion}

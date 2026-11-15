@@ -79,6 +79,8 @@ const badgeEstadoFeria = (estado: string) => {
 }
 
 export default function SaludFeriaPage() {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const { hasPermission } = usePermissions()
   const puedeRegistrar = hasPermission('salud_feria', 'create')
   const puedeAnular = hasPermission('salud_feria', 'delete')
@@ -608,7 +610,7 @@ export default function SaludFeriaPage() {
             <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
               {selectorPeriodo(false)}
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => window.print()} disabled={!pendientes}>
+                <Button variant="secondary" onClick={() => setVistaPrevia(true)} disabled={!pendientes}>
                   <Printer className="h-4 w-4" />
                   Imprimir
                 </Button>
@@ -639,6 +641,8 @@ export default function SaludFeriaPage() {
           {pendientes && !cargandoPendientes && (
             <>
               <PrintableListado
+                vistaPrevia={vistaPrevia}
+                onCerrarVistaPrevia={() => setVistaPrevia(false)}
                 titulo={`Ferias pendientes de pago de salud · ${pendientes.periodo.etiqueta}`}
                 subtitulo={`$${money(pendientes.tarifa_usd)} por trabajador · tasa ${money(pendientes.tasa)}`}
                 filtros={[{ label: 'Periodo', value: pendientes.periodo.etiqueta }]}

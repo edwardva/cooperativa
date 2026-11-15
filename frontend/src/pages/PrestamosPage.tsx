@@ -81,6 +81,8 @@ const badgeEstado = (estado: string) => {
 const hoyISO = (): string => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
 
 export default function PrestamosPage() {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const { hasPermission } = usePermissions()
   const puedeOtorgar = hasPermission('prestamos', 'create')
   const puedeAbonar = hasPermission('prestamos', 'update')
@@ -389,7 +391,7 @@ export default function PrestamosPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button variant="outline" onClick={() => window.print()}>
+          <Button variant="outline" onClick={() => setVistaPrevia(true)}>
             <Printer className="h-4 w-4" />
             Imprimir
           </Button>
@@ -539,6 +541,10 @@ export default function PrestamosPage() {
       </Card>
 
       <PrintableListado
+
+        vistaPrevia={vistaPrevia}
+
+        onCerrarVistaPrevia={() => setVistaPrevia(false)}
         titulo={`Prestamos — ${VISTAS.find((v) => v.id === vista)?.label}`}
         subtitulo="Cartera de prestamos"
         filtros={[

@@ -77,6 +77,8 @@ const nombreFeria = (ubicacion: { direccion: string | null; nombre?: string; cod
   ubicacion ? ubicacion.direccion || ubicacion.nombre || ubicacion.codigo : 'General'
 
 export default function AsambleasPage() {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const alEnter = useEnterNavigation()
   const { hasPermission } = usePermissions()
   const puedeEscribir = hasPermission('asambleas', 'create')
@@ -579,7 +581,7 @@ export default function AsambleasPage() {
               </label>
 
               <div className="ml-auto">
-                <Button variant="outline" onClick={() => window.print()} disabled={!reporte?.inasistentes.length}>
+                <Button variant="outline" onClick={() => setVistaPrevia(true)} disabled={!reporte?.inasistentes.length}>
                   <FileDown className="h-4 w-4" />
                   Imprimir reporte
                 </Button>
@@ -654,6 +656,10 @@ export default function AsambleasPage() {
           </Card>
 
           <PrintableListado
+
+            vistaPrevia={vistaPrevia}
+
+            onCerrarVistaPrevia={() => setVistaPrevia(false)}
             titulo={`Socios que no asistieron a ninguna asamblea en ${ano}`}
             subtitulo="Reporte anual de inasistencia a asambleas"
             filtros={filtrosImpresion}

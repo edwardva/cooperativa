@@ -43,7 +43,7 @@ import { Modal } from '../components/ui/Modal'
 import { SortableHeader } from '../components/ui/SortableHeader'
 import { PrintableListado } from '../components/print/PrintableListado'
 import { PrintableFichaAcuerdo, type PrintableFichaAcuerdoProps } from '../components/print/PrintableFichaAcuerdo'
-import { EncabezadoImpresion, imprimirCuandoEsteListo, LOGO_COOPERATIVA, NOMBRE_COOPERATIVA } from '../components/print/EncabezadoImpresion'
+import { EncabezadoImpresion, LOGO_COOPERATIVA, NOMBRE_COOPERATIVA } from '../components/print/EncabezadoImpresion'
 import { ModalRevertirConNuevoAcuerdo } from '../components/funeraria/ModalRevertirConNuevoAcuerdo'
 import { ModalImportarDesdeSalud } from '../components/funeraria/ModalImportarDesdeSalud'
 import { ModalTraspasoAcuerdo, type AcuerdoATraspasar } from '../components/traspaso/ModalTraspasoAcuerdo'
@@ -1041,15 +1041,12 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   // Se dispara solo cuando hay una ficha lista: espera a que React monte
   // PrintableFichaAcuerdo con los datos antes de abrir el diálogo de impresión.
   useEffect(() => {
+    // Ya no imprime solo: se muestra la hoja y la persona decide (16/11).
+    // Al terminar de imprimir se cierra la vista previa.
     if (!fichaParaImprimir) return
     const limpiar = () => setFichaParaImprimir(null)
     window.addEventListener('afterprint', limpiar, { once: true })
-    let cancelado = false
-    void imprimirCuandoEsteListo(() => cancelado)
-    return () => {
-      cancelado = true
-      window.removeEventListener('afterprint', limpiar)
-    }
+    return () => window.removeEventListener('afterprint', limpiar)
   }, [fichaParaImprimir])
 
   const imprimirFicha = async () => {
@@ -1183,15 +1180,12 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
   // Igual que la ficha: se imprime cuando el listado ya está montado (y el logo cargado)
   useEffect(() => {
+    // Ya no imprime solo: se muestra la hoja y la persona decide (16/11).
+    // Al terminar de imprimir se cierra la vista previa.
     if (!listadoParaImprimir) return
     const limpiar = () => setListadoParaImprimir(null)
     window.addEventListener('afterprint', limpiar, { once: true })
-    let cancelado = false
-    void imprimirCuandoEsteListo(() => cancelado)
-    return () => {
-      cancelado = true
-      window.removeEventListener('afterprint', limpiar)
-    }
+    return () => window.removeEventListener('afterprint', limpiar)
   }, [listadoParaImprimir])
 
   const opcionListado = OPCIONES_LISTADO.find((o) => o.valor === listadoParaImprimir?.estado)
@@ -1282,13 +1276,32 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
             .text-center { text-align: center; }
             .atraso { font-weight: 700; color: #b91c1c; }
             footer { margin-top: 16px; color: #9ca3af; font-size: 10px; text-align: right; }
+            .barra-vista-previa {
+              display: flex; justify-content: space-between; align-items: center; gap: 12px;
+              margin: -8px 0 20px; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 10px;
+              background: #f9fafb; font-size: 13px;
+            }
+            .barra-vista-previa button {
+              font: inherit; cursor: pointer; border-radius: 8px; padding: 6px 14px; margin-left: 6px;
+              border: 1px solid #d1d5db; background: #fff;
+            }
+            .barra-vista-previa button.imprimir { background: #ea580c; border-color: #ea580c; color: #fff; font-weight: 600; }
             @media print {
               body { padding: 0; }
               @page { margin: 14mm 12mm; }
+              .barra-vista-previa { display: none; }
             }
           </style>
         </head>
         <body>
+          <!-- Vista previa: no se imprime sola, se decide aqui (16/11) -->
+          <div class="barra-vista-previa">
+            <strong>Vista previa de impresión</strong>
+            <span>
+              <button onclick="window.close()">Cerrar</button>
+              <button class="imprimir" onclick="window.print()" autofocus>Imprimir</button>
+            </span>
+          </div>
           <header>
             <div class="marca">
               <img src="${new URL(LOGO_COOPERATIVA, window.location.href).href}" alt="${NOMBRE_COOPERATIVA}" />
@@ -1320,10 +1333,7 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           </table>
           <footer>${filas.length} registro${filas.length === 1 ? '' : 's'}</footer>
           <script>
-            window.onload = function () {
-              window.print();
-              window.onafterprint = function () { window.close(); };
-            };
+            window.onafterprint = function () { window.close(); };
           </script>
         </body>
       </html>
@@ -1479,9 +1489,11 @@ const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
           listado oculta todo lo demás al imprimir (body * { visibility: hidden }),
           así que si estuviera montado junto a la ficha, ésta saldría en blanco. */}
       {fichaParaImprimir ? (
-        <PrintableFichaAcuerdo {...fichaParaImprimir} />
+        <PrintableFichaAcuerdo {...fichaParaImprimir} vistaPrevia onCerrarVistaPrevia={() => setFichaParaImprimir(null)} />
       ) : listadoParaImprimir && opcionListado ? (
         <PrintableListado
+          vistaPrevia
+          onCerrarVistaPrevia={() => setListadoParaImprimir(null)}
           titulo={opcionListado.titulo}
           subtitulo={`Total de acuerdos: ${listadoParaImprimir.filas.length}`}
           filtros={[{ label: 'Listado', value: opcionListado.etiqueta }]}

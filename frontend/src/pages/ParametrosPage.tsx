@@ -42,6 +42,8 @@ const fechaHora = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' }) : '—'
 
 export const ParametrosPage = () => {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const { hasPermission } = usePermissions()
   const puedeEditar = hasPermission('parametros', 'update')
 
@@ -148,7 +150,7 @@ export const ParametrosPage = () => {
             Configuraciones operativas de la cooperativa.
           </p>
         </div>
-        <Button variant="outline" onClick={() => window.print()}>
+        <Button variant="outline" onClick={() => setVistaPrevia(true)}>
           <Printer className="h-4 w-4" />
           Imprimir
         </Button>
@@ -403,6 +405,10 @@ export const ParametrosPage = () => {
       </Card>
 
       <PrintableListado
+
+        vistaPrevia={vistaPrevia}
+
+        onCerrarVistaPrevia={() => setVistaPrevia(false)}
         titulo="Parametros del sistema"
         subtitulo="Configuraciones operativas"
         filtros={[{ label: 'Busqueda', value: busqueda || 'Sin busqueda' }]}

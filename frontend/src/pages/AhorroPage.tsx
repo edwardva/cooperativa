@@ -2731,6 +2731,8 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
   const [error, setError] = useState<string | null>(null);
   // Lo registrado: con esto se arma el recibo que se muestra e imprime
   const [recibo, setRecibo] = useState<MovimientoRegistrado | null>(null);
+  // El recibo tambien pasa por la vista previa antes de imprimirse (16/11)
+  const [vistaPreviaRecibo, setVistaPreviaRecibo] = useState(false);
   const operador = useAuthStore((state) => state.user?.nombre ?? null);
 
   // La cuenta a la vista se lleva en bolivares y la de divisas en dolares: se
@@ -2926,13 +2928,17 @@ const ModalMovimiento = ({ onClose, onSuccess }: ModalMovimientoProps) => {
               <Button variant="secondary" onClick={onSuccess}>
                 Cerrar
               </Button>
-              <Button onClick={() => window.print()} className="flex items-center gap-2">
+              <Button onClick={() => setVistaPreviaRecibo(true)} className="flex items-center gap-2">
                 <Printer className="w-4 h-4" />
                 Imprimir recibo
               </Button>
             </div>
 
-            <PrintableReciboAhorro {...datosRecibo} />
+            <PrintableReciboAhorro
+              {...datosRecibo}
+              vistaPrevia={vistaPreviaRecibo}
+              onCerrarVistaPrevia={() => setVistaPreviaRecibo(false)}
+            />
           </div>
         ) : (
           <div className="space-y-5">
