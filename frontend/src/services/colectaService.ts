@@ -679,6 +679,11 @@ export interface MovimientoHistorial {
   cubre_hasta: string | null
   /** Funeraria y salud: si el acuerdo quedó suspendido, desde qué fecha */
   suspension: string | null
+  /** Funeraria y salud, como la libreta del sistema viejo: año y semana pagados, domingo en que vence y atraso */
+  ano: number | null
+  semana: number | null
+  hasta: string | null
+  atraso: number | null
   reversado: boolean
 }
 

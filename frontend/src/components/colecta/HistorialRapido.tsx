@@ -61,7 +61,8 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
     <Modal
       open={consulta !== null}
       onClose={onClose}
-      size="md"
+      // Funeraria y salud llevan las columnas de la libreta: necesitan mas ancho
+      size={conCobertura ? 'lg' : 'md'}
       title={historial?.titulo ?? 'Historial'}
       description={historial ? `${historial.resumen} · últimos ${historial.movimientos.length} movimientos` : undefined}
     >
@@ -83,8 +84,17 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
                   <th className="px-3 py-2 text-left">Fecha</th>
                   <th className="px-3 py-2 text-left">Tipo</th>
                   <th className="px-3 py-2 text-left">Detalle</th>
-                  {conCobertura && <th className="px-3 py-2 text-left">Cubre hasta</th>}
-                  {conCobertura && <th className="px-3 py-2 text-left">Suspensión</th>}
+                  {/* Columnas de la libreta del sistema viejo (10/11): año y
+                      semana pagados, el domingo en que vence, atraso y suspension */}
+                  {conCobertura && (
+                    <>
+                      <th className="px-3 py-2 text-right">Año</th>
+                      <th className="px-3 py-2 text-right">Sem</th>
+                      <th className="px-3 py-2 text-left">Hasta</th>
+                      <th className="px-3 py-2 text-right">Atraso</th>
+                      <th className="px-3 py-2 text-left">Suspendido</th>
+                    </>
+                  )}
                   <th className="px-3 py-2 text-right">Bs</th>
                   <th className="px-3 py-2 text-right">$</th>
                   {conSaldo && <th className="px-3 py-2 text-right">{enDivisas ? 'Saldo $' : 'Saldo Bs'}</th>}
@@ -99,7 +109,14 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
                       {m.reversado && <span className="ml-1 no-underline">(reversado)</span>}
                     </td>
                     <td className="px-3 py-2 text-neutral-600">{m.detalle ?? ''}</td>
-                    {conCobertura && <td className="whitespace-nowrap px-3 py-2">{m.cubre_hasta ?? ''}</td>}
+                    {conCobertura && (
+                      <>
+                        <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{m.ano ?? ''}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{m.semana ?? ''}</td>
+                        <td className="whitespace-nowrap px-3 py-2">{fechaCorta(m.hasta, true)}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{m.atraso ?? ''}</td>
+                      </>
+                    )}
                     {/* En blanco si quedó activo (10/11) */}
                     {conCobertura && (
                       <td className="whitespace-nowrap px-3 py-2 font-medium text-red-700">
