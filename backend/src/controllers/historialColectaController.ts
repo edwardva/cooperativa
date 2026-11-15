@@ -14,7 +14,7 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { BadRequestError, NotFoundError } from '../middleware/errorHandler';
-import { formatearPeriodo } from '../utils/calendarioSemanal';
+import { diferenciaSemanas, formatearPeriodo, rangoDeSemana, semanaDeFecha } from '../utils/calendarioSemanal';
 import { responderError } from '../utils/responderError';
 
 const LIMITE = 8;
@@ -32,10 +32,22 @@ export interface MovimientoHistorial {
   cubre_hasta: string | null;
   /** Funeraria y salud: si el acuerdo quedó suspendido, desde qué fecha (AAAA-MM-DD) */
   suspension: string | null;
+  /**
+   * Funeraria y salud, como la libreta del sistema viejo (pedido del 10/11):
+   * año y semana hasta la que quedó pagado, el domingo en que vence esa semana
+   * y las semanas de atraso que tenía el acuerdo en ese momento.
+   */
+  ano: number | null;
+  semana: number | null;
+  hasta: string | null;
+  atraso: number | null;
   reversado: boolean;
 }
 
 const n = (v: unknown): number => Number(v ?? 0);
+
+/** Préstamo y ahorro no llevan las columnas de la libreta de funeraria y salud */
+const SIN_LIBRETA = { ano: null, semana: null, hasta: null, atraso: null } as const;
 
 const SERVICIOS = ['prestamo', 'ahorro', 'funeraria', 'salud'] as const;
 type Servicio = (typeof SERVICIOS)[number];
@@ -78,6 +90,7 @@ export const historialRapido = async (req: Request, res: Response): Promise<void
         saldo_usd: null,
         cubre_hasta: null,
         suspension: null,
+        ...SIN_LIBRETA,
         reversado: a.reversado,
       }));
     }
@@ -111,6 +124,7 @@ export const historialRapido = async (req: Request, res: Response): Promise<void
         saldo_usd: n(m.saldo_nuevo_usd),
         cubre_hasta: null,
         suspension: null,
+        ...SIN_LIBRETA,
         reversado: false,
       }));
     }
@@ -242,6 +256,7 @@ const conSuspensionActual = (
     saldo_usd: null,
     cubre_hasta: null,
     suspension: fecha,
+    ...SIN_LIBRETA,
     reversado: false,
   };
   return [...lista, renglon].sort((x, y) => y.fecha.localeCompare(x.fecha));
@@ -275,5 +290,26 @@ const movimientoDeServicio = (m: {
       ? formatearPeriodo({ ano: m.ano_cobertura, semana: m.semana_cobertura })
       : null,
   suspension: dia(m.fecha_suspension),
+  ...libreta(m),
   reversado: m.reversado,
 });
+
+/**
+ * Columnas de la libreta: hasta qué semana quedó pagado, el domingo en que
+ * vence esa semana (la semana va de lunes a domingo) y el atraso que tenía el
+ * acuerdo el día del movimiento: semanas entre lo cubierto y esa fecha.
+ */
+const libreta = (m: {
+  fecha_movimiento: Date;
+  ano_cobertura: number | null;
+  semana_cobertura: number | null;
+}): Pick<MovimientoHistorial, 'ano' | 'semana' | 'hasta' | 'atraso'> => {
+  if (!m.ano_cobertura || !m.semana_cobertura) return SIN_LIBRETA;
+  const cobertura = { ano: m.ano_cobertura, semana: m.semana_cobertura };
+  return {
+    ano: cobertura.ano,
+    semana: cobertura.semana,
+    hasta: rangoDeSemana(cobertura).fin,
+    atraso: Math.max(0, diferenciaSemanas(cobertura, semanaDeFecha(m.fecha_movimiento))),
+  };
+};

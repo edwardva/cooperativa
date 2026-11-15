@@ -19,6 +19,14 @@ import { leerParametroNumerico } from '../services/tarifasService';
 import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabilitado';
 import { obtenerOCrearFichaTitular } from '../utils/fichaTitular';
 import { listarAcuerdosFunerariaParaListado } from '../utils/listadoFuneraria';
+import {
+  MAX_BENEFICIARIOS_FUNERARIA,
+  agregarAlAcuerdo,
+  contarActivosEnAcuerdo,
+  membresiaVigente,
+  membresiasVigentesDe,
+  retirarDelAcuerdo,
+} from '../utils/miembrosFuneraria';
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -1049,28 +1057,31 @@ export const retirarBeneficiarioAcuerdo = async (req: Request, res: Response): P
       });
     }
 
-    const beneficiario = await prisma.beneficiario.findFirst({
-      where: { id: beneficiarioId, acuerdo_funeraria_id: acuerdoId },
+    const historial = await prisma.acuerdoFunerariaBeneficiario.findFirst({
+      where: { acuerdo_id: acuerdoId, beneficiario_id: beneficiarioId },
     });
 
-    if (!beneficiario) {
+    if (!historial) {
       return res.status(404).json({
         success: false,
         error: { code: 'BENEFICIARIO_NOT_FOUND', message: 'El beneficiario no pertenece a este acuerdo de funeraria' },
       });
     }
 
-    if (beneficiario.fecha_retiro_funeraria) {
+    const vigente = await membresiaVigente(prisma, acuerdoId, beneficiarioId);
+    if (!vigente) {
       return res.status(400).json({
         success: false,
         error: { code: 'YA_RETIRADO', message: 'Este beneficiario ya está retirado de este acuerdo' },
       });
     }
 
+    // Solo sale de ESTE acuerdo: sigue en los demás acuerdos en que figure
     const actualizado = await prisma.$transaction(async (tx) => {
-      const actualizado = await tx.beneficiario.update({
-        where: { id: beneficiarioId },
-        data: { fecha_retiro_funeraria: new Date() },
+      const actualizado = await tx.acuerdoFunerariaBeneficiario.update({
+        where: { id: vigente.id },
+        data: { fecha_retiro: new Date() },
+        include: { beneficiario: true },
       });
 
       await registrarAuditoria(tx, {
@@ -1078,8 +1089,8 @@ export const retirarBeneficiarioAcuerdo = async (req: Request, res: Response): P
         accion: 'UPDATE',
         modulo: 'funeraria',
         registro_id: acuerdoId,
-        antes: beneficiario,
-        despues: actualizado,
+        antes: vigente,
+        despues: { ...actualizado, motivo: 'Beneficiario retirado del acuerdo de funeraria' },
       });
 
       return actualizado;
@@ -1098,6 +1109,8 @@ export const retirarBeneficiarioAcuerdo = async (req: Request, res: Response): P
 
 const revertirConNuevoAcuerdoSchema = z.object({
   numero_acuerdo: z.preprocess((v) => (v === '' ? null : v), z.string().trim().max(20).optional().nullable()),
+  // La persona puede estar en varios acuerdos: el lleno desde el que se revierte
+  acuerdo_origen_id: z.number().int().positive().optional(),
 });
 
 /**
@@ -1120,7 +1133,8 @@ export const revertirFallecidoConNuevoAcuerdo = async (req: Request, res: Respon
     const data = revertirConNuevoAcuerdoSchema.parse(req.body ?? {});
 
     const beneficiario = await prisma.beneficiario.findUnique({ where: { id: beneficiarioId } });
-    if (!beneficiario || beneficiario.acuerdo_funeraria_id === null || beneficiario.fecha_retiro_funeraria) {
+    const vigentes = beneficiario ? await membresiasVigentesDe(prisma, beneficiarioId) : [];
+    if (!beneficiario || vigentes.length === 0) {
       return res.status(404).json({
         success: false,
         error: { code: 'BENEFICIARIO_NOT_FOUND', message: 'El beneficiario no está en un acuerdo de funeraria' },
@@ -1133,28 +1147,30 @@ export const revertirFallecidoConNuevoAcuerdo = async (req: Request, res: Respon
       });
     }
 
-    const origen = await prisma.acuerdoFuneraria.findUnique({
-      where: { id: beneficiario.acuerdo_funeraria_id },
-      include: { beneficiario: { include: { socio: true } } },
-    });
-    if (!origen) {
-      return res.status(404).json({ success: false, error: { code: 'ACUERDO_NOT_FOUND', message: 'Acuerdo no encontrado' } });
+    // Al volver a activo la persona ocupa cupo en TODOS los acuerdos en que
+    // figura: los que ya están llenos no la pueden recibir. Solo para ese caso;
+    // si todos tienen cupo, se revierte normal.
+    const llenos: typeof vigentes = [];
+    for (const m of vigentes) {
+      if ((await contarActivosEnAcuerdo(prisma, m.acuerdo_id)) >= MAX_BENEFICIARIOS_FUNERARIA) llenos.push(m);
     }
-
-    // Solo para el caso de acuerdo lleno; si hay cupo, se revierte normal
-    const activos = await prisma.beneficiario.count({
-      where: {
-        acuerdo_funeraria_id: origen.id,
-        fecha_retiro_funeraria: null,
-        estado: 'activo',
-        NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
-      },
-    });
-    if (activos < 8) {
+    if (llenos.length === 0) {
       return res.status(409).json({
         success: false,
         error: { code: 'ACUERDO_CON_CUPO', message: 'El acuerdo todavía tiene cupo: revierta el fallecimiento normalmente' },
       });
+    }
+    const elegido = data.acuerdo_origen_id ? llenos.find((m) => m.acuerdo_id === data.acuerdo_origen_id) : llenos[0];
+    if (!elegido) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'ACUERDO_CON_CUPO', message: 'Ese acuerdo todavía tiene cupo: revierta el fallecimiento normalmente' },
+      });
+    }
+
+    const origen = await prisma.acuerdoFuneraria.findUnique({ where: { id: elegido.acuerdo_id } });
+    if (!origen) {
+      return res.status(404).json({ success: false, error: { code: 'ACUERDO_NOT_FOUND', message: 'Acuerdo no encontrado' } });
     }
 
     if (data.numero_acuerdo && (await prisma.acuerdoFuneraria.findUnique({ where: { numero_acuerdo: data.numero_acuerdo } }))) {
@@ -1184,9 +1200,16 @@ export const revertirFallecidoConNuevoAcuerdo = async (req: Request, res: Respon
         },
       });
 
+      // Sale de los acuerdos llenos (quedan como historial) y entra al nuevo;
+      // en los que tenían cupo sigue igual
+      const hoy = new Date();
+      for (const m of llenos) {
+        await retirarDelAcuerdo(tx, m.acuerdo_id, beneficiarioId, hoy);
+      }
+      await agregarAlAcuerdo(tx, nuevoAcuerdo.id, [beneficiarioId], hoy);
       const actualizado = await tx.beneficiario.update({
         where: { id: beneficiarioId },
-        data: { acuerdo_funeraria_id: nuevoAcuerdo.id, estado: 'activo', fecha_fallecimiento: null },
+        data: { estado: 'activo', fecha_fallecimiento: null },
       });
 
       await registrarAuditoria(tx, {
@@ -1198,6 +1221,7 @@ export const revertirFallecidoConNuevoAcuerdo = async (req: Request, res: Respon
         despues: {
           motivo: 'Reversión de fallecimiento con acuerdo lleno: excepción sin período de espera ni edad máxima del titular',
           acuerdo_origen: origen.numero_acuerdo || origen.id,
+          acuerdos_llenos: llenos.map((m) => m.acuerdo.numero_acuerdo || m.acuerdo_id),
           acuerdo_nuevo: nuevoAcuerdo.numero_acuerdo || nuevoAcuerdo.id,
           beneficiario: actualizado,
         },

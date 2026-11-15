@@ -118,16 +118,39 @@ interface BeneficiariosDeServicio {
 }
 
 /**
- * Notas que escribio la oficina. Antes el sistema agregaba aqui una linea por
- * cada retiro o reactivacion ("[RETIRO] Fecha: ..."); eso ya esta en el
- * historial de estados y la cooperativa pidio no verlo en Notas (07/11).
+ * El campo notas del socio mezcla la observacion de la oficina con lineas que
+ * escribio el sistema: retiros y reactivaciones ("[RETIRO] ..."), traspasos de
+ * acuerdos ("[TRASPASO ...] ..."), y el motivo y la fecha de retiro que la
+ * migracion agrego al final de la observacion del sistema viejo. Todo eso ya
+ * se ve en el historial; la cooperativa pidio ver ahi solo la observacion
+ * (07/11 y 16/11).
  */
+const esLineaDelSistema = (linea: string): boolean =>
+  /^\s*\[(RETIRO|REACTIVADO|TRASPASO)\b/.test(linea) ||
+  /^\s*(Motivo retiro|Fecha retiro):/.test(linea) ||
+  /^\s*IMPORTADO COMO INVALIDO/.test(linea)
+
+/** La observacion de la oficina, sin las lineas que escribio el sistema */
 const notasDeOficina = (notas: string | null | undefined): string =>
   (notas ?? '')
     .split('\n')
-    .filter((linea) => !/^\s*\[(RETIRO|REACTIVADO)\]/.test(linea))
+    .filter((linea) => !esLineaDelSistema(linea))
     .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
+
+/**
+ * Al guardar la ficha se reponen las lineas del sistema que el formulario no
+ * muestra: el backend lee el motivo de retiro migrado para no reactivar a un
+ * socio fallecido, y el traspaso queda como constancia en el expediente.
+ */
+const unirConLineasDelSistema = (observacion: string, notasOriginales: string | null | undefined): string =>
+  [
+    observacion.trim(),
+    ...(notasOriginales ?? '').split('\n').filter(esLineaDelSistema).map((linea) => linea.trim()),
+  ]
+    .filter(Boolean)
+    .join('\n')
 
 type MotivoRetiro = 'Fallecimiento' | 'Renuncia' | 'Pasividad' | 'Inasistencia a asambleas'
 
@@ -594,7 +617,7 @@ export const SociosPage = () => {
       autorizado_cedula: socio.autorizado_cedula ?? '',
       es_delegado: socio.es_delegado ?? false,
       es_trabajador_triunfo: socio.es_trabajador_triunfo ?? false,
-      // Sin las lineas de retiro y reactivacion que antes escribia el sistema
+      // Solo la observacion; las lineas del sistema se reponen al guardar
       notas: notasDeOficina(socio.notas),
       foto: socio.foto ?? undefined,
     })
@@ -869,7 +892,14 @@ export const SociosPage = () => {
 
     try {
       // Se envia normalizada para que "V-12.345.678" y "12345678" no convivan
-      const datos = { ...formData, cedula: validarCedula(formData.cedula).cedula }
+      const datos = {
+        ...formData,
+        cedula: validarCedula(formData.cedula).cedula,
+        notas:
+          modoEdicion && socioSeleccionado
+            ? unirConLineasDelSistema(formData.notas, socioSeleccionado.notas)
+            : formData.notas,
+      }
 
       const respuesta =
         modoEdicion && socioSeleccionado
@@ -1688,6 +1718,53 @@ export const SociosPage = () => {
             <div className={seccionClass}>
                 <p className={tituloSeccionClass}>Control interno y autorizacion</p>
 
+                {/* Primera pregunta de la seccion y con Si/No a la vista: como
+                    casilla al final quedaba escondida (observacion del 16/11) */}
+                <div className="rounded-lg border-2 border-amber-300 bg-amber-50 px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-neutral-900">¿Es trabajador de El Triunfo? *</p>
+                      <p className="text-xs text-neutral-600">
+                        Empleado de la cooperativa: le corresponde el Fondo de Trabajadores. No es lo mismo que
+                        trabajador de feria.
+                      </p>
+                    </div>
+                    <div role="radiogroup" aria-label="¿Es trabajador de El Triunfo?" className="flex overflow-hidden rounded-lg border border-amber-300 bg-white">
+                      {([
+                        [true, 'Sí'],
+                        [false, 'No'],
+                      ] as const).map(([valor, texto]) => {
+                        const elegido = formData.es_trabajador_triunfo === valor
+                        return (
+                          <button
+                            key={texto}
+                            type="button"
+                            role="radio"
+                            aria-checked={elegido}
+                            onClick={() => {
+                              actualizarCampo('es_trabajador_triunfo', valor)
+                              // Los trabajadores de El Triunfo son socios particulares
+                              if (valor && tipoSocio === 'feria') {
+                                setTipoSocio('sector')
+                                actualizarCampo('ubicacion_id', null)
+                              }
+                            }}
+                            className={`min-w-[4.5rem] px-4 py-2 text-sm font-semibold transition ${
+                              elegido
+                                ? valor
+                                  ? 'bg-amber-500 text-white'
+                                  : 'bg-neutral-700 text-white'
+                                : 'text-neutral-600 hover:bg-amber-100'
+                            }`}
+                          >
+                            {texto}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className={labelClass}>
                     <span>Tipo de socio *</span>
@@ -1769,30 +1846,14 @@ export const SociosPage = () => {
                   </span>
                 </label>
 
-                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/50 px-4 py-3 transition hover:border-amber-300">
-                  <input
-                    type="checkbox"
-                    checked={formData.es_trabajador_triunfo}
-                    onChange={(e) => actualizarCampo('es_trabajador_triunfo', e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
-                  />
-                  <span className="space-y-0.5">
-                    <span className="block text-sm font-medium text-neutral-800">Trabajador de El Triunfo</span>
-                    <span className="block text-xs text-neutral-500">
-                      Empleado de la cooperativa. Se ve en todas las pantallas del socio y le corresponde el Fondo de
-                      Trabajadores. No es lo mismo que trabajador de feria.
-                    </span>
-                  </span>
-                </label>
-
                 <label className={labelClass}>
-                  <span>Notas</span>
+                  <span>Observación</span>
                   <textarea
                     value={formData.notas}
                     onChange={(e) => actualizarCampo('notas', valorEnMayusculas(e))}
                     rows={4}
                     className={`${controlClass} resize-y`}
-                    placeholder="Suspensiones, observaciones, acuerdos internos..."
+                    placeholder="Observación sobre el socio, si la hay"
                   />
                 </label>
               </div>
@@ -2038,7 +2099,7 @@ export const SociosPage = () => {
               </div>
 
               <div className={seccionClass}>
-                <p className={tituloSeccionClass}>Autorización y notas</p>
+                <p className={tituloSeccionClass}>Autorización y observación</p>
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Autorizado</dt>
@@ -2049,8 +2110,8 @@ export const SociosPage = () => {
                     <dd className="mt-1 text-sm text-neutral-700">{socioDetalle.autorizado_cedula || 'Sin dato'}</dd>
                   </div>
                   <div className="sm:col-span-2">
-                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Notas</dt>
-                    <dd className="mt-1 whitespace-pre-line text-sm text-neutral-700">{notasDeOficina(socioDetalle.notas) || 'Sin notas'}</dd>
+                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Observación</dt>
+                    <dd className="mt-1 whitespace-pre-line text-sm text-neutral-700">{notasDeOficina(socioDetalle.notas) || 'Sin observación'}</dd>
                   </div>
                 </dl>
               </div>

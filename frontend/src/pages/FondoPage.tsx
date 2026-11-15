@@ -121,6 +121,13 @@ export default function FondoPage() {
   const [conceptos, setConceptos] = useState<ConceptoFondo[]>([])
   const [error, setError] = useState('')
   const [comprobante, setComprobante] = useState<MovimientoFondo | null>(null)
+  // El aviso verde es solo para lo que se acaba de registrar; el boton
+  // Comprobante de la tabla abre directo la vista previa (antes ponia el aviso
+  // arriba de la pagina, fuera de la vista, y parecia no hacer nada)
+  const [recienRegistrado, setRecienRegistrado] = useState(false)
+  // Hoja de impresion en pantalla antes de mandar a la impresora (07/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
+  const cerrarVistaPrevia = useCallback(() => setVistaPrevia(false), [])
 
   const cargarResumen = useCallback(async () => {
     try {
@@ -202,6 +209,7 @@ export default function FondoPage() {
         descripcion: ing.descripcion || null,
       })
       setComprobante(m)
+      setRecienRegistrado(true)
       setIng({ concepto_id: ing.concepto_id, monto: '', entregado_por: '', referencia: '', descripcion: '' })
       void cargarResumen()
     } catch (err) {
@@ -256,6 +264,7 @@ export default function FondoPage() {
         descripcion: ayuda.motivo.trim(),
       })
       setComprobante(m)
+      setRecienRegistrado(true)
       setAyuda({ concepto_id: '', beneficiario_id: '', gasto: '', porcentaje: '', motivo: '' })
       void cargarResumen()
       void elegirSocio(socio)
@@ -398,6 +407,8 @@ export default function FondoPage() {
                 ],
           ]}
           nota="Firma: ______________________      Entregado por (caja): ______________________"
+          vistaPrevia={vistaPrevia}
+          onCerrarVistaPrevia={cerrarVistaPrevia}
         />
       ) : (
         <PrintableListado
@@ -411,6 +422,8 @@ export default function FondoPage() {
           ]}
           columnas={['N°', 'Fecha', 'Tipo', 'Concepto', 'Trabajador / Entregó', 'Motivo', 'Monto', 'Estado']}
           filas={filasListado}
+          vistaPrevia={vistaPrevia}
+          onCerrarVistaPrevia={cerrarVistaPrevia}
         />
       )}
 
@@ -445,7 +458,7 @@ export default function FondoPage() {
         </div>
       )}
 
-      {comprobante && (
+      {comprobante && recienRegistrado && (
         <Card className="border-emerald-200 bg-emerald-50/50 p-4 print:hidden">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-emerald-800">
@@ -456,11 +469,11 @@ export default function FondoPage() {
               </span>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => window.print()}>
+              <Button variant="outline" onClick={() => setVistaPrevia(true)}>
                 <Printer className="h-4 w-4" />
                 Imprimir comprobante
               </Button>
-              <Button variant="ghost" onClick={() => setComprobante(null)}>Cerrar</Button>
+              <Button variant="ghost" onClick={() => { setComprobante(null); setRecienRegistrado(false) }}>Cerrar</Button>
             </div>
           </div>
         </Card>
@@ -503,7 +516,7 @@ export default function FondoPage() {
                   <option value="egreso">Ayudas</option>
                 </select>
               </label>
-              <Button variant="outline" onClick={() => { setComprobante(null); setTimeout(() => window.print(), 50) }} className="ml-auto">
+              <Button variant="outline" onClick={() => { setComprobante(null); setRecienRegistrado(false); setVistaPrevia(true) }} className="ml-auto">
                 <Printer className="h-4 w-4" />
                 Imprimir listado
               </Button>
@@ -572,7 +585,7 @@ export default function FondoPage() {
                         </td>
                         <td className="px-4 py-2 text-right">
                           <div className="flex justify-end gap-1">
-                            <Button size="sm" variant="ghost" onClick={() => setComprobante(m)}>Comprobante</Button>
+                            <Button size="sm" variant="ghost" onClick={() => { setComprobante(m); setRecienRegistrado(false); setVistaPrevia(true) }}>Comprobante</Button>
                             {puedeReversar && !m.reversado && (
                               <Button size="sm" variant="ghost" onClick={() => void reversar(m)}>Reversar</Button>
                             )}

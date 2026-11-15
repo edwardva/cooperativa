@@ -67,6 +67,8 @@ import {
 import { HistorialSuspensiones } from '../components/colecta/HistorialSuspensiones'
 import { PaqueteSemanalCard } from '../components/colecta/PaqueteSemanal'
 import { PrintableLibretaAhorro } from '../components/print/PrintableLibretaAhorro'
+// Columnas de solo fecha: con new Date() salen un dia antes en Venezuela (UTC-4)
+import { fechaCorta } from '../components/colecta/presentacion'
 import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 
 const controlClass =
@@ -210,6 +212,10 @@ export default function ColectaPage() {
   const [observaciones, setObservaciones] = useState('')
   const [cobrando, setCobrando] = useState(false)
   const [recibo, setRecibo] = useState<Colecta | null>(null)
+  // Ventana con el resumen de lo cobrado, apenas se registra: la tarjeta del
+  // recibo queda arriba de la pagina y desde el boton Enviar no se ve, solo se
+  // ve la pantalla en cero (observacion del 16/11)
+  const [ventanaRecibo, setVentanaRecibo] = useState(false)
 
   // --- Libreta de ahorro para imprimir ---
   const [libreta, setLibreta] = useState<{
@@ -393,6 +399,7 @@ export default function ColectaPage() {
     setObservaciones('')
     setError('')
     setRecibo(null)
+    setVentanaRecibo(false)
     campoBusqueda.current?.focus()
   }
 
@@ -529,6 +536,7 @@ export default function ColectaPage() {
       if (!respuesta.success) throw new Error('No fue posible registrar la colecta')
 
       setRecibo(respuesta.data)
+      setVentanaRecibo(true)
       setLineas({})
       setReferencia('')
       setAdicionalAhorro('0')
@@ -561,6 +569,15 @@ export default function ColectaPage() {
   useEffect(() => {
     const alPresionar = (e: KeyboardEvent) => {
       if (pestana !== 'cobrar') return
+
+      // Con el resumen del cobro abierto, Esc solo lo cierra y no se cobra nada
+      if (ventanaRecibo) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setVentanaRecibo(false)
+        }
+        return
+      }
 
       if (e.key === 'F2') {
         e.preventDefault()
@@ -711,10 +728,8 @@ export default function ColectaPage() {
     return [...filas.values()]
   }, [recibo])
 
-  // Recibo del ultimo cobro: va en las dos disposiciones
-  const tarjetaRecibo = recibo && (
-            <Card className="border-emerald-200 bg-emerald-50/50 p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
+  // Lo cobrado: lo comparten la tarjeta del recibo y la ventana del resumen
+  const detalleRecibo = recibo && (
                 <div className="flex items-start gap-3">
                   <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0 text-emerald-600" />
                   <div>
@@ -776,6 +791,13 @@ export default function ColectaPage() {
                     )}
                   </div>
                 </div>
+  )
+
+  // Recibo del ultimo cobro: va en las dos disposiciones
+  const tarjetaRecibo = recibo && (
+            <Card className="border-emerald-200 bg-emerald-50/50 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                {detalleRecibo}
                 <Button variant="outline" onClick={() => window.print()}>
                   <Printer className="h-4 w-4" />
                   Imprimir recibo
@@ -791,6 +813,46 @@ export default function ColectaPage() {
     <div className="space-y-5">
       {libreta && <PrintableLibretaAhorro libreta={libreta.datos} modo={libreta.modo} />}
       <HistorialRapidoModal consulta={historial} onClose={() => setHistorial(null)} />
+
+      {/* Resumen del cobro recien registrado, para revisarlo antes de seguir.
+          No sale en la impresion: lo que se imprime es la tarjeta del recibo */}
+      {ventanaRecibo && recibo && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm print:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Resumen del cobro"
+        >
+          <Card
+            padding="none"
+            className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden border-emerald-200"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-200 px-6 py-4">
+              <div>
+                <h2 className="text-xl font-semibold text-neutral-900">Cobro registrado</h2>
+                <p className="mt-1 text-sm text-neutral-500">Revise que lo cobrado esté bien antes de seguir.</p>
+              </div>
+              <button
+                onClick={() => setVentanaRecibo(false)}
+                className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto bg-emerald-50/50 px-6 py-5">{detalleRecibo}</div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-neutral-200 px-6 py-4">
+              <Button variant="outline" onClick={() => window.print()}>
+                <Printer className="h-4 w-4" />
+                Imprimir recibo
+              </Button>
+              <Button autoFocus onClick={() => setVentanaRecibo(false)}>
+                Aceptar
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
       <CierreDelAno modo="aviso" />
 
       {/* ENCABEZADO + ESTADO DE LA JORNADA */}
@@ -1335,7 +1397,7 @@ export default function ColectaPage() {
                           const yaAsistio = socio.asambleas_asistidas.includes(a.id)
                           return (
                             <option key={a.id} value={a.id} disabled={yaAsistio}>
-                              {a.titulo} · {new Date(a.fecha).toLocaleDateString('es-VE')}
+                              {a.titulo} · {fechaCorta(a.fecha, true)}
                               {yaAsistio ? ' (ya registrada)' : ''}
                             </option>
                           )
@@ -1516,9 +1578,7 @@ export default function ColectaPage() {
                                   <span>
                                     Otorgado{' '}
                                     {prestamo.fecha_desembolso
-                                      ? new Date(prestamo.fecha_desembolso).toLocaleDateString(
-                                          'es-VE'
-                                        )
+                                      ? fechaCorta(prestamo.fecha_desembolso, true)
                                       : '—'}
                                   </span>
                                   {/* El dato por el que hoy hay que abrir otra

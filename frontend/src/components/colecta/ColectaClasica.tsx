@@ -30,7 +30,7 @@
  *     bolivares, igual que en el sistema actual.
  */
 
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Printer, RotateCcw, Search } from 'lucide-react'
 import { AvisoAbono } from './AvisoAbono'
 import { EnlaceHistorial, HistorialRapidoModal, type ConsultaHistorial } from './HistorialRapido'
@@ -113,15 +113,37 @@ const Td = ({ children, right }: { children: React.ReactNode; right?: boolean })
   </td>
 )
 
-/** Un panel con su titulo centrado encima, como los del sistema actual */
-const Panel = ({ titulo, children }: { titulo: string; children: React.ReactNode }) => (
-  <div className="flex min-h-0 flex-col">
-    <p className="mb-1 text-center text-sm font-bold text-neutral-800">{titulo}</p>
-    <div className="min-h-[9rem] overflow-auto rounded border border-neutral-300 bg-white">
-      {children}
+/**
+ * Un panel con su titulo centrado encima, como los del sistema actual.
+ *
+ * Alto fijo de unos cinco renglones, con desplazamiento adentro: la
+ * cooperativa no quiere bajar tanto para llegar al monto a cobrar (16/11).
+ * `alFinal` abre el panel mostrando lo ultimo: el ahorro va del movimiento mas
+ * viejo al mas reciente, y el reciente es el que hay que ver.
+ */
+const Panel = ({
+  titulo,
+  children,
+  alFinal,
+}: {
+  titulo: string
+  children: React.ReactNode
+  /** Cambia cuando cambia el contenido: vuelve a bajar hasta el final */
+  alFinal?: string | number
+}) => {
+  const cuerpo = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (alFinal !== undefined && cuerpo.current) cuerpo.current.scrollTop = cuerpo.current.scrollHeight
+  }, [alFinal])
+  return (
+    <div className="flex min-h-0 flex-col">
+      <p className="mb-1 text-center text-sm font-bold text-neutral-800">{titulo}</p>
+      <div ref={cuerpo} className="h-[9.5rem] overflow-auto rounded border border-neutral-300 bg-white">
+        {children}
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 const Vacio = ({ columnas }: { columnas: number }) => (
   <tr>
@@ -302,8 +324,8 @@ export const ColectaClasica = ({
             {!asamblea
               ? 'No hay asamblea registrada este año'
               : asistida
-                ? `Ya asistió este año: ${asistida.titulo} · ${new Date(asistida.fecha).toLocaleDateString('es-VE')}`
-                : `${asamblea.titulo} · ${new Date(asamblea.fecha).toLocaleDateString('es-VE')}${yaMarcadoNo ? ' (ya consta que no asistió)' : ''}`}
+                ? `Ya asistió este año: ${asistida.titulo} · ${fechaCorta(asistida.fecha, true)}`
+                : `${asamblea.titulo} · ${fechaCorta(asamblea.fecha, true)}${yaMarcadoNo ? ' (ya consta que no asistió)' : ''}`}
           </span>
         </Campo>
         <Campo rotulo="Referencia:">
@@ -328,7 +350,10 @@ export const ColectaClasica = ({
 
       {/* ---- Rejilla 2x2: todo el socio a la vez ---- */}
       <div className="grid gap-3 lg:grid-cols-2">
-        <Panel titulo="Ahorros a la Vista">
+        <Panel
+          titulo="Ahorros a la Vista"
+          alFinal={movimientos.map((m) => `${m.cuenta.referencia_id}-${m.id}`).join(',')}
+        >
           {ahorros.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-200 bg-neutral-50 px-2 py-1 text-xs">
               <span className="text-neutral-500">Historial:</span>

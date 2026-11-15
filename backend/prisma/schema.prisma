@@ -141,13 +141,10 @@ model Beneficiario {
   telefono               String?            @db.VarChar(100)
   estado                 EstadoBeneficiario @default(activo)
   fecha_fallecimiento    DateTime?          @db.Date
-  // Acuerdo de funeraria en el que figura (máx. 8 activos por acuerdo). Un socio
-  // puede tener varios acuerdos de funeraria, cada uno con sus beneficiarios.
-  // Nulo = no está en funeraria (p. ej. solo en Salud).
+  // OBSOLETO desde el 10/11/2026: no se lee ni se escribe. Una persona puede
+  // estar en varios acuerdos de funeraria y eso vive en AcuerdoFunerariaBeneficiario
+  // (`membresias_funeraria`). Quedan para no perder el dato migrado.
   acuerdo_funeraria_id   Int?
-  // Retiro del acuerdo de funeraria. Es propio de funeraria: no cambia `estado`
-  // (que Salud muestra como estado de la persona) y Salud lleva su propio retiro
-  // en AcuerdoSalud. Cada módulo retira solo a los suyos.
   fecha_retiro_funeraria DateTime?          @db.Date
   created_at             DateTime           @default(now())
   updated_at             DateTime           @updatedAt
@@ -156,8 +153,10 @@ model Beneficiario {
   socio              Socio              @relation(fields: [socio_id], references: [id], onDelete: Cascade)
   // Acuerdos de funeraria a nombre de esta persona (en la práctica, la fila "titular")
   acuerdos_funeraria AcuerdoFuneraria[] @relation("TitularAcuerdoFuneraria")
-  acuerdo_funeraria  AcuerdoFuneraria?  @relation("BeneficiariosAcuerdoFuneraria", fields: [acuerdo_funeraria_id], references: [id], onDelete: SetNull)
+  acuerdo_funeraria  AcuerdoFuneraria?  @relation("BeneficiariosAcuerdoFuneraria", fields: [acuerdo_funeraria_id], references: [id], onDelete: SetNull) // OBSOLETO
   acuerdos_salud     AcuerdoSalud[]
+  // Acuerdos de funeraria en que figura como beneficiario (vigentes y retirados)
+  membresias_funeraria AcuerdoFunerariaBeneficiario[]
 
   @@unique([socio_id, cedula])
   @@index([socio_id])
@@ -597,12 +596,38 @@ model AcuerdoFuneraria {
   // se conserva porque de él sale el monto que se cobra en las colectas
   tipo_acuerdo  TipoAcuerdoFuneraria  @relation(fields: [tipo_acuerdo_id], references: [id])
   movimientos   MovimientoFuneraria[]
-  beneficiarios Beneficiario[]        @relation("BeneficiariosAcuerdoFuneraria")
+  beneficiarios Beneficiario[]        @relation("BeneficiariosAcuerdoFuneraria") // OBSOLETO: usar `miembros`
+  // Beneficiarios del acuerdo (máx. 8 activos y vigentes, sin contar al titular)
+  miembros      AcuerdoFunerariaBeneficiario[]
 
   @@index([beneficiario_id])
   @@index([estado])
   @@index([numero_acuerdo])
   @@map("acuerdos_funeraria")
+}
+
+/// Cada vez que una persona entra a un acuerdo de funeraria. Una persona puede
+/// estar en varios acuerdos a la vez (10/11/2026). Retirarla pone fecha_retiro
+/// y el renglón queda como historial; si vuelve, se crea otro renglón. Solo
+/// puede estar UNA vez vigente en el mismo acuerdo: índice único parcial
+/// "acuerdo_funeraria_beneficiarios_vigente_key" (WHERE fecha_retiro IS NULL),
+/// creado en la migración porque Prisma no los expresa.
+/// La ficha siempre es del expediente del titular del acuerdo.
+model AcuerdoFunerariaBeneficiario {
+  id              Int       @id @default(autoincrement())
+  acuerdo_id      Int
+  beneficiario_id Int
+  fecha_ingreso   DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  fecha_retiro    DateTime? @db.Date
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @default(now()) @updatedAt
+
+  acuerdo      AcuerdoFuneraria @relation(fields: [acuerdo_id], references: [id], onDelete: Cascade)
+  beneficiario Beneficiario     @relation(fields: [beneficiario_id], references: [id], onDelete: Cascade)
+
+  @@index([acuerdo_id])
+  @@index([beneficiario_id])
+  @@map("acuerdo_funeraria_beneficiarios")
 }
 
 model MovimientoFuneraria {
