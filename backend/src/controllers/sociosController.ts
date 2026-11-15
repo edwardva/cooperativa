@@ -13,6 +13,14 @@ import type { TipoUbicacion } from '@prisma/client';
 import { responderError } from '../utils/responderError';
 import { cedulaParaGuardar, esPedidoDeMenor } from '../utils/cedulaMenor';
 import { anosAdeudados, cobrarMulta, montoMultaVigente } from '../services/multasService';
+import {
+  MAX_BENEFICIARIOS_FUNERARIA,
+  agregarAlAcuerdo,
+  contarActivosEnAcuerdo,
+  esParentescoTitular,
+  membresiaVigente,
+  membresiasVigentesDe,
+} from '../utils/miembrosFuneraria';
 
 // ============================================
 // SCHEMAS DE VALIDACIÓN
@@ -425,22 +433,19 @@ export const obtenerSocioPorId = async (req: Request, res: Response): Promise<vo
         parentesco: true,
         acuerdos_funeraria: { where: { estado: { not: 'retirado' } }, select: { estado: true } },
         acuerdos_salud: { where: { estado: { not: 'retirado' } }, select: { estado: true } },
-        // En funeraria los beneficiarios cuelgan del acuerdo por
-        // `acuerdo_funeraria_id`; `acuerdos_funeraria` es solo el del titular.
-        // Mirar solo esa relacion dejaba fuera a todos los beneficiarios de
-        // funeraria (observacion del 07/11)
-        fecha_retiro_funeraria: true,
-        acuerdo_funeraria: { select: { estado: true } },
+        // En funeraria los beneficiarios están en el acuerdo por su renglón en
+        // acuerdo_funeraria_beneficiarios (pueden ser varios acuerdos);
+        // `acuerdos_funeraria` es solo el del titular (observación del 07/11)
+        membresias_funeraria: {
+          where: { fecha_retiro: null, acuerdo: { estado: { not: 'retirado' } } },
+          select: { acuerdo: { select: { estado: true } } },
+        },
       },
     });
     /** Estados de los acuerdos en que figura la persona, por servicio */
     const acuerdosDe = (b: (typeof conAcuerdos)[number], servicio: 'funeraria' | 'salud') => {
       if (servicio === 'salud') return b.acuerdos_salud.map((a) => a.estado);
-      const estados = b.acuerdos_funeraria.map((a) => a.estado);
-      if (b.acuerdo_funeraria && !b.fecha_retiro_funeraria && b.acuerdo_funeraria.estado !== 'retirado') {
-        estados.push(b.acuerdo_funeraria.estado);
-      }
-      return estados;
+      return [...b.acuerdos_funeraria.map((a) => a.estado), ...b.membresias_funeraria.map((m) => m.acuerdo.estado)];
     };
     const agrupar = (servicio: 'funeraria' | 'salud') => {
       const lista = conAcuerdos
@@ -1394,11 +1399,20 @@ export const obtenerBeneficiarios = async (req: Request, res: Response): Promise
       orderBy: {
         created_at: 'asc',
       },
+      include: {
+        // Acuerdos de funeraria en que figura (una persona puede estar en
+        // varios); los retirados también, para el historial del acuerdo
+        membresias_funeraria: {
+          select: { id: true, acuerdo_id: true, fecha_ingreso: true, fecha_retiro: true },
+          orderBy: { id: 'asc' },
+        },
+      },
     });
 
     res.json({
       success: true,
-      data: beneficiarios,
+      // acuerdo_funeraria_id / fecha_retiro_funeraria son obsoletos: no se envían
+      data: beneficiarios.map(({ acuerdo_funeraria_id: _a, fecha_retiro_funeraria: _f, ...b }) => b),
     });
   } catch (error) {
     logger.error('Error al obtener beneficiarios:', error);
@@ -1477,14 +1491,11 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Validar límite de 8 beneficiarios activos por acuerdo de funeraria (sumando
-    // al titular, 9 personas). Un socio puede tener varios acuerdos, cada uno con
-    // su propio tope. Los que pasaron a 'fallecido' o 'retirado' liberan su cupo.
-    // La fila de Beneficiario con parentesco 'titular' (creada por la migración
-    // para representar al propio socio) no cuenta como cupo de familia.
-    if (datos.acuerdo_funeraria_id) {
+    // Acuerdo de funeraria al que se agrega: tiene que ser de este socio y estar vigente
+    const acuerdoId = datos.acuerdo_funeraria_id ?? null;
+    if (acuerdoId) {
       const acuerdo = await prisma.acuerdoFuneraria.findFirst({
-        where: { id: datos.acuerdo_funeraria_id, beneficiario: { socio_id: id } },
+        where: { id: acuerdoId, beneficiario: { socio_id: id } },
       });
 
       if (!acuerdo) {
@@ -1497,19 +1508,71 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
         });
         return;
       }
+      if (acuerdo.estado === 'retirado') {
+        res.status(400).json({
+          success: false,
+          error: { code: 'ACUERDO_RETIRADO', message: 'El acuerdo de funeraria está retirado: no se le pueden agregar beneficiarios' },
+        });
+        return;
+      }
     }
 
-    const beneficiariosActivos = await prisma.beneficiario.count({
-      where: {
-        ...(datos.acuerdo_funeraria_id
-          ? { acuerdo_funeraria_id: datos.acuerdo_funeraria_id, fecha_retiro_funeraria: null }
-          : { socio_id: id }),
-        estado: 'activo',
-        NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
-      },
-    });
+    // El titular ya es el dueño del acuerdo: no puede ser su propio beneficiario
+    if (!esPedidoDeMenor(datos.cedula) && datos.cedula === socio.cedula) {
+      res.status(409).json({
+        success: false,
+        error: { code: 'TITULAR_COMO_BENEFICIARIO', message: 'Esa cédula es la del socio titular: ya forma parte del acuerdo como titular' },
+      });
+      return;
+    }
 
-    if (beneficiariosActivos >= 8) {
+    // La cédula es única POR EXPEDIENTE (no en toda la cooperativa): la misma
+    // persona puede ser beneficiaria de otro socio. Antes se buscaba en todas
+    // las fichas, incluso las retiradas, y por eso quien ya había estado
+    // registrado alguna vez no se podía volver a registrar (pedido del 10/11).
+    // "MENOR" no se busca: siempre es un menor nuevo que recibe su MENOR-N.
+    const fichaExistente = esPedidoDeMenor(datos.cedula)
+      ? null
+      : await prisma.beneficiario.findUnique({ where: { socio_id_cedula: { socio_id: id, cedula: datos.cedula } } });
+
+    if (fichaExistente) {
+      if (esParentescoTitular(fichaExistente.parentesco)) {
+        res.status(409).json({
+          success: false,
+          error: { code: 'TITULAR_COMO_BENEFICIARIO', message: 'Esa cédula es la del socio titular: ya forma parte del acuerdo como titular' },
+        });
+        return;
+      }
+      if (fichaExistente.estado === 'fallecido') {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: 'BENEFICIARIO_FALLECIDO',
+            message: `${fichaExistente.nombre} ${fichaExistente.apellido} (cédula ${fichaExistente.cedula}) está registrado como fallecido. Si fue un error, reviértalo desde el detalle del acuerdo.`,
+          },
+        });
+        return;
+      }
+    }
+
+    const yaVigenteAqui = fichaExistente && acuerdoId ? await membresiaVigente(prisma, acuerdoId, fichaExistente.id) : null;
+    // Ya está en este acuerdo y activa: no hay nada que registrar
+    if (fichaExistente && fichaExistente.estado === 'activo' && (acuerdoId ? yaVigenteAqui : true)) {
+      res.status(409).json({
+        success: false,
+        error: {
+          code: 'BENEFICIARIO_YA_EN_ACUERDO',
+          message: acuerdoId
+            ? `${fichaExistente.nombre} ${fichaExistente.apellido} ya es beneficiario de este acuerdo de funeraria`
+            : `La cédula ${datos.cedula} ya está registrada como beneficiario de este socio`,
+        },
+      });
+      return;
+    }
+
+    // Tope de 8 beneficiarios activos por acuerdo (9 personas con el titular).
+    // Quien falleció o fue retirado libera su cupo; la fila "titular" no cuenta.
+    if (acuerdoId && (await contarActivosEnAcuerdo(prisma, acuerdoId)) >= MAX_BENEFICIARIOS_FUNERARIA) {
       res.status(400).json({
         success: false,
         error: {
@@ -1520,55 +1583,74 @@ export const agregarBeneficiario = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Validar cédula única ("MENOR" no se valida: recibe un MENOR-N nuevo al crear)
-    const cedulaExistente = esPedidoDeMenor(datos.cedula)
-      ? null
-      : await prisma.beneficiario.findFirst({ where: { cedula: datos.cedula } });
-
-    if (cedulaExistente) {
-      res.status(400).json({
-        success: false,
-        error: {
-          code: 'CEDULA_DUPLICADA',
-          message: `La cédula ${datos.cedula} ya está registrada como beneficiario`,
-        },
-      });
-      return;
+    // Si la persona vuelve a quedar activa, ocupa cupo también en los otros
+    // acuerdos en que siga figurando: ninguno puede pasarse del tope
+    if (fichaExistente && fichaExistente.estado !== 'activo') {
+      for (const m of await membresiasVigentesDe(prisma, fichaExistente.id)) {
+        if (m.acuerdo_id === acuerdoId) continue;
+        if ((await contarActivosEnAcuerdo(prisma, m.acuerdo_id)) >= MAX_BENEFICIARIOS_FUNERARIA) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: 'LIMITE_BENEFICIARIOS',
+              message: `No se puede volver a registrar: también figura en el acuerdo de funeraria ${m.acuerdo.numero_acuerdo || `#${m.acuerdo_id}`}, que ya tiene 8 beneficiarios activos. Retírelo de ese acuerdo primero.`,
+            },
+          });
+          return;
+        }
+      }
     }
 
-    // Crear beneficiario
-    const beneficiario = await prisma.$transaction(async (tx) => {
-      const beneficiario = await tx.beneficiario.create({
-        data: {
-          socio_id: id,
-          cedula: await cedulaParaGuardar(tx, datos.cedula),
-          nombre: datos.nombre,
-          apellido: datos.apellido,
-          fecha_nacimiento: new Date(datos.fecha_nacimiento),
-          fecha_ingreso: new Date(datos.fecha_ingreso),
-          parentesco: datos.parentesco,
-          telefono: datos.telefono,
-          acuerdo_funeraria_id: datos.acuerdo_funeraria_id ?? null,
+    const fechaIngreso = new Date(datos.fecha_ingreso);
+    const datosPersona = {
+      nombre: datos.nombre,
+      apellido: datos.apellido,
+      fecha_nacimiento: new Date(datos.fecha_nacimiento),
+      fecha_ingreso: fechaIngreso,
+      parentesco: datos.parentesco,
+      telefono: datos.telefono,
+    };
+
+    const { beneficiario, reingreso } = await prisma.$transaction(async (tx) => {
+      // Quien ya estuvo registrado vuelve con la misma ficha (se conservan su
+      // historial y sus acuerdos de salud) y los datos que se escribieron ahora
+      const beneficiario = fichaExistente
+        ? await tx.beneficiario.update({
+            where: { id: fichaExistente.id },
+            data: { ...datosPersona, estado: 'activo' },
+          })
+        : await tx.beneficiario.create({
+            data: { socio_id: id, cedula: await cedulaParaGuardar(tx, datos.cedula), ...datosPersona },
+          });
+
+      if (acuerdoId) {
+        await agregarAlAcuerdo(tx, acuerdoId, [beneficiario.id], fechaIngreso);
+      }
+
+      await registrarAuditoria(tx, {
+        req,
+        accion: fichaExistente ? 'ACTUALIZAR' : 'CREAR',
+        modulo: 'beneficiarios',
+        registro_id: beneficiario.id,
+        antes: fichaExistente ?? undefined,
+        despues: {
+          ...beneficiario,
+          ...(acuerdoId ? { acuerdo_funeraria_id: acuerdoId } : {}),
+          ...(fichaExistente ? { motivo: 'Beneficiario registrado de nuevo (ya había estado registrado)' } : {}),
         },
       });
 
-      // Audit log
-      await registrarAuditoria(tx, {
-        req,
-        accion: 'CREAR',
-        modulo: 'beneficiarios',
-        registro_id: beneficiario.id,
-        despues: beneficiario,
-      });
-
-      return beneficiario;
+      return { beneficiario, reingreso: !!fichaExistente };
     });
 
-    logger.info(`Beneficiario agregado: ${beneficiario.nombre} ${beneficiario.apellido} al socio ${socio.codigo_socio}`);
+    logger.info(
+      `Beneficiario ${reingreso ? 'registrado de nuevo' : 'agregado'}: ${beneficiario.nombre} ${beneficiario.apellido} al socio ${socio.codigo_socio}` +
+        (acuerdoId ? ` (acuerdo de funeraria ${acuerdoId})` : '')
+    );
 
     res.status(201).json({
       success: true,
-      data: beneficiario,
+      data: { ...beneficiario, reingreso },
     });
   } catch (error) {
     logger.error('Error al agregar beneficiario:', error);
@@ -1652,10 +1734,11 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
       return;
     }
 
-    // Validar cédula única si se está cambiando ("MENOR" recibe un MENOR-N propio)
+    // Cédula única dentro del expediente, igual que la base de datos ("MENOR"
+    // recibe un MENOR-N propio). Otro expediente puede tener a la misma persona.
     if (datos.cedula && datos.cedula !== beneficiarioExistente.cedula && !esPedidoDeMenor(datos.cedula)) {
       const cedulaExistente = await prisma.beneficiario.findFirst({
-        where: { cedula: datos.cedula, NOT: { id: beneficiarioExistente.id } },
+        where: { socio_id: beneficiarioExistente.socio_id, cedula: datos.cedula, NOT: { id: beneficiarioExistente.id } },
       });
 
       if (cedulaExistente) {
@@ -1663,7 +1746,7 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
           success: false,
           error: {
             code: 'CEDULA_DUPLICADA',
-            message: `La cédula ${datos.cedula} ya está registrada como beneficiario`,
+            message: `La cédula ${datos.cedula} ya está registrada como beneficiario de este socio`,
           },
         });
         return;
@@ -1671,35 +1754,26 @@ export const actualizarBeneficiario = async (req: Request, res: Response): Promi
     }
 
     // Reactivar (p. ej. revertir un "fallecido" marcado por error) vuelve a
-    // ocupar un cupo en su acuerdo de funeraria: aplicar el mismo tope de 8
-    // activos que agregarBeneficiario. Si no está en funeraria (solo Salud), el
-    // cupo lo controla Salud y aquí no se limita.
+    // ocupar cupo en CADA acuerdo de funeraria en que figura: ninguno puede
+    // pasar de 8 activos. Si no está en funeraria (solo Salud), no se limita.
     const reactivando =
       datos.estado === 'activo' &&
       beneficiarioExistente.estado !== 'activo' &&
-      beneficiarioExistente.acuerdo_funeraria_id !== null &&
-      beneficiarioExistente.fecha_retiro_funeraria === null &&
-      beneficiarioExistente.parentesco?.trim().toLowerCase() !== 'titular';
+      !esParentescoTitular(beneficiarioExistente.parentesco);
 
     if (reactivando) {
-      const beneficiariosActivos = await prisma.beneficiario.count({
-        where: {
-          acuerdo_funeraria_id: beneficiarioExistente.acuerdo_funeraria_id,
-          fecha_retiro_funeraria: null,
-          estado: 'activo',
-          NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
-        },
-      });
-
-      if (beneficiariosActivos >= 8) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: 'LIMITE_BENEFICIARIOS',
-            message: 'No se puede reactivar: su acuerdo de funeraria ya tiene 8 beneficiarios activos (9 personas en total, incluyendo al titular)',
-          },
-        });
-        return;
+      for (const m of await membresiasVigentesDe(prisma, beneficiarioExistente.id)) {
+        if ((await contarActivosEnAcuerdo(prisma, m.acuerdo_id)) >= MAX_BENEFICIARIOS_FUNERARIA) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: 'LIMITE_BENEFICIARIOS',
+              message: `No se puede reactivar: el acuerdo de funeraria ${m.acuerdo.numero_acuerdo || `#${m.acuerdo_id}`} ya tiene 8 beneficiarios activos (9 personas en total, incluyendo al titular)`,
+              detalles: { acuerdo_id: m.acuerdo_id },
+            },
+          });
+          return;
+        }
       }
     }
 

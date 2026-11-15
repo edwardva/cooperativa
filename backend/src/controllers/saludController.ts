@@ -23,6 +23,13 @@ import { motivoNoHabilitado, RESPUESTA_NO_HABILITADO } from '../utils/socioHabil
 import { cedulaParaGuardar, esPedidoDeMenor } from '../utils/cedulaMenor';
 import { obtenerOCrearFichaTitular } from '../utils/fichaTitular';
 import { leerParametroNumerico } from '../services/tarifasService';
+import {
+  MAX_BENEFICIARIOS_FUNERARIA,
+  agregarAlAcuerdo,
+  contarActivosEnAcuerdo,
+  fichaParaFuneraria,
+  membresiaVigente,
+} from '../utils/miembrosFuneraria';
 
 // REGLA DE NEGOCIO: Suspensión automática a las 11 semanas sin pago
 const SEMANAS_LIMITE_SUSPENSION = 11;
@@ -132,6 +139,9 @@ const importarFunerariaSchema = z
     // Si no caben todos (máx. 8), los que sobran van a un acuerdo nuevo del mismo
     // titular con este número. Solo se envía después de que la pantalla avisó.
     acuerdo_adicional: z.object({ numero_acuerdo: z.string().trim().min(1, 'El número de acuerdo es requerido').max(20) }).optional(),
+    // El titular ya tiene acuerdo(s) de funeraria y el usuario eligió crear otro
+    // en lugar de copiar al existente ("Exportar" desde Salud, 10/11)
+    abrir_otro: z.boolean().optional(),
   })
   .refine((d) => !!d.acuerdo_funeraria_id !== !!d.acuerdo_nuevo, {
     message: 'Indica el acuerdo de funeraria destino o el que se va a crear',
@@ -157,8 +167,6 @@ const importarDesdeFunerariaNuevoSchema = importarDesdeFunerariaSchema.extend({
   // El titular ya tiene acuerdo de salud y el usuario confirmó abrirle otro
   abrir_otro: z.boolean().optional(),
 });
-
-const MAX_BENEFICIARIOS_FUNERARIA = 8;
 
 const listarAcuerdosSchema = z.object({
   estado: z.enum(['activo', 'suspendido', 'retirado']).optional(),
@@ -216,21 +224,42 @@ async function sugerirNumeroAcuerdoFuneraria(codigoSocio: string): Promise<strin
 }
 
 /**
- * Número para un acuerdo de salud nuevo del socio: su expediente (como los
- * acuerdos de salud reales, p. ej. 250626) o, si ya está usado,
- * "expediente-N" con el siguiente N libre.
+ * Número para un acuerdo de salud nuevo del socio, igual que en Funeraria
+ * (pedido del 10/11): "expediente-0" y, si ya está usado, el siguiente N
+ * libre (expediente-1, -2...). La pantalla lo propone y se puede modificar.
  */
 async function sugerirNumeroAcuerdoSalud(codigoSocio: string): Promise<string> {
   const existentes = await prisma.acuerdoSalud.findMany({
-    where: { OR: [{ numero_acuerdo: codigoSocio }, { numero_acuerdo: { startsWith: `${codigoSocio}-` } }] },
+    where: { numero_acuerdo: { startsWith: `${codigoSocio}-` } },
     select: { numero_acuerdo: true },
   });
   const usados = new Set(existentes.map((a) => a.numero_acuerdo));
-  if (!usados.has(codigoSocio)) return codigoSocio;
-  let n = 1;
+  let n = 0;
   while (usados.has(`${codigoSocio}-${n}`)) n++;
   return `${codigoSocio}-${n}`;
 }
+
+/**
+ * Fechas de los pagos vigentes (no reversados) de un acuerdo de salud. La
+ * colecta registra el pago en la fila del titular y el pago manual en todas:
+ * por eso se miran las filas de todo el grupo.
+ */
+async function fechasDePagoDelGrupo(cliente: TxClient | typeof prisma, filaIds: number[]): Promise<Date[]> {
+  if (filaIds.length === 0) return [];
+  const pagos = await cliente.movimientoSalud.findMany({
+    where: { acuerdo_id: { in: filaIds }, tipo_movimiento: 'pago', reversado: false },
+    select: { fecha_movimiento: true },
+  });
+  return pagos.map((p) => p.fecha_movimiento);
+}
+
+/**
+ * La persona ya fue cubierta por algún pago: el acuerdo pagó desde que ella
+ * entró. Entonces no se puede eliminar (pedido del 10/11). Quien se agregó por
+ * error y todavía no pasó por ningún pago sí se puede eliminar.
+ */
+const tienePagosDesdeQueEntro = (fila: { created_at: Date }, fechasPago: Date[]) =>
+  fechasPago.some((f) => f >= fila.created_at);
 
 /** Parentesco que se muestra en el acuerdo: el propio del acuerdo, si lo tiene. */
 const parentescoEnAcuerdo = (fila: { parentesco: string | null; beneficiario: { parentesco: string } }) =>
@@ -342,8 +371,10 @@ const includeGrupo = {
   tipo_acuerdo: { select: { id: true, codigo: true, nombre: true, monto_usd: true } },
 } satisfies Prisma.AcuerdoSaludInclude;
 
-function formatearMiembro(row: AcuerdoSaludCompleto) {
+function formatearMiembro(row: AcuerdoSaludCompleto, fechasPago: Date[] = []) {
   return {
+    // Ya hubo pagos desde que entró: no se puede eliminar
+    tiene_pagos: tienePagosDesdeQueEntro(row, fechasPago),
     acuerdo_id: row.id,
     beneficiario_id: row.beneficiario.id,
     cedula: row.beneficiario.cedula,
@@ -366,7 +397,7 @@ function formatearMiembro(row: AcuerdoSaludCompleto) {
 }
 
 /** Arma la respuesta de "grupo" a partir de todas las filas que comparten numero_acuerdo. */
-function formatearGrupo(rows: AcuerdoSaludCompleto[]) {
+function formatearGrupo(rows: AcuerdoSaludCompleto[], fechasPago: Date[] = []) {
   const titularRow = rows.find(esFilaTitular) || rows[0];
   const beneficiarios = rows.filter((r) => r !== titularRow);
 
@@ -397,8 +428,8 @@ function formatearGrupo(rows: AcuerdoSaludCompleto[]) {
           estado: titularRow.beneficiario.socio.estado,
         }
       : null,
-    titular: titularRow ? formatearMiembro(titularRow) : null,
-    beneficiarios: beneficiarios.map(formatearMiembro),
+    titular: titularRow ? formatearMiembro(titularRow, fechasPago) : null,
+    beneficiarios: beneficiarios.map((b) => formatearMiembro(b, fechasPago)),
     total_personas: rows.length,
   };
 }
@@ -714,7 +745,7 @@ export const obtenerGrupoPorNumeroAcuerdo = async (req: Request, res: Response):
       return;
     }
 
-    res.json({ success: true, data: formatearGrupo(rows) });
+    res.json({ success: true, data: formatearGrupo(rows, await fechasDePagoDelGrupo(prisma, rows.map((r) => r.id))) });
   } catch (error: any) {
     logger.error('Error al obtener grupo de salud:', error);
     res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Error al obtener el acuerdo' } });
@@ -814,7 +845,7 @@ export const listarGruposParaImpresion = async (req: Request, res: Response): Pr
     const grupos = numeros
       .map((numero) => porNumero.get(numero))
       .filter((grupo): grupo is AcuerdoSaludCompleto[] => !!grupo && grupo.length > 0)
-      .map(formatearGrupo);
+      .map((grupo) => formatearGrupo(grupo));
 
     res.json({ success: true, data: grupos });
   } catch (error: any) {
@@ -1059,13 +1090,45 @@ export const agregarBeneficiarioAGrupo = async (req: Request, res: Response): Pr
     const nuevaFila = await prisma.$transaction(async (tx) => {
       const { beneficiario, parentescoEnAcuerdo } = await encontrarOCrearBeneficiarioFamiliar(tx, socioId, datos);
 
+      // Volver a registrar a quien ya estuvo: si su ficha de esta familia quedó
+      // retirada/inactiva, vuelve a activo (una fallecida no: eso se revierte aparte)
+      if (beneficiario.socio_id === socioId && (beneficiario.estado === 'retirado' || beneficiario.estado === 'inactivo')) {
+        await tx.beneficiario.update({ where: { id: beneficiario.id }, data: { estado: 'activo' } });
+      }
+
       const yaEnGrupo = await tx.acuerdoSalud.findFirst({
         where: { numero_acuerdo: numeroAcuerdo, beneficiario_id: beneficiario.id },
       });
-      if (yaEnGrupo) {
+      if (yaEnGrupo && yaEnGrupo.estado !== 'retirado') {
         const err: any = new Error('Esta persona ya forma parte de este acuerdo de salud');
         err.code = 'BENEFICIARIO_YA_EN_GRUPO';
         throw err;
+      }
+
+      // Estuvo en este acuerdo y fue retirada: se reincorpora en su mismo renglón
+      // (el número de acuerdo + persona es único). El retiro anterior queda en auditoría.
+      if (yaEnGrupo) {
+        const reincorporada = await tx.acuerdoSalud.update({
+          where: { id: yaEnGrupo.id },
+          data: {
+            parentesco: parentescoEnAcuerdo,
+            estado: filaReferencia.estado === 'retirado' ? 'activo' : filaReferencia.estado,
+            fecha_suspension: filaReferencia.estado === 'suspendido' ? filaReferencia.fecha_suspension : null,
+            fecha_retiro: null,
+            motivo_retiro: null,
+            semanas_sin_pago: 0,
+            fecha_inicio: new Date(datos.fecha_ingreso),
+          },
+        });
+        await registrarAuditoria(tx, {
+          req,
+          accion: 'UPDATE',
+          modulo: 'salud',
+          registro_id: reincorporada.id,
+          antes: yaEnGrupo,
+          despues: { ...reincorporada, motivo: 'Beneficiario registrado de nuevo en el acuerdo (había sido retirado)' },
+        });
+        return reincorporada;
       }
 
       const creada = await tx.acuerdoSalud.create({
@@ -1278,10 +1341,19 @@ export const eliminarAcuerdo = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    if (acuerdo._count.movimientos > 0) {
+    // No se elimina a quien ya tiene pagos: los suyos propios o los del acuerdo
+    // desde que entró (la colecta registra el pago solo en la fila del titular)
+    const filasGrupo = acuerdo.numero_acuerdo
+      ? await prisma.acuerdoSalud.findMany({ where: { numero_acuerdo: acuerdo.numero_acuerdo }, select: { id: true } })
+      : [{ id: acuerdo.id }];
+    const fechasPago = await fechasDePagoDelGrupo(prisma, filasGrupo.map((f) => f.id));
+    if (acuerdo._count.movimientos > 0 || tienePagosDesdeQueEntro(acuerdo, fechasPago)) {
       res.status(400).json({
         success: false,
-        error: { code: 'ACUERDO_CON_MOVIMIENTOS', message: 'No puede eliminarse: ya tiene pagos registrados. Use "Retirar" en su lugar' },
+        error: {
+          code: 'ACUERDO_CON_MOVIMIENTOS',
+          message: `No se puede eliminar a ${acuerdo.beneficiario.nombre} ${acuerdo.beneficiario.apellido}: el acuerdo ya tiene pagos registrados desde que esta persona fue incluida.`,
+        },
       });
       return;
     }
@@ -1772,8 +1844,8 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
         return;
       }
     } else {
-      // Solo se crea si de verdad no tiene uno vigente: si lo tiene, se copia ahí
-      const vigente = await prisma.acuerdoFuneraria.findFirst({
+      // Solo se crea si no tiene uno vigente o si el usuario confirmó abrirle otro
+      const vigente = data.abrir_otro ? null : await prisma.acuerdoFuneraria.findFirst({
         where: { beneficiario: { socio_id: socioId }, estado: { not: 'retirado' } },
       });
       if (vigente) {
@@ -1795,36 +1867,49 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
       : data.acuerdo_nuevo!.numero_acuerdo;
 
     // El titular ya es el dueño del acuerdo de funeraria y quien no está activo
-    // (fallecido, retirado) no ocupa cupo: ninguno de los dos se copia. Tampoco
-    // quien es de otro expediente (p. ej. otro socio): su ficha es de allá.
+    // (fallecido, retirado) no ocupa cupo: ninguno de los dos se copia.
     const nombre = (b: { nombre: string; apellido: string }) => `${b.nombre} ${b.apellido}`;
-    const personas = filas.map((f) => f.beneficiario);
-    const deOtroExpediente = new Set(filas.filter((f) => f.parentesco !== null).map((f) => f.beneficiario_id));
-    const omitidos = personas.filter(
-      (b) => b.parentesco.trim().toLowerCase() === 'titular' || b.estado !== 'activo' || deOtroExpediente.has(b.id)
+    const omitidas = filas.filter(
+      (f) => esFilaTitular(f) || f.beneficiario.estado !== 'activo' || f.beneficiario.cedula === socio.cedula
     );
-    const candidatos = personas.filter((b) => !omitidos.includes(b));
-    // Quien fue retirado de funeraria quedó libre y puede copiarse de nuevo
-    const vigenteEnFuneraria = (b: (typeof personas)[number]) =>
-      b.acuerdo_funeraria_id !== null && b.fecha_retiro_funeraria === null;
-    const yaEstaban = candidatos.filter((b) => vigenteEnFuneraria(b) && b.acuerdo_funeraria_id === destinoId);
-    const aCopiar = candidatos.filter((b) => !vigenteEnFuneraria(b));
+    const filasCandidatas = filas.filter((f) => !omitidas.includes(f));
 
-    // Quien ya figura en OTRO acuerdo de funeraria no se mueve: eso lo quitaría de allá
-    const enOtroAcuerdo = candidatos.filter((b) => vigenteEnFuneraria(b) && b.acuerdo_funeraria_id !== destinoId);
-    if (enOtroAcuerdo.length > 0) {
-      const otros = await prisma.acuerdoFuneraria.findMany({
-        where: { id: { in: enOtroAcuerdo.map((b) => b.acuerdo_funeraria_id!) } },
-        select: { id: true, numero_acuerdo: true },
-      });
-      const numeroDe = (id: number) => otros.find((o) => o.id === id)?.numero_acuerdo || `#${id}`;
+    // En funeraria la ficha es siempre del expediente del titular. Quien en
+    // Salud viene de otro expediente (p. ej. otro socio que es su hermano) se
+    // copia a este expediente con el parentesco que tiene en el acuerdo de
+    // salud; su ficha original no se toca. Aquí solo se averigua si ya la tiene.
+    const candidatos = await Promise.all(
+      filasCandidatas.map(async (f) => {
+        const local =
+          f.beneficiario.socio_id === socioId
+            ? f.beneficiario
+            : await prisma.beneficiario.findUnique({
+                where: { socio_id_cedula: { socio_id: socioId, cedula: f.beneficiario.cedula } },
+              });
+        return { fila: f, persona: f.beneficiario, local };
+      })
+    );
+    type Candidato = (typeof candidatos)[number];
+
+    // Una persona puede estar en varios acuerdos de funeraria (10/11): solo no
+    // se repite en el MISMO acuerdo. Quien fue retirado de él vuelve a entrar.
+    const yaEstaban: Candidato[] = [];
+    const aCopiar: Candidato[] = [];
+    for (const c of candidatos) {
+      if (destinoId && c.local && (await membresiaVigente(prisma, destinoId, c.local.id))) yaEstaban.push(c);
+      else aCopiar.push(c);
+    }
+    // Una ficha local que ya no está activa (p. ej. retirada) no ocupa cupo hoy,
+    // pero la persona sí está activa en Salud: no se copia para no reactivarla a escondidas
+    const inactivasAqui = aCopiar.filter((c) => c.local && c.local.estado !== 'activo');
+    if (inactivasAqui.length > 0) {
       res.status(409).json({
         success: false,
         error: {
-          code: 'EN_OTRO_ACUERDO_FUNERARIA',
-          message: `Ya están en otro acuerdo de funeraria y no se pueden copiar a ${numeroFuneraria}: ${enOtroAcuerdo
-            .map((b) => `${nombre(b)} (acuerdo ${numeroDe(b.acuerdo_funeraria_id!)})`)
-            .join(', ')}. Desmárcalos para continuar.`,
+          code: 'FICHA_INACTIVA_EN_EXPEDIENTE',
+          message: `En el expediente ${socio.codigo_socio} estas personas figuran como ${inactivasAqui
+            .map((c) => `${nombre(c.persona)} (${c.local!.estado})`)
+            .join(', ')}. Regístrelas de nuevo desde Funeraria o desmárquelas para continuar.`,
         },
       });
       return;
@@ -1839,16 +1924,8 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
       return;
     }
 
-    const activosEnAcuerdo = acuerdoFuneraria
-      ? await prisma.beneficiario.count({
-          where: {
-            acuerdo_funeraria_id: acuerdoFuneraria.id,
-            fecha_retiro_funeraria: null,
-            estado: 'activo',
-            NOT: { parentesco: { equals: 'titular', mode: 'insensitive' } },
-          },
-        })
-      : 0;
+    const activosEnAcuerdo = acuerdoFuneraria ? await contarActivosEnAcuerdo(prisma, acuerdoFuneraria.id) : 0;
+    const nombreC = (c: Candidato) => nombre(c.persona);
     // Tope de 8 por acuerdo: los que caben van al elegido y el resto, si la
     // pantalla ya lo confirmó, a un acuerdo adicional del mismo titular
     const cupos = Math.max(0, MAX_BENEFICIARIOS_FUNERARIA - activosEnAcuerdo);
@@ -1871,8 +1948,8 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
             `tiene ${activosEnAcuerdo} y quedan ${cupos} cupo(s) para los ${aCopiar.length} seleccionados.`,
           detalles: {
             cupos,
-            al_elegido: alElegido.map(nombre),
-            sobrantes: sobrantes.map(nombre),
+            al_elegido: alElegido.map(nombreC),
+            sobrantes: sobrantes.map(nombreC),
             numero_sugerido: numeroSugerido,
           },
         },
@@ -1897,11 +1974,17 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
 
     // Todo o nada: si falla algún acuerdo nuevo no queda nadie copiado a medias
     const { destino, adicional } = await prisma.$transaction(async (tx) => {
-      const enlazar = async (ids: number[], acuerdoId: number) =>
-        tx.beneficiario.updateMany({
-          where: { id: { in: ids }, OR: [{ acuerdo_funeraria_id: null }, { fecha_retiro_funeraria: { not: null } }] },
-          data: { acuerdo_funeraria_id: acuerdoId, fecha_retiro_funeraria: null },
-        });
+      // Ficha en el expediente del titular (copiándola si viene de otro) y su
+      // renglón en el acuerdo. Devuelve los ids de las fichas enlazadas.
+      const enlazar = async (lista: Candidato[], acuerdoId: number) => {
+        const ids: number[] = [];
+        for (const c of lista) {
+          const ficha = c.local ?? (await fichaParaFuneraria(tx, socioId, c.persona, parentescoEnAcuerdo(c.fila)));
+          ids.push(ficha.id);
+        }
+        await agregarAlAcuerdo(tx, acuerdoId, ids);
+        return ids;
+      };
 
       let destino = acuerdoFuneraria;
       if (!destino) {
@@ -1927,7 +2010,7 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
       }
 
       if (alElegido.length > 0) {
-        await enlazar(alElegido.map((b) => b.id), destino.id);
+        const ids = await enlazar(alElegido, destino.id);
         await registrarAuditoria(tx, {
           req,
           accion: 'UPDATE',
@@ -1937,7 +2020,7 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
             origen: 'salud',
             numero_acuerdo_salud: numeroAcuerdo,
             numero_acuerdo_funeraria: destino.numero_acuerdo,
-            beneficiarios_copiados: alElegido.map((b) => b.id),
+            beneficiarios_copiados: ids,
           },
         });
       }
@@ -1954,7 +2037,7 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
           fecha_inicio: new Date(),
         },
       });
-      await enlazar(sobrantes.map((b) => b.id), nuevo.id);
+      const idsAdicional = await enlazar(sobrantes, nuevo.id);
       await registrarAuditoria(tx, {
         req,
         accion: 'CREATE',
@@ -1965,7 +2048,7 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
           motivo: `Acuerdo adicional: el acuerdo ${numeroFuneraria} llegó a ${MAX_BENEFICIARIOS_FUNERARIA} beneficiarios`,
           numero_acuerdo_salud: numeroAcuerdo,
           numero_acuerdo_funeraria: nuevo.numero_acuerdo,
-          beneficiarios_copiados: sobrantes.map((b) => b.id),
+          beneficiarios_copiados: idsAdicional,
         },
       });
       return { destino, adicional: nuevo };
@@ -1982,11 +2065,11 @@ export const importarGrupoAFuneraria = async (req: Request, res: Response): Prom
       data: {
         numero_acuerdo_funeraria: destino.numero_acuerdo,
         acuerdo_creado: !acuerdoFuneraria,
-        copiados: alElegido.map(nombre),
-        ya_estaban: yaEstaban.map(nombre),
-        omitidos: omitidos.map(nombre),
+        copiados: alElegido.map(nombreC),
+        ya_estaban: yaEstaban.map(nombreC),
+        omitidos: omitidas.map((f) => nombre(f.beneficiario)),
         acuerdo_adicional: adicional
-          ? { id: adicional.id, numero_acuerdo: adicional.numero_acuerdo, copiados: sobrantes.map(nombre) }
+          ? { id: adicional.id, numero_acuerdo: adicional.numero_acuerdo, copiados: sobrantes.map(nombreC) }
           : null,
       },
     });
@@ -2144,8 +2227,10 @@ export const importarDesdeFuneraria = async (req: Request, res: Response): Promi
 
     // Solo personas vigentes en ese acuerdo de funeraria
     const personas = await prisma.beneficiario.findMany({
-      where: { id: { in: data.beneficiario_ids }, acuerdo_funeraria_id: acuerdoFuneraria.id, fecha_retiro_funeraria: null },
-      include: { acuerdos_salud: { where: { estado: { not: 'retirado' } }, select: { numero_acuerdo: true } } },
+      where: {
+        id: { in: data.beneficiario_ids },
+        membresias_funeraria: { some: { acuerdo_id: acuerdoFuneraria.id, fecha_retiro: null } },
+      },
     });
     if (personas.length !== data.beneficiario_ids.length) {
       res.status(404).json({ success: false, error: { code: 'BENEFICIARIO_NOT_IN_ACUERDO', message: 'Alguna de las personas seleccionadas no pertenece a este acuerdo de funeraria' } });
@@ -2165,21 +2250,9 @@ export const importarDesdeFuneraria = async (req: Request, res: Response): Promi
     const aReincorporar = candidatos.filter((b) => filaEnGrupo(b)?.estado === 'retirado');
     const aCrear = candidatos.filter((b) => !filaEnGrupo(b));
 
-    // Quien está vigente en OTRO acuerdo de salud no se duplica
-    const otroAcuerdo = (b: (typeof personas)[number]) => b.acuerdos_salud.find((a) => a.numero_acuerdo !== numeroAcuerdo);
-    const enOtroAcuerdo = [...aReincorporar, ...aCrear].filter((b) => otroAcuerdo(b));
-    if (enOtroAcuerdo.length > 0) {
-      res.status(409).json({
-        success: false,
-        error: {
-          code: 'EN_OTRO_ACUERDO_SALUD',
-          message: `Ya están en otro acuerdo de salud y no se pueden copiar a ${numeroAcuerdo}: ${enOtroAcuerdo
-            .map((b) => `${nombre(b)} (acuerdo ${otroAcuerdo(b)?.numero_acuerdo ?? 'sin número'})`)
-            .join(', ')}. Desmárcalos para continuar.`,
-        },
-      });
-      return;
-    }
+    // Quien está en OTRO acuerdo de salud también puede entrar a este: una
+    // persona puede ser beneficiaria de varios acuerdos (10/11). Solo no se
+    // repite dentro del mismo acuerdo (yaEstaban).
 
     // Salud no tiene tope de beneficiarios: se copian todos los seleccionados
     const nuevos = aReincorporar.length + aCrear.length;
