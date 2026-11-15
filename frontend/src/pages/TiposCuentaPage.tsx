@@ -23,6 +23,8 @@ interface TipoCuentaAhorro {
 }
 
 export const TiposCuentaPage = () => {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const [busqueda, setBusqueda] = useState('');
   const [editando, setEditando] = useState<number | null>(null);
   const [formData, setFormData] = useState<Partial<TipoCuentaAhorro>>({});
@@ -143,7 +145,7 @@ export const TiposCuentaPage = () => {
           </p>
         </div>
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => setVistaPrevia(true)} className="flex items-center gap-2">
             <Wallet className="w-4 h-4" />
             Imprimir listado
           </Button>
@@ -155,6 +157,10 @@ export const TiposCuentaPage = () => {
       </div>
 
       <PrintableListado
+
+        vistaPrevia={vistaPrevia}
+
+        onCerrarVistaPrevia={() => setVistaPrevia(false)}
         titulo="Tipos de Cuenta de Ahorro"
         subtitulo="Listado generado con los filtros actuales"
         filtros={filtrosImpresion}

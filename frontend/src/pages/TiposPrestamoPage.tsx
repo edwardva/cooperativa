@@ -24,6 +24,8 @@ interface TipoPrestamo {
 }
 
 export const TiposPrestamoPage = () => {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const [busqueda, setBusqueda] = useState('');
   const [editando, setEditando] = useState<number | null>(null);
   const [formData, setFormData] = useState<Partial<TipoPrestamo>>({});
@@ -178,7 +180,7 @@ export const TiposPrestamoPage = () => {
           </p>
         </div>
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => window.print()} className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => setVistaPrevia(true)} className="flex items-center gap-2">
             <DollarSign className="w-4 h-4" />
             Imprimir listado
           </Button>
@@ -190,6 +192,10 @@ export const TiposPrestamoPage = () => {
       </div>
 
       <PrintableListado
+
+        vistaPrevia={vistaPrevia}
+
+        onCerrarVistaPrevia={() => setVistaPrevia(false)}
         titulo="Tipos de Préstamo"
         subtitulo="Listado generado con los filtros actuales"
         filtros={filtrosImpresion}

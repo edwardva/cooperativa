@@ -49,6 +49,8 @@ interface ACobrar {
 }
 
 export default function MultasPage() {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const { hasPermission } = usePermissions()
   const puedeCobrar = hasPermission('multas', 'create')
   const puedeReversar = hasPermission('multas', 'delete')
@@ -244,6 +246,8 @@ export default function MultasPage() {
       {/* Recibo: es lo único que sale por la impresora */}
       {recibo && (
         <PrintableListado
+          vistaPrevia={vistaPrevia}
+          onCerrarVistaPrevia={() => setVistaPrevia(false)}
           titulo={`Recibo de multa N° ${recibo.id}`}
           subtitulo="Multa por inasistencia a asamblea"
           filtros={[
@@ -331,7 +335,7 @@ export default function MultasPage() {
               </span>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => window.print()}>
+              <Button variant="outline" onClick={() => setVistaPrevia(true)}>
                 <Printer className="h-4 w-4" />
                 Imprimir recibo
               </Button>

@@ -66,6 +66,8 @@ const etiquetaServicio: Record<string, string> = {
 }
 
 export default function ColectaReportesPage() {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const navegar = useNavigate()
   const [vista, setVista] = useState<Vista>('servicios')
   const [modoPeriodo, setModoPeriodo] = useState<ModoPeriodo>('rango')
@@ -177,7 +179,7 @@ export default function ColectaReportesPage() {
             <ShieldAlert className="h-4 w-4" />
             Socios suspendidos
           </Button>
-          <Button variant="outline" onClick={() => window.print()}>
+          <Button variant="outline" onClick={() => setVistaPrevia(true)}>
             <FileDown className="h-4 w-4" />
             Imprimir
           </Button>
@@ -376,6 +378,10 @@ export default function ColectaReportesPage() {
           </Card>
 
           <PrintableListado
+
+            vistaPrevia={vistaPrevia}
+
+            onCerrarVistaPrevia={() => setVistaPrevia(false)}
             titulo="Colecta por servicio"
             subtitulo={`Detalle de cobros del ${rango}`}
             filtros={filtrosImpresion}
@@ -559,6 +565,10 @@ export default function ColectaReportesPage() {
           </Card>
 
           <PrintableListado
+
+            vistaPrevia={vistaPrevia}
+
+            onCerrarVistaPrevia={() => setVistaPrevia(false)}
             titulo="Cuadre de caja"
             subtitulo={`Consolidado del ${rango}`}
             filtros={[{ label: 'Periodo', value: rango }]}
@@ -767,6 +777,10 @@ export default function ColectaReportesPage() {
           </p>
 
           <PrintableListado
+
+            vistaPrevia={vistaPrevia}
+
+            onCerrarVistaPrevia={() => setVistaPrevia(false)}
             titulo="Asiento contable de colecta"
             subtitulo={`Periodo ${rango} · montos en bolivares`}
             filtros={[{ label: 'Periodo', value: rango }]}

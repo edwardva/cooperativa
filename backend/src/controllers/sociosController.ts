@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { datosDeRetiro } from '../utils/datosRetiro';
 import { revisarCedula } from '../utils/personas';
 import { registrarAuditoria } from '../services/auditoriaService';
 import { propagarSocioAPersona, vincularPersonaDeSocio } from '../services/personasService';
@@ -466,11 +467,26 @@ export const obtenerSocioPorId = async (req: Request, res: Response): Promise<vo
       };
     };
 
+    // Retirado: fecha y motivo para la ficha (16/11). Del historial, o de lo
+    // que la migracion dejo en las notas si vino retirado del sistema viejo
+    const retiro =
+      socio.estado === 'retirado'
+        ? datosDeRetiro(
+            await prisma.historialEstadoSocio.findFirst({
+              where: { socio_id: socioId, estado_nuevo: 'retirado' },
+              orderBy: { fecha: 'desc' },
+              select: { motivo: true, fecha: true },
+            }),
+            socio.notas
+          )
+        : null;
+
     res.json({
       success: true,
       data: {
         ...prepararSocioParaRespuesta(socio),
         beneficiarios_por_servicio: { funeraria: agrupar('funeraria'), salud: agrupar('salud') },
+        retiro,
       },
     });
   } catch (error) {

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { MarcoVistaPrevia } from './MarcoVistaPrevia';
 import logo from '@/logoR.png';
 import { nombreEnMayusculas } from '../../utils/formatters';
 
@@ -21,6 +22,9 @@ export interface PrintableReciboAhorroProps {
   concepto?: string | null;
   referencia?: string | null;
   operador?: string | null;
+  /** Muestra la hoja en pantalla con Imprimir y Cerrar antes de imprimir (16/11) */
+  vistaPrevia?: boolean;
+  onCerrarVistaPrevia?: () => void;
 }
 
 const importe = (n: number, moneda: 'bs' | 'usd') =>
@@ -37,6 +41,7 @@ const importe = (n: number, moneda: 'bs' | 'usd') =>
  * que también es un portal y, si no, salía impreso debajo del recibo.
  */
 export const PrintableReciboAhorro = (props: PrintableReciboAhorroProps) => {
+  const { vistaPrevia = false, onCerrarVistaPrevia } = props;
   const { numero, fecha, tipo, moneda, monto, saldoAnterior, saldoNuevo, tasa, equivalente, cuenta, socio } =
     props;
 
@@ -48,10 +53,11 @@ export const PrintableReciboAhorro = (props: PrintableReciboAhorroProps) => {
   const otra = moneda === 'bs' ? 'usd' : 'bs';
 
   return createPortal(
-    <div className="recibo-ahorro-print-host">
+    <div className={`recibo-ahorro-print-host${vistaPrevia ? ' en-vista-previa' : ''}`}>
+      <MarcoVistaPrevia activa={vistaPrevia} titulo={`Recibo N° ${String(numero).padStart(6, '0')}`} onCerrar={onCerrarVistaPrevia}>
       <style>{`
         @media screen {
-          .recibo-ahorro-print-host {
+          .recibo-ahorro-print-host:not(.en-vista-previa) {
             display: none;
           }
         }
@@ -185,6 +191,7 @@ export const PrintableReciboAhorro = (props: PrintableReciboAhorroProps) => {
           <div className="recibo-ahorro-firma">Firma y Sello de Caja</div>
         </div>
       </div>
+      </MarcoVistaPrevia>
     </div>,
     document.body
   );

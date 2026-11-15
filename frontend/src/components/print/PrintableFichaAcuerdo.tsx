@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { MarcoVistaPrevia } from './MarcoVistaPrevia';
 import { nombreEnMayusculas } from '../../utils/formatters';
 import { EncabezadoImpresion } from './EncabezadoImpresion';
 
@@ -29,6 +30,9 @@ export interface PrintableFichaAcuerdoProps {
     telefono?: string | null;
   };
   beneficiarios: BeneficiarioFichaImpresion[];
+  /** Muestra la hoja en pantalla con Imprimir y Cerrar antes de imprimir (16/11) */
+  vistaPrevia?: boolean;
+  onCerrarVistaPrevia?: () => void;
 }
 
 const formatearFecha = (fecha: string | null | undefined): string => {
@@ -61,6 +65,8 @@ export const PrintableFichaAcuerdo = ({
   estado,
   socio,
   beneficiarios,
+  vistaPrevia = false,
+  onCerrarVistaPrevia,
 }: PrintableFichaAcuerdoProps) => {
   const estadoNormalizado = (estado || 'activo').toLowerCase();
   useEffect(() => {
@@ -72,7 +78,7 @@ export const PrintableFichaAcuerdo = ({
     <>
       <style>{`
         @media screen {
-          .ficha-print-root {
+          .ficha-print-root:not(.en-vista-previa) {
             display: none;
           }
         }
@@ -124,7 +130,8 @@ export const PrintableFichaAcuerdo = ({
         }
       `}</style>
 
-      <div className="ficha-print-root">
+      <MarcoVistaPrevia activa={vistaPrevia} titulo={`Ficha de acuerdo ${numero_acuerdo}`} onCerrar={onCerrarVistaPrevia}>
+      <div className={`ficha-print-root${vistaPrevia ? ' en-vista-previa' : ''}`}>
         <EncabezadoImpresion titulo={`Ficha de Acuerdo de ${servicio === 'SALUD' ? 'Salud' : 'Funeraria'}`} />
 
         <div className="ficha-print-no-break mt-4">
@@ -239,6 +246,7 @@ export const PrintableFichaAcuerdo = ({
           </div>
         </div>
       </div>
+      </MarcoVistaPrevia>
     </>,
     document.body
   );

@@ -73,6 +73,8 @@ const formularioVacio = (): SemanaColectaFormData => {
 }
 
 export const SemanasColectaPage = () => {
+  // Toda impresion pasa por la vista previa (pedido de la cooperativa, 16/11)
+  const [vistaPrevia, setVistaPrevia] = useState(false)
   const { hasPermission } = usePermissions()
   const puedeEscribir = hasPermission('semanas_colecta', 'create')
   const puedeEliminar = hasPermission('semanas_colecta', 'delete')
@@ -261,7 +263,7 @@ export const SemanasColectaPage = () => {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button variant="outline" onClick={() => window.print()}>
+          <Button variant="outline" onClick={() => setVistaPrevia(true)}>
             <Printer className="h-4 w-4" />
             Imprimir listado
           </Button>
@@ -482,6 +484,10 @@ export const SemanasColectaPage = () => {
       </Card>
 
       <PrintableListado
+
+        vistaPrevia={vistaPrevia}
+
+        onCerrarVistaPrevia={() => setVistaPrevia(false)}
         titulo="Semanas de Colecta"
         subtitulo="Tasa semanal USD/Bs y metas por servicio"
         filtros={filtrosImpresion}

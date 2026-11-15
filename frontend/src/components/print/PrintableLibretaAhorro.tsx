@@ -19,6 +19,7 @@
 
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { MarcoVistaPrevia } from './MarcoVistaPrevia'
 import type { LibretaAhorro } from '../../services/colectaService'
 
 /** Todo en puntos (pt), como el PDF del sistema actual */
@@ -76,6 +77,9 @@ interface Props {
   libreta: LibretaAhorro
   /** movimientos: "Act. Libreta"; encabezado: "Enc. Libreta" */
   modo: 'movimientos' | 'encabezado'
+  /** Muestra la hoja en pantalla con Imprimir y Cerrar antes de imprimir (16/11) */
+  vistaPrevia?: boolean
+  onCerrarVistaPrevia?: () => void
 }
 
 /** Texto colocado en su punto exacto de la hoja */
@@ -107,7 +111,7 @@ const Texto = ({
   </span>
 )
 
-export const PrintableLibretaAhorro = ({ libreta, modo }: Props) => {
+export const PrintableLibretaAhorro = ({ libreta, modo, vistaPrevia = false, onCerrarVistaPrevia }: Props) => {
   useEffect(() => {
     document.body.classList.add('print-portal-active')
     return () => document.body.classList.remove('print-portal-active')
@@ -131,10 +135,29 @@ export const PrintableLibretaAhorro = ({ libreta, modo }: Props) => {
   ]
 
   return createPortal(
-    <div className="libreta-print-host">
+    <div className={`libreta-print-host${vistaPrevia ? ' en-vista-previa' : ''}`}>
+      <MarcoVistaPrevia
+        activa={vistaPrevia}
+        titulo={modo === 'encabezado' ? 'Libreta: encabezado' : 'Libreta: movimientos'}
+        onCerrar={onCerrarVistaPrevia}
+        anchoHoja={`calc(${GEOMETRIA.ancho}pt + 64px)`}
+      >
       <style>{`
         @media screen {
-          .libreta-print-host { display: none; }
+          .libreta-print-host:not(.en-vista-previa) { display: none; }
+          /* En la vista previa cada hoja con su medida real y su borde */
+          .libreta-print-host.en-vista-previa {
+            color: #000;
+            font-family: Helvetica, Arial, sans-serif;
+          }
+          .libreta-print-host.en-vista-previa .libreta-hoja {
+            position: relative;
+            width: ${GEOMETRIA.ancho}pt;
+            height: ${GEOMETRIA.alto}pt;
+            overflow: hidden;
+            outline: 1px dashed #d4d4d4;
+            margin-bottom: 24px;
+          }
         }
         @media print {
           @page { size: ${GEOMETRIA.ancho}pt ${GEOMETRIA.alto}pt; margin: 0; }
@@ -192,6 +215,7 @@ export const PrintableLibretaAhorro = ({ libreta, modo }: Props) => {
           </div>
         ))
       )}
+      </MarcoVistaPrevia>
     </div>,
     document.body
   )

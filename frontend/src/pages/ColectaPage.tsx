@@ -662,8 +662,8 @@ export default function ColectaPage() {
 
   // Se imprime cuando la libreta ya esta montada, y se quita al terminar
   useEffect(() => {
+    // Ya no imprime solo: se muestra la hoja y la persona decide (16/11)
     if (!libreta) return
-    window.print()
     const limpiar = () => setLibreta(null)
     window.addEventListener('afterprint', limpiar, { once: true })
     return () => window.removeEventListener('afterprint', limpiar)
@@ -798,7 +798,8 @@ export default function ColectaPage() {
             <Card className="border-emerald-200 bg-emerald-50/50 p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 {detalleRecibo}
-                <Button variant="outline" onClick={() => window.print()}>
+                {/* Primero la ventana con el recibo; desde alli se imprime (16/11) */}
+                <Button variant="outline" onClick={() => setVentanaRecibo(true)}>
                   <Printer className="h-4 w-4" />
                   Imprimir recibo
                 </Button>
@@ -811,7 +812,14 @@ export default function ColectaPage() {
   // ============================================
   return (
     <div className="space-y-5">
-      {libreta && <PrintableLibretaAhorro libreta={libreta.datos} modo={libreta.modo} />}
+      {libreta && (
+        <PrintableLibretaAhorro
+          libreta={libreta.datos}
+          modo={libreta.modo}
+          vistaPrevia
+          onCerrarVistaPrevia={() => setLibreta(null)}
+        />
+      )}
       <HistorialRapidoModal consulta={historial} onClose={() => setHistorial(null)} />
 
       {/* Resumen del cobro recien registrado, para revisarlo antes de seguir.

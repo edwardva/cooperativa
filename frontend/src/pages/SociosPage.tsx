@@ -277,6 +277,13 @@ export const SociosPage = () => {
     /** Esta en un sector de trabajadores de El Triunfo: la seccion se ve aunque este vacia */
     esTrabajador: boolean
   } | null>(null)
+  // Fecha y motivo del retiro del socio en el detalle (16/11): lo arma el
+  // backend con el historial o, si vino retirado del sistema viejo, las notas
+  const [retiroDetalle, setRetiroDetalle] = useState<{
+    socioId: number
+    fecha: string | null
+    motivo: string | null
+  } | null>(null)
   const [beneficiariosPorServicio, setBeneficiariosPorServicio] = useState<{
     socioId: number
     funeraria: BeneficiariosDeServicio
@@ -415,17 +422,13 @@ export const SociosPage = () => {
     void cargarSocios()
   }, [paginaActual, busqueda, filtroEstado, filtroUbicacion, filtroDelegado, filtroTriunfo, registrosPorPagina])
 
-  // Con los datos ya en pantalla se abre el diálogo de impresión, y al cerrarlo
-  // se descarta el listado
+  // Con los datos listos se muestra la vista previa (16/11: toda impresion
+  // pasa por la hoja en pantalla); al terminar de imprimir se descarta
   useEffect(() => {
     if (!impresion) return
     const limpiar = () => setImpresion(null)
     window.addEventListener('afterprint', limpiar)
-    const t = window.setTimeout(() => window.print(), 50)
-    return () => {
-      window.clearTimeout(t)
-      window.removeEventListener('afterprint', limpiar)
-    }
+    return () => window.removeEventListener('afterprint', limpiar)
   }, [impresion])
 
   const imprimir = async (soloDelegados: boolean) => {
@@ -648,6 +651,7 @@ export const SociosPage = () => {
     setMenuAbiertoId(null)
     setSocioDetalle(socio)
     setBeneficiariosPorServicio(null)
+    setRetiroDetalle(null)
     setFamiliaresFondo(null)
     setModalDetalleAbierto(true)
     if (hasPermission('fondo', 'read')) {
@@ -669,10 +673,13 @@ export const SociosPage = () => {
     sociosService
       .obtenerSocioPorId(socio.id)
       .then((r) => {
-        const conteo = (r.data as {
+        const datos = r.data as {
           beneficiarios_por_servicio?: { funeraria: BeneficiariosDeServicio; salud: BeneficiariosDeServicio }
-        }).beneficiarios_por_servicio
+          retiro?: { fecha: string | null; motivo: string | null } | null
+        }
+        const conteo = datos.beneficiarios_por_servicio
         if (conteo) setBeneficiariosPorServicio({ socioId: socio.id, ...conteo })
+        if (datos.retiro) setRetiroDetalle({ socioId: socio.id, ...datos.retiro })
       })
       .catch(() => {
         // Si falla queda el total del listado
@@ -1043,6 +1050,8 @@ export const SociosPage = () => {
       )}
 
       <PrintableListado
+        vistaPrevia={impresion !== null}
+        onCerrarVistaPrevia={() => setImpresion(null)}
         titulo={impresion?.soloDelegados ? 'Listado de Delegados' : 'Listado de Socios y Ferias'}
         subtitulo="Reporte generado con los filtros actuales del módulo de socios"
         filtros={filtrosImpresion}
@@ -1741,14 +1750,9 @@ export const SociosPage = () => {
                             type="button"
                             role="radio"
                             aria-checked={elegido}
-                            onClick={() => {
-                              actualizarCampo('es_trabajador_triunfo', valor)
-                              // Los trabajadores de El Triunfo son socios particulares
-                              if (valor && tipoSocio === 'feria') {
-                                setTipoSocio('sector')
-                                actualizarCampo('ubicacion_id', null)
-                              }
-                            }}
+                            // Independiente del tipo de socio: un trabajador de El
+                            // Triunfo tambien puede ser socio de feria (16/11)
+                            onClick={() => actualizarCampo('es_trabajador_triunfo', valor)}
                             className={`min-w-[4.5rem] px-4 py-2 text-sm font-semibold transition ${
                               elegido
                                 ? valor
@@ -1785,7 +1789,6 @@ export const SociosPage = () => {
                   </label>
 
                   <label className={labelClass}>
-                    {/* Los trabajadores de El Triunfo son particulares: llevan su propio sector */}
                     <span>{tipoSocio === 'feria' ? 'Feria *' : 'Sector *'}</span>
                     <select
                       value={formData.ubicacion_id ?? ''}
@@ -2039,6 +2042,24 @@ export const SociosPage = () => {
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Estado</dt>
                     <dd className="mt-1">{getEstadoBadge(socioDetalle.estado)}</dd>
                   </div>
+                  {socioDetalle.estado === 'retirado' && (
+                    <div className="sm:col-span-2">
+                      <dt className="text-xs uppercase tracking-wider text-neutral-500">Retiro</dt>
+                      <dd className="mt-1 text-sm text-neutral-700">
+                        {retiroDetalle?.socioId === socioDetalle.id ? (
+                          <>
+                            <span className="font-medium">
+                              {retiroDetalle.fecha ? retiroDetalle.fecha.split('-').reverse().join('/') : 'Sin fecha'}
+                            </span>
+                            {' · '}
+                            {retiroDetalle.motivo || 'Sin motivo registrado'}
+                          </>
+                        ) : (
+                          'Sin dato'
+                        )}
+                      </dd>
+                    </div>
+                  )}
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Delegado</dt>
                     <dd className="mt-1 text-sm text-neutral-700">{socioDetalle.es_delegado ? 'Sí' : 'No'}</dd>
