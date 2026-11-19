@@ -65,10 +65,83 @@ export const getErrorDetalles = <T,>(error: unknown): T | undefined => {
   return undefined
 }
 
+/**
+ * Nombre en pantalla de los campos que llegan en los errores de validación.
+ * Lo que no esté aquí se muestra con los guiones bajos como espacios.
+ */
+const ROTULOS_CAMPO: Record<string, string> = {
+  codigo_socio: 'Expediente',
+  cedula: 'Cédula',
+  nombre: 'Nombre',
+  apellido: 'Apellido',
+  nombres: 'Nombres',
+  apellidos: 'Apellidos',
+  sexo: 'Sexo',
+  fecha_nacimiento: 'Fecha de nacimiento',
+  fecha_inscripcion: 'Fecha de ingreso',
+  direccion: 'Dirección',
+  telefono: 'Teléfono',
+  email: 'Correo',
+  ubicacion_id: 'Sector o feria',
+  autorizado_nombre: 'Autorizado',
+  autorizado_cedula: 'Cédula del autorizado',
+  notas: 'Notas',
+  parentesco: 'Parentesco',
+  monto: 'Monto',
+  monto_usd: 'Monto en dólares',
+  monto_bs: 'Monto en bolívares',
+  tasa_cambio: 'Tasa de cambio',
+  referencia: 'Referencia',
+  concepto: 'Concepto',
+  motivo: 'Motivo',
+  observaciones: 'Observaciones',
+  fecha: 'Fecha',
+  semanas: 'Semanas',
+  cuenta_id: 'Cuenta',
+  socio_id: 'Socio',
+  tipo_movimiento: 'Tipo de movimiento',
+  username: 'Usuario',
+  password: 'Contraseña',
+}
+
+const rotuloDeCampo = (ruta: (string | number)[]): string => {
+  const campo = [...ruta].reverse().find((p) => typeof p === 'string') as string | undefined
+  if (!campo) return ''
+  const rotulo = ROTULOS_CAMPO[campo] ?? campo.replace(/_/g, ' ')
+  // Renglón de una lista (beneficiarios, detalles del cobro...): se dice cuál
+  const indice = ruta.find((p) => typeof p === 'number')
+  return indice === undefined ? rotulo : `${rotulo} (renglón ${Number(indice) + 1})`
+}
+
+/**
+ * "Datos inválidos" no le dice a nadie qué corregir. El backend manda en
+ * `details` cada campo que falló y por qué: se arma "Teléfono: admite como
+ * máximo 100 caracteres" para que no haya que adivinar (observación del 20/11).
+ */
+const detalleDeValidacion = (details: unknown): string => {
+  if (!Array.isArray(details)) return ''
+  const renglones = details
+    .filter((d): d is { path?: (string | number)[]; message?: string } => !!d && typeof d === 'object')
+    .map((d) => {
+      const mensaje = (d.message ?? '').trim()
+      const rotulo = rotuloDeCampo(Array.isArray(d.path) ? d.path : [])
+      // Con punto final: hay pantallas que muestran todo en un solo renglón
+      const conPunto = mensaje && !/[.!?]$/.test(mensaje) ? `${mensaje}.` : mensaje
+      if (!rotulo) return conPunto
+      // Algunos esquemas ya nombran el campo ("Nombre debe tener..."): no se repite
+      if (mensaje.toLowerCase().startsWith(rotulo.toLowerCase())) return conPunto
+      return `${rotulo}: ${conPunto}`
+    })
+    .filter(Boolean)
+  return [...new Set(renglones)].join('\n')
+}
+
 export const getErrorMessage = (error: unknown): string => {
   if (axios.isAxiosError(error)) {
-    const axiosError = error as AxiosError<{ error?: { message?: string } }>
-    return axiosError.response?.data?.error?.message || axiosError.message || 'Error desconocido'
+    const axiosError = error as AxiosError<{ error?: { message?: string; details?: unknown } }>
+    const mensaje = axiosError.response?.data?.error?.message || axiosError.message || 'Error desconocido'
+    const detalle = detalleDeValidacion(axiosError.response?.data?.error?.details)
+    return detalle ? `${mensaje}:\n${detalle}` : mensaje
   }
   
   if (error instanceof Error) {

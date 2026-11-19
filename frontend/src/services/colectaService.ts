@@ -54,6 +54,8 @@ export interface Cobrable {
   semanas_adelantadas?: number
   /** Solo en cuentas de ahorro */
   codigo_tipo?: string
+  /** Moneda del tipo de cuenta: 'bs' (a la vista) o 'usd' (divisas) */
+  moneda_cuenta?: string
   bloqueado_usd?: number
   disponible_usd?: number
   movimientos_recientes?: MovimientoAhorroReciente[]

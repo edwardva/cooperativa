@@ -1,5 +1,7 @@
 // Hora de Venezuela para todo el proceso: va antes que cualquier otro import
 import './zonaHoraria';
+// Mensajes de validación en español, antes de cargar cualquier esquema
+import './zodEspanol';
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';

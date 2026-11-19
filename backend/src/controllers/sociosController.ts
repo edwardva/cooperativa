@@ -620,11 +620,16 @@ export const crearSocio = async (req: Request, res: Response): Promise<void> => 
     });
 
     if (codigoExistente) {
+      // El nuevo socio sale en una ventana con este texto: se dice de quién
+      // es, para que la oficina sepa si es la misma persona o un error (20/11)
       res.status(400).json({
         success: false,
         error: {
           code: 'CODIGO_DUPLICADO',
-          message: `El código de socio ${datos.codigo_socio} ya existe`,
+          message:
+            `El expediente ${datos.codigo_socio} ya está registrado a nombre de ` +
+            `${codigoExistente.apellido}, ${codigoExistente.nombre} ` +
+            `(C.I. ${codigoExistente.cedula}, ${codigoExistente.estado}).`,
         },
       });
       return;
@@ -815,7 +820,10 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
           success: false,
           error: {
             code: 'CODIGO_DUPLICADO',
-            message: `El código de socio ${datos.codigo_socio} ya existe`,
+            message:
+              `El expediente ${datos.codigo_socio} ya está registrado a nombre de ` +
+              `${codigoExistente.apellido}, ${codigoExistente.nombre} ` +
+              `(C.I. ${codigoExistente.cedula}, ${codigoExistente.estado}).`,
           },
         });
         return;
@@ -883,7 +891,7 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
 
     // Socio y persona en la misma transacción: los datos personales editados
     // pasan a la persona y a sus otros expedientes ahorristas
-    const { socio, conflicto } = await prisma.$transaction(async (tx) => {
+    const { socio, conflicto, familiaresFondoBaja } = await prisma.$transaction(async (tx) => {
       // Con otra cédula u otra ubicación puede quedar dos veces en un sector o en una feria
       const cambiaCedula = datos.cedula !== undefined && datos.cedula !== socioExistente.cedula;
       if (cambiaUbicacion || cambiaCedula) {
@@ -925,7 +933,33 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
         despues: socio,
       });
 
-      return { socio, conflicto };
+      // Deja de ser trabajador de El Triunfo: sale del fondo completo, él y
+      // los familiares que tenía cargados ahí. Antes salía el titular y la
+      // lista de familiares quedaba en el fondo (observación del 20/11). Se
+      // dan de baja como en el módulo del fondo, sin borrarlos, porque pueden
+      // tener ayudas registradas. Sólo el fondo: funeraria y salud no cambian.
+      let familiaresFondoBaja = 0;
+      if (socioExistente.es_trabajador_triunfo && !actualizado.es_trabajador_triunfo) {
+        const familiares = await tx.fondoBeneficiario.findMany({ where: { socio_id: socioId, activo: true } });
+        if (familiares.length) {
+          await tx.fondoBeneficiario.updateMany({
+            where: { id: { in: familiares.map((f) => f.id) } },
+            data: { activo: false },
+          });
+          for (const familiar of familiares) {
+            await registrarAuditoria(tx, {
+              req,
+              accion: 'ELIMINAR',
+              modulo: 'fondo_beneficiarios',
+              registro_id: familiar.id,
+              antes: familiar,
+            });
+          }
+        }
+        familiaresFondoBaja = familiares.length;
+      }
+
+      return { socio, conflicto, familiaresFondoBaja };
     });
 
     logger.info(`Socio actualizado: ${socio.codigo_socio} - ${socio.nombre} ${socio.apellido}`);
@@ -934,6 +968,7 @@ export const actualizarSocio = async (req: Request, res: Response): Promise<void
       success: true,
       data: prepararSocioParaRespuesta(socio),
       ...(conflicto ? { advertencias: [conflicto] } : {}),
+      familiares_fondo_baja: familiaresFondoBaja,
     });
   } catch (error) {
     responderError(res, error, 'Error al actualizar socio');
