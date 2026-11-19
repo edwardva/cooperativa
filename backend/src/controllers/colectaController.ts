@@ -375,7 +375,7 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         cuentas_ahorro: {
           where: { estado: true },
           include: {
-            tipo_cuenta: { select: { id: true, codigo: true, nombre: true } },
+            tipo_cuenta: { select: { id: true, codigo: true, nombre: true, moneda: true } },
             // Movimientos recientes en la pantalla principal: el cliente pidió
             // no tener que abrir otra ventana para verlos (req. 4). Son 5: con 8
             // el panel crecía y había que bajar para ver el monto (07/11)
@@ -518,6 +518,8 @@ export const buscarSocioParaColecta = async (req: Request, res: Response): Promi
         referencia_id: cuenta.id,
         titulo: cuenta.tipo_cuenta.nombre,
         codigo_tipo: cuenta.tipo_cuenta.codigo,
+        // La moneda del producto: el panel de Colecta sólo lista la de bolívares
+        moneda_cuenta: cuenta.tipo_cuenta.moneda,
         detalle: cuenta.numero_cuenta,
         saldo_usd: Number(cuenta.saldo_usd),
         saldo_bs: Number(cuenta.saldo_bs),
@@ -1120,6 +1122,11 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
           const cuenta = (item as any).cuenta;
           const saldoAnterior = Number(cuenta.saldo_usd);
           const saldoNuevo = redondear(saldoAnterior + montoUsd);
+          // Cada moneda se mueve por su propio monto. Antes el saldo en
+          // bolivares se recalculaba como saldo_usd * tasa del dia, y lo que se
+          // habia depositado a otra tasa cambiaba de valor solo: un deposito de
+          // 123,02 Bs sobre 100 Bs dejaba 221,43 en vez de 223,02 (20/11)
+          const saldoNuevoBs = redondear(Number(cuenta.saldo_bs) + montoBs);
 
           await tx.movimientoAhorro.create({
             data: {
@@ -1132,7 +1139,7 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
               saldo_nuevo_usd: saldoNuevo,
               // En bolívares tal cual, sin pasar por los dólares: ese ida y
               // vuelta pierde céntimos y descuadra la libreta
-              saldo_nuevo_bs: redondear(saldoNuevo * tasa),
+              saldo_nuevo_bs: saldoNuevoBs,
               // El cuadre necesita saber si entraron bolívares o divisas, y si
               // fue presencial o por el cajero digital (req. 4 y 9)
               moneda: 'BS' as const,
@@ -1144,7 +1151,7 @@ export const registrarColecta = async (req: Request, res: Response): Promise<voi
 
           await tx.cuentaAhorro.update({
             where: { id: cuenta.id },
-            data: { saldo_usd: saldoNuevo, saldo_bs: redondear(saldoNuevo * tasa) },
+            data: { saldo_usd: saldoNuevo, saldo_bs: saldoNuevoBs },
           });
         } else if (detalle.servicio === 'prestamo') {
           const prestamo = (item as any).prestamo;
@@ -1687,6 +1694,9 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
 
           const saldoAnterior = Number(cuenta.saldo_usd);
           const saldoNuevo = redondear(saldoAnterior - montoUsd);
+          // Se devuelven exactamente los bolivares que entraron, no su
+          // equivalente recalculado con la tasa (ver el deposito)
+          const saldoNuevoBs = redondear(Number(cuenta.saldo_bs) - montoBs);
 
           await tx.movimientoAhorro.create({
             data: {
@@ -1697,7 +1707,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
               tasa_cambio: tasa,
               saldo_anterior_usd: saldoAnterior,
               saldo_nuevo_usd: saldoNuevo,
-              saldo_nuevo_bs: redondear(saldoNuevo * tasa),
+              saldo_nuevo_bs: saldoNuevoBs,
               concepto: `Reverso de colecta #${colecta.id}: ${validacion.data.motivo}`,
               referencia: `REV-${colecta.id}`,
             },
@@ -1705,7 +1715,7 @@ export const reversarColecta = async (req: Request, res: Response): Promise<void
 
           await tx.cuentaAhorro.update({
             where: { id: cuenta.id },
-            data: { saldo_usd: saldoNuevo, saldo_bs: redondear(saldoNuevo * tasa) },
+            data: { saldo_usd: saldoNuevo, saldo_bs: saldoNuevoBs },
           });
         } else if (detalle.servicio === 'prestamo') {
           // El cliente pidió expresamente poder reversar abonos a préstamo

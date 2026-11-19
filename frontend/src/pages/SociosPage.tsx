@@ -31,7 +31,7 @@ import { validarCedula } from '../utils/cedula'
 import { DistintivoTrabajadorTriunfo } from '../components/socios/DistintivoTrabajadorTriunfo'
 import { nombreUbicacion } from '../utils/ubicacion'
 import { valorEnMayusculas } from '../utils/mayusculas'
-import { getErrorMessage } from '../services/api'
+import { getErrorCode, getErrorMessage } from '../services/api'
 import * as personasService from '../services/personasService'
 import type { ResultadoIdentificacion } from '../services/personasService'
 import { useEnterNavigation } from '../hooks/useEnterNavigation'
@@ -237,6 +237,35 @@ const resumenExpedientes = (r: ResultadoIdentificacion): string => {
   return [...socios, ...trabajadores].join(' · ')
 }
 
+
+/** Ventana de aviso sobre el formulario del socio: se cierra con Entendido o Enter */
+const AvisoFormulario = ({
+  titulo,
+  children,
+  onCerrar,
+}: {
+  titulo: string
+  children: React.ReactNode
+  onCerrar: () => void
+}) => (
+  <div
+    className="fixed inset-0 z-[110] flex items-center justify-center bg-neutral-900/40 p-4"
+    role="alertdialog"
+    aria-modal="true"
+    aria-label={titulo}
+  >
+    <Card className="w-full max-w-md border-neutral-200">
+      <h2 className="text-lg font-semibold text-neutral-900">{titulo}</h2>
+      <div className="mt-2 text-sm text-neutral-700">{children}</div>
+      <div className="mt-5 flex justify-end">
+        <Button autoFocus onClick={onCerrar}>
+          Entendido
+        </Button>
+      </div>
+    </Card>
+  </div>
+)
+
 export const SociosPage = () => {
   // El rol de consulta ve e imprime, pero no da de alta, edita ni retira
   const { hasPermission } = usePermissions()
@@ -299,6 +328,10 @@ export const SociosPage = () => {
     motivo_retiro: '',
   })
   const [errorFormulario, setErrorFormulario] = useState('')
+  // Expediente ya registrado: va en ventana emergente, no en el pie del
+  // formulario, donde pasaba desapercibido (observacion del 20/11)
+  const [expedienteOcupado, setExpedienteOcupado] = useState<string | null>(null)
+  const campoExpediente = useRef<HTMLInputElement>(null)
   const [errorRetiro, setErrorRetiro] = useState('')
   const [procesandoRetiro, setProcesandoRetiro] = useState(false)
   const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null)
@@ -598,6 +631,7 @@ export const SociosPage = () => {
     setAvisoCne(null)
     setFotoPreview(null)
     setErrorFormulario('')
+    setExpedienteOcupado(null)
     setModalAbierto(true)
   }
 
@@ -627,19 +661,39 @@ export const SociosPage = () => {
     setTipoSocio(ubicaciones.find((u) => u.id === socio.ubicacion_id)?.tipo ?? 'sector')
     setFotoPreview(socio.foto)
     setErrorFormulario('')
+    setExpedienteOcupado(null)
     setModalAbierto(true)
   }
 
   // Marcar o desmarcar al trabajador de El Triunfo sin abrir el formulario
   const [guardandoTriunfo, setGuardandoTriunfo] = useState(false)
   const cambiarTrabajadorTriunfo = async (socio: Socio, valor: boolean) => {
+    // Al quitar la marca sale del fondo con todos sus familiares (20/11): se
+    // avisa antes, porque la lista del fondo se da de baja completa
+    if (!valor) {
+      const cuantos = familiaresFondo?.socioId === socio.id ? familiaresFondo.lista.length : null
+      const familiares =
+        cuantos === null
+          ? ' y los familiares que tenga registrados ahí'
+          : cuantos > 0
+            ? ` junto con sus ${cuantos} familiar(es) registrados ahí`
+            : ''
+      const ok = window.confirm(
+        `Al quitar la marca, ${socio.apellido}, ${socio.nombre} sale del fondo de trabajadores${familiares}.\n\n` +
+          'Funeraria y salud no cambian. ¿Continuar?'
+      )
+      if (!ok) return
+    }
     setGuardandoTriunfo(true)
     try {
       await sociosService.actualizarSocio(socio.id, { es_trabajador_triunfo: valor })
       const marcar = (s: Socio) => (s.id === socio.id ? { ...s, es_trabajador_triunfo: valor } : s)
       setSocios((lista) => lista.map(marcar))
       setSocioDetalle((actual) => (actual ? marcar(actual) : actual))
-      setFamiliaresFondo((f) => (f && f.socioId === socio.id ? { ...f, esTrabajador: valor } : f))
+      // Sin la marca, el servidor ya dio de baja a los familiares del fondo
+      setFamiliaresFondo((f) =>
+        f && f.socioId === socio.id ? { ...f, esTrabajador: valor, lista: valor ? f.lista : [] } : f
+      )
     } catch (err) {
       window.alert(getErrorMessage(err) || 'No se pudo guardar el cambio')
     } finally {
@@ -892,6 +946,28 @@ export const SociosPage = () => {
     return true
   }
 
+  /**
+   * Al salir del campo Expediente de un socio nuevo se avisa enseguida si ya
+   * existe, antes de llenar todo lo demas. Si la consulta falla no se dice
+   * nada: al guardar, el servidor lo vuelve a revisar.
+   */
+  const revisarExpediente = async () => {
+    const codigo = formData.codigo_socio.trim()
+    if (modoEdicion || !codigo) return
+    try {
+      const respuesta = await sociosService.buscarSocioPorExpediente(codigo)
+      const s = respuesta.data
+      if (s) {
+        setExpedienteOcupado(
+          `El expediente ${s.codigo_socio} ya está registrado a nombre de ` +
+            `${s.apellido}, ${s.nombre} (C.I. ${s.cedula}, ${s.estado}).`
+        )
+      }
+    } catch {
+      // 404: el expediente esta libre
+    }
+  }
+
   const guardarSocio = async () => {
     if (!validarFormulario()) {
       return
@@ -922,6 +998,10 @@ export const SociosPage = () => {
       await cargarSocios()
     } catch (error) {
       console.error('Error guardando socio:', error)
+      if (getErrorCode(error) === 'CODIGO_DUPLICADO') {
+        setExpedienteOcupado(getErrorMessage(error))
+        return
+      }
       // El backend explica el motivo (cedula duplicada, invalida, expediente en uso)
       setErrorFormulario(getErrorMessage(error) || 'Error al guardar el socio. Por favor, intente nuevamente.')
     }
@@ -963,10 +1043,6 @@ export const SociosPage = () => {
     } finally {
       setProcesandoRetiro(false)
     }
-  }
-
-  const totalRelacionesSocio = (socio: Socio): number => {
-    return (socio._count?.beneficiarios ?? 0) + (socio._count?.cuentas_ahorro ?? 0) + (socio._count?.prestamos ?? 0)
   }
 
   const descripcionMotivoRetiro =
@@ -1479,6 +1555,28 @@ export const SociosPage = () => {
         esquinas redondeadas se pierden ~40px de alto y otros tantos de ancho
         que hacen falta para el formulario.
       */}
+      {/* Avisos del formulario en ventana emergente, encima del formulario
+          (que esta en z-[100]): al pie pasaban desapercibidos (20/11) */}
+      {modalAbierto && expedienteOcupado && (
+        <AvisoFormulario
+          titulo="Expediente ya registrado"
+          onCerrar={() => {
+            setExpedienteOcupado(null)
+            // De vuelta al campo, con el numero seleccionado para corregirlo
+            window.setTimeout(() => campoExpediente.current?.select(), 0)
+          }}
+        >
+          <p>{expedienteOcupado}</p>
+          <p className="mt-2 text-neutral-500">Indique otro número de expediente para el nuevo socio.</p>
+        </AvisoFormulario>
+      )}
+      {modalAbierto && !expedienteOcupado && errorFormulario && (
+        <AvisoFormulario titulo="Revise los datos del socio" onCerrar={() => setErrorFormulario('')}>
+          {/* Un renglón por campo mal escrito, como lo arma getErrorMessage */}
+          <p className="whitespace-pre-line">{errorFormulario}</p>
+        </AvisoFormulario>
+      )}
+
       {modalAbierto && (
         <div className="fixed inset-0 z-[100] m-0 flex items-stretch justify-center bg-neutral-900/40 backdrop-blur-sm sm:items-center sm:p-4">
           <Card
@@ -1525,8 +1623,10 @@ export const SociosPage = () => {
                         atrás, y el primer Enter lo volvía a apretar en vez de pasar de campo */}
                     <input
                       autoFocus
+                      ref={campoExpediente}
                       value={formData.codigo_socio}
                       onChange={(e) => actualizarCampo('codigo_socio', valorEnMayusculas(e))}
+                      onBlur={() => void revisarExpediente()}
                       className={controlClass}
                     />
                   </label>
@@ -1863,11 +1963,6 @@ export const SociosPage = () => {
             </div>
 
             <div className="border-t border-neutral-200 bg-white px-4 py-3 sm:px-6 sm:py-4">
-              {errorFormulario && (
-                <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {errorFormulario}
-                </div>
-              )}
 
               {/*
                 En movil los botones ocupan el ancho completo y se apilan con
@@ -2161,10 +2256,6 @@ export const SociosPage = () => {
                   <div>
                     <dt className="text-xs uppercase tracking-wider text-neutral-500">Préstamos</dt>
                     <dd className="mt-1 text-sm text-neutral-700">{socioDetalle._count?.prestamos ?? 0}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs uppercase tracking-wider text-neutral-500">Total</dt>
-                    <dd className="mt-1 text-sm font-semibold text-neutral-900">{totalRelacionesSocio(socioDetalle)}</dd>
                   </div>
                 </dl>
               </div>

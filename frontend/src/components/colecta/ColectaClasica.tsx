@@ -98,8 +98,10 @@ const dia = (v: string | null | undefined): string => fechaCorta(v)
 
 /** Encabezado de tabla en el estilo denso de la pantalla vieja */
 const Th = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
+  // Fijo arriba al desplazar los renglones. El borde va como sombra porque con
+  // border-collapse el borde de una celda pegajosa se queda atras (20/11)
   <th
-    className={`border-b border-neutral-300 px-2 py-1 text-xs font-semibold text-neutral-700 ${
+    className={`sticky top-0 z-10 bg-neutral-50 px-2 py-1 text-xs font-semibold text-neutral-700 shadow-[inset_0_-1px_0_theme(colors.neutral.300)] ${
       right ? 'text-right' : 'text-left'
     }`}
   >
@@ -125,9 +127,12 @@ const Panel = ({
   titulo,
   children,
   alFinal,
+  arriba,
 }: {
   titulo: string
   children: React.ReactNode
+  /** Barra fija sobre la tabla, fuera de lo que se desplaza */
+  arriba?: React.ReactNode
   /** Cambia cuando cambia el contenido: vuelve a bajar hasta el final */
   alFinal?: string | number
 }) => {
@@ -138,8 +143,11 @@ const Panel = ({
   return (
     <div className="flex min-h-0 flex-col">
       <p className="mb-1 text-center text-sm font-bold text-neutral-800">{titulo}</p>
-      <div ref={cuerpo} className="h-[9.5rem] overflow-auto rounded border border-neutral-300 bg-white">
-        {children}
+      <div className="overflow-hidden rounded border border-neutral-300 bg-white">
+        {arriba}
+        <div ref={cuerpo} className="h-[9.5rem] overflow-auto">
+          {children}
+        </div>
       </div>
     </div>
   )
@@ -188,9 +196,9 @@ export const ColectaClasica = ({
   // Un renglon por ACUERDO de salud, no por persona del grupo (07/11)
   const salud = agruparPorAcuerdo(servicios.filter((s) => s.servicio === 'salud'))
 
-  // Los movimientos de la libreta van todos juntos, como en la pantalla vieja:
-  // alli la tabla es de la LIBRETA del socio, no de una cuenta en concreto
-  const movimientos = ahorros.flatMap((c) =>
+  // El panel es de Ahorros a la Vista, que es en bolivares: los movimientos de
+  // la cuenta en divisas se ven solo desde su enlace de historial (20/11)
+  const movimientos = ahorros.filter((c) => (c.moneda_cuenta ?? 'bs') === 'bs').flatMap((c) =>
     (c.movimientos_recientes ?? []).map((m) => ({ ...m, cuenta: c }))
   )
 
@@ -353,8 +361,7 @@ export const ColectaClasica = ({
         <Panel
           titulo="Ahorros a la Vista"
           alFinal={movimientos.map((m) => `${m.cuenta.referencia_id}-${m.id}`).join(',')}
-        >
-          {ahorros.length > 0 && (
+          arriba={ahorros.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-200 bg-neutral-50 px-2 py-1 text-xs">
               <span className="text-neutral-500">Historial:</span>
               {ahorros.map((c) => (
@@ -367,8 +374,9 @@ export const ColectaClasica = ({
               ))}
             </div>
           )}
+        >
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-neutral-50">
+            <thead>
               <tr>
                 <Th>Item</Th>
                 <Th>Fecha</Th>
@@ -400,7 +408,7 @@ export const ColectaClasica = ({
 
         <Panel titulo="Prestamos">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-neutral-50">
+            <thead>
               <tr>
                 <Th>No_prestamo</Th>
                 <Th>Fecha</Th>
@@ -437,7 +445,7 @@ export const ColectaClasica = ({
 
         <Panel titulo="Funeraria">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-neutral-50">
+            <thead>
               <tr>
                 <Th>Acuerdo</Th>
                 <Th>Ano</Th>
@@ -474,7 +482,7 @@ export const ColectaClasica = ({
 
         <Panel titulo="Salud">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-neutral-50">
+            <thead>
               <tr>
                 <Th>Opcion</Th>
                 <Th>Ano</Th>

@@ -279,7 +279,7 @@ const movimientoDeServicio = (m: {
   detalle: !m.semanas_pagadas
     ? m.concepto
     : m.semanas_pagadas < 0
-      ? `Deshace ${-m.semanas_pagadas} semana(s)`
+      ? `Reversa ${-m.semanas_pagadas} semana(s)`
       : `${m.semanas_pagadas} semana(s)`,
   monto_usd: n(m.monto_usd),
   monto_bs: n(m.monto_bs),

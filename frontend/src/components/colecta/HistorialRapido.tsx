@@ -102,11 +102,11 @@ export const HistorialRapidoModal = ({ consulta, onClose }: Props) => {
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {historial.movimientos.map((m, i) => (
-                  <tr key={i} className={m.reversado ? 'text-neutral-400 line-through' : m.tipo === 'Suspensión' ? 'bg-red-50/60 text-neutral-800' : 'text-neutral-800'}>
+                  <tr key={i} className={m.reversado ? 'text-neutral-500' : m.tipo === 'Suspensión' ? 'bg-red-50/60 text-neutral-800' : 'text-neutral-800'}>
                     <td className="whitespace-nowrap px-3 py-2">{fechaCorta(m.fecha, true)}</td>
                     <td className="whitespace-nowrap px-3 py-2 font-medium">
                       {m.tipo}
-                      {m.reversado && <span className="ml-1 no-underline">(reversado)</span>}
+                      {m.reversado && <span className="ml-1">(reversado)</span>}
                     </td>
                     <td className="px-3 py-2 text-neutral-600">{m.detalle ?? ''}</td>
                     {conCobertura && (
