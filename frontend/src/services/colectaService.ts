@@ -504,6 +504,9 @@ export interface LibretaAhorro {
     socio: string
     cuenta: string
     tipo_cuenta: string
+    /** usd: Ahorro en divisas, que se imprime en su propia libreta */
+    moneda: 'bs' | 'usd'
+    fecha_apertura: string | null
     fecha_ingreso: string | null
     apellidos: string
     nombres: string
@@ -516,12 +519,19 @@ export interface LibretaAhorro {
     tipo: string
     ahorro_bs: number
     saldo_bs: number
+    ahorro_usd: number
+    saldo_usd: number
+    /** Retiro o reverso: baja el saldo */
+    es_salida: boolean
     /** Ultima semana cubierta por el cobro, si vino de una colecta */
     semana: number | null
     funeraria_bs: number | null
     salud_bs: number | null
     /** Domingo de esa semana (YYYY-MM-DD) */
     hasta: string | null
+    /** Desde cuando quedo suspendido el acuerdo tras el cobro (YYYY-MM-DD); nulo si quedo activo */
+    susp_funeraria: string | null
+    susp_salud: string | null
   }[]
 }
 

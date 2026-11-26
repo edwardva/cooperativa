@@ -17,6 +17,8 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PrintableListado } from '../components/print/PrintableListado';
 import { PrintableReciboAhorro } from '../components/print/PrintableReciboAhorro';
+import { PrintableLibretaAhorro } from '../components/print/PrintableLibretaAhorro';
+import type { LibretaAhorro } from '../services/colectaService';
 import { nombreUbicacion } from '../utils/ubicacion';
 import { SortableHeader } from '../components/ui/SortableHeader';
 import {
@@ -117,6 +119,10 @@ export const AhorroPage = () => {
   const [filtroTipoCuenta, setFiltroTipoCuenta] = useState<string>('todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
   const [cuentaSeleccionada, setCuentaSeleccionada] = useState<CuentaAhorro | null>(null);
+  // Libreta de la cuenta en vista previa ("Actualizar Libreta" / "Encabezado Libreta")
+  const [libreta, setLibreta] = useState<{ datos: LibretaAhorro; modo: 'movimientos' | 'encabezado' } | null>(null);
+  const [cargandoLibreta, setCargandoLibreta] = useState(false);
+  const [errorLibreta, setErrorLibreta] = useState<string | null>(null);
   const [modalAbierto, setModalAbierto] = useState<'apertura' | 'movimiento' | 'detalle' | 'consultar_movimientos' | 'reporte_movimientos' | null>(null);
   const [tiposCuentaFiltro, setTiposCuentaFiltro] = useState<TipoCuentaAhorro[]>([]);
 
@@ -458,6 +464,21 @@ export const AhorroPage = () => {
 
   // Moneda de las cuentas abiertas en el detalle y en la consulta
   const monedaDetalle = monedaDe(cuentaSeleccionada?.tipo_cuenta);
+
+  /** Trae la libreta de la cuenta y la abre en vista previa */
+  const imprimirLibreta = async (cuentaId: number, modo: 'movimientos' | 'encabezado') => {
+    setCargandoLibreta(true);
+    setErrorLibreta(null);
+    try {
+      const respuesta = await ahorroService.obtenerLibreta(cuentaId);
+      if (!respuesta.success) throw new Error('No se pudo cargar la libreta');
+      setLibreta({ datos: respuesta.data, modo });
+    } catch (err) {
+      setErrorLibreta(getErrorMessage(err) || 'Error al cargar la libreta');
+    } finally {
+      setCargandoLibreta(false);
+    }
+  };
   const monedaConsulta = monedaDe(cuentaEncontrada?.tipo_cuenta);
 
   const saldoDisponibleUsd = estadisticas.total_saldo_usd - estadisticas.total_bloqueado_usd;
@@ -1357,6 +1378,15 @@ export const AhorroPage = () => {
         />
       )}
 
+      {libreta && (
+        <PrintableLibretaAhorro
+          libreta={libreta.datos}
+          modo={libreta.modo}
+          vistaPrevia
+          onCerrarVistaPrevia={() => setLibreta(null)}
+        />
+      )}
+
       {modalAbierto === 'detalle' && cuentaSeleccionada && createPortal(
         <div className="fixed top-0 left-0 right-0 bottom-0 m-0 bg-black/50 flex items-center justify-center z-[100] p-4 overflow-y-auto">
           <Card className="max-w-4xl w-full p-6 my-8">
@@ -1368,13 +1398,29 @@ export const AhorroPage = () => {
                 <p className="text-gray-600">
                   {cuentaSeleccionada.socio.nombre} {cuentaSeleccionada.socio.apellido}
                 </p>
+                {errorLibreta && <p className="mt-1 text-sm text-red-600">{errorLibreta}</p>}
               </div>
+              <div className="flex items-center gap-2">
+                {/* Actualizar Libreta y Encabezado Libreta de Movimientos de Ahorro */}
+                {(['movimientos', 'encabezado'] as const).map((modo) => (
+                  <Button
+                    key={modo}
+                    variant="outline"
+                    size="sm"
+                    disabled={cargandoLibreta}
+                    onClick={() => void imprimirLibreta(cuentaSeleccionada.id, modo)}
+                  >
+                    <Printer className="w-4 h-4" />
+                    {modo === 'movimientos' ? 'Libreta' : 'Enc. Libreta'}
+                  </Button>
+                ))}
               <button
                 onClick={() => setModalAbierto(null)}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <X className="w-6 h-6" />
               </button>
+              </div>
             </div>
 
             {/* El saldo real va en la moneda de la cuenta; el otro es sólo

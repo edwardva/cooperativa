@@ -33,6 +33,7 @@ import { DiferencialCambiario } from '../components/prestamos/DiferencialCambiar
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { PrintableListado } from '../components/print/PrintableListado'
+import { PrintableLibretaPrestamo } from '../components/print/PrintableLibretaPrestamo'
 import * as prestamosService from '../services/prestamosService'
 import * as sociosService from '../services/sociosService'
 import type {
@@ -97,6 +98,8 @@ export default function PrestamosPage() {
   const [busqueda, setBusqueda] = useState('')
 
   const [detalle, setDetalle] = useState<PrestamoDetalle | null>(null)
+  /** Libreta del prestamo en vista previa: movimientos o encabezado del socio */
+  const [libretaPrestamo, setLibretaPrestamo] = useState<'movimientos' | 'encabezado' | null>(null)
   const [cargandoDetalle, setCargandoDetalle] = useState(false)
 
   // --- Alta ---
@@ -540,6 +543,15 @@ export default function PrestamosPage() {
         </div>
       </Card>
 
+      {detalle && libretaPrestamo && (
+        <PrintableLibretaPrestamo
+          prestamo={detalle}
+          modo={libretaPrestamo}
+          vistaPrevia
+          onCerrarVistaPrevia={() => setLibretaPrestamo(null)}
+        />
+      )}
+
       <PrintableListado
 
         vistaPrevia={vistaPrevia}
@@ -881,6 +893,19 @@ export default function PrestamosPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                {/* Actualizar Libreta y Encabezado Libreta del sistema actual */}
+                {detalle && detalle.estado !== 'solicitado' && (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => setLibretaPrestamo('movimientos')}>
+                      <Printer className="h-4 w-4" />
+                      Libreta
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setLibretaPrestamo('encabezado')}>
+                      <Printer className="h-4 w-4" />
+                      Enc. Libreta
+                    </Button>
+                  </>
+                )}
                 {detalle && detalle.estado !== 'saldado' && puedeAbonar && (
                   <Button size="sm" onClick={() => setModalAbono(true)}>
                     <Wallet className="h-4 w-4" />
@@ -888,7 +913,10 @@ export default function PrestamosPage() {
                   </Button>
                 )}
                 <button
-                  onClick={() => setDetalle(null)}
+                  onClick={() => {
+                    setDetalle(null)
+                    setLibretaPrestamo(null)
+                  }}
                   className="rounded-lg p-2 text-neutral-500 transition hover:bg-neutral-100"
                   aria-label="Cerrar"
                 >

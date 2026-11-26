@@ -5,6 +5,7 @@
  * Servicio para gestión de cuentas de ahorro y movimientos
  */
 
+import type { LibretaAhorro } from './colectaService';
 import apiClient from './api';
 
 // ============================================
@@ -311,5 +312,13 @@ export const recalcularSaldos = async (): Promise<
   ApiResponse<{ cuentas_actualizadas: number; tasa_aplicada: number }>
 > => {
   const response = await apiClient.post('/ahorro/recalcular-saldos');
+  return response.data;
+};
+
+/** Libreta de la cuenta para imprimir (la de divisas sale desde Ahorro) */
+export const obtenerLibreta = async (cuentaId: number) => {
+  const response = await apiClient.get<{ success: boolean; data: LibretaAhorro }>(
+    `/ahorro/cuentas/${cuentaId}/libreta`
+  );
   return response.data;
 };

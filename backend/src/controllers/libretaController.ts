@@ -9,7 +9,9 @@
 //
 //   Id  Fecha  Tipo  Ahorro  Saldo  Sem  Fun  Salud  Hasta  Susp_Fun  Susp_Sal
 //
-// Todo en bolívares: Ahorros a la Vista es un producto en Bs. Se imprime el
+// Todo en bolívares: Ahorros a la Vista es un producto en Bs. La de Ahorro en
+// divisas (rep_act_lib_aho.php) usa los mismos renglones, en dólares. Susp_Fun y
+// Susp_Sal: la fecha de suspensión si el acuerdo quedó suspendido tras el cobro. Se imprime el
 // historial completo desde el primer movimiento (confirmado el 03/11).
 
 import type { Request, Response } from 'express';
@@ -33,6 +35,9 @@ const abreviarTipo = (tipo: string): string => {
   return TIPOS[t] ?? t.charAt(0).toUpperCase() + t.slice(1, 3);
 };
 
+/** Columna @db.Date como YYYY-MM-DD (llega a medianoche UTC) */
+const soloFecha = (v: Date | undefined): string | null => (v ? v.toISOString().slice(0, 10) : null);
+
 /** Las colectas dejan en el movimiento la referencia COL-<id> */
 const colectaDeReferencia = (referencia: string | null): number | null => {
   const m = /^COL-(\d+)$/.exec(referencia ?? '');
@@ -55,7 +60,7 @@ export const obtenerLibretaAhorro = async (req: Request, res: Response): Promise
       where: { id: cuentaId },
       include: {
         socio: true,
-        tipo_cuenta: { select: { nombre: true } },
+        tipo_cuenta: { select: { nombre: true, moneda: true } },
         movimientos: { orderBy: [{ fecha_movimiento: 'asc' }, { id: 'asc' }] },
       },
     });
@@ -74,6 +79,34 @@ export const obtenerLibretaAhorro = async (req: Request, res: Response): Promise
           where: { colecta_id: { in: idsColecta }, servicio: { in: ['funeraria', 'salud'] } },
         })
       : [];
+
+    // Si el acuerdo quedó suspendido después del cobro, desde cuándo (Susp_Fun / Susp_Sal)
+    const filtroMovimientos = { colecta_id: { in: idsColecta }, reversado: false };
+    const [suspFun, suspSalud] = idsColecta.length
+      ? await Promise.all([
+          prisma.movimientoFuneraria.findMany({
+            where: filtroMovimientos,
+            select: { colecta_id: true, fecha_suspension: true },
+          }),
+          prisma.movimientoSalud.findMany({
+            where: filtroMovimientos,
+            select: { colecta_id: true, fecha_suspension: true },
+          }),
+        ])
+      : [[], []];
+    const suspensionPorColecta = (
+      movimientos: { colecta_id: number | null; fecha_suspension: Date | null }[]
+    ): Map<number, Date> => {
+      const mapa = new Map<number, Date>();
+      for (const m of movimientos) {
+        if (m.colecta_id === null || !m.fecha_suspension) continue;
+        const previa = mapa.get(m.colecta_id);
+        if (!previa || m.fecha_suspension > previa) mapa.set(m.colecta_id, m.fecha_suspension);
+      }
+      return mapa;
+    };
+    const suspendidoFun = suspensionPorColecta(suspFun);
+    const suspendidoSalud = suspensionPorColecta(suspSalud);
 
     const porColecta = new Map<
       number,
@@ -109,12 +142,19 @@ export const obtenerLibretaAhorro = async (req: Request, res: Response): Promise
         tipo: abreviarTipo(m.tipo_movimiento),
         ahorro_bs: Number(m.monto_bs),
         saldo_bs: saldoBs,
+        // Ahorro en divisas: la libreta va en dólares, con depósito y retiro aparte
+        ahorro_usd: Number(m.monto_usd),
+        saldo_usd: Number(m.saldo_nuevo_usd),
+        es_salida: Number(m.saldo_nuevo_usd) < Number(m.saldo_anterior_usd),
         semana: cobro?.semana ?? null,
         funeraria_bs: cobro ? redondear(cobro.fun) : null,
         salud_bs: cobro ? redondear(cobro.salud) : null,
         // Fecha del domingo de la última semana cubierta
         hasta:
           cobro?.ano && cobro.semana ? rangoDeSemana({ ano: cobro.ano, semana: cobro.semana }).fin : null,
+        // YYYY-MM-DD; nulo si quedó activo
+        susp_funeraria: colectaId !== null ? soloFecha(suspendidoFun.get(colectaId)) : null,
+        susp_salud: colectaId !== null ? soloFecha(suspendidoSalud.get(colectaId)) : null,
       };
     });
 
@@ -126,6 +166,9 @@ export const obtenerLibretaAhorro = async (req: Request, res: Response): Promise
           socio: socio.codigo_socio,
           cuenta: cuenta.numero_cuenta,
           tipo_cuenta: cuenta.tipo_cuenta.nombre,
+          moneda: cuenta.tipo_cuenta.moneda,
+          // La de divisas lleva la fecha de apertura de la cuenta, no la de ingreso del socio
+          fecha_apertura: cuenta.fecha_apertura,
           fecha_ingreso: socio.fecha_inscripcion,
           apellidos: nombreEnMayusculas(socio.apellido),
           nombres: nombreEnMayusculas(socio.nombre),
