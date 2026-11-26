@@ -205,7 +205,18 @@ async function prestamoConResumen(id: number) {
   const prestamo = await prisma.prestamo.findUnique({
     where: { id },
     include: {
-      socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true, telefono: true } },
+      socio: {
+        select: {
+          id: true,
+          codigo_socio: true,
+          cedula: true,
+          nombre: true,
+          apellido: true,
+          telefono: true,
+          // Para el encabezado de la libreta del préstamo
+          fecha_inscripcion: true,
+        },
+      },
       tipo_prestamo: true,
       fiadores: {
         include: { socio: { select: { id: true, codigo_socio: true, cedula: true, nombre: true, apellido: true } } },

@@ -27,6 +27,7 @@ import {
   obtenerResumenPorFeria,
   recalcularSaldos,
 } from '../controllers/ahorroController';
+import { obtenerLibretaAhorro } from '../controllers/libretaController';
 import { authenticate } from '../middleware/authenticate';
 import { authorize } from '../middleware/authorize';
 
@@ -65,6 +66,13 @@ router.get('/cuentas/socio/:socioId', authenticate, authorize('ahorro', 'read'),
  * Obtener detalle de una cuenta
  */
 router.get('/cuentas/:id', authenticate, authorize('ahorro', 'read'), obtenerCuenta);
+
+/**
+ * GET /api/ahorro/cuentas/:cuentaId/libreta
+ * La libreta para imprimir desde Ahorro (la de divisas, sobre todo): la misma
+ * que da Colecta, con el permiso de ahorro.
+ */
+router.get('/cuentas/:cuentaId/libreta', authenticate, authorize('ahorro', 'read'), obtenerLibretaAhorro);
 
 /**
  * GET /api/ahorro/socios-apertura?q=texto

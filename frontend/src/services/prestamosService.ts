@@ -74,6 +74,8 @@ export interface SocioResumen {
   nombre: string
   apellido: string
   telefono?: string | null
+  /** Viene en la ficha del prestamo: va en el encabezado de la libreta */
+  fecha_inscripcion?: string | null
 }
 
 export interface Fiador {
@@ -95,6 +97,10 @@ export interface AbonoPrestamo {
   aplicado_capital_usd: string | number
   aplicado_interes_usd: string | number
   aplicado_mora_usd: string | number
+  /** En bolivares, a la tasa del abono: los imprime la libreta */
+  aplicado_capital_bs?: string | number
+  aplicado_interes_bs?: string | number
+  aplicado_mora_bs?: string | number
   concepto: string | null
   fecha_abono: string
   /** Colecta que lo cobró: esos abonos se reversan reversando la colecta */
@@ -109,6 +115,8 @@ export interface Prestamo {
   numero_prestamo: string
   socio_id: number
   monto_original_usd: string | number
+  /** Tasa del dia en que se otorgo: la fila 0 de la libreta va a esta tasa */
+  tasa_cambio_inicial?: string | number
   cuota_semanal_usd: string | number
   saldo_capital_usd: string | number
   saldo_interes_usd: string | number
